@@ -1,0 +1,10 @@
+Metadata-Version: 2.4
+Name: investment-tracker
+Version: 0.1.0
+Requires-Dist: fastapi>=0.111.0
+Requires-Dist: uvicorn[standard]>=0.29.0
+Requires-Dist: sqlalchemy>=2.0.28
+Requires-Dist: alembic>=1.13.1
+Requires-Dist: pandas>=2.2.1
+Requires-Dist: deltalake>=0.15.3
+Dynamic: requires-dist
