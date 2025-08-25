@@ -4,26 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.db.models.market import Sector, StockSymbol
-from app.schemas.sector import SectorCreate, StockSymbolCreate, SectorSummary
-
-
-def upsert_sector(db: Session, sector: SectorCreate) -> Sector:
-    db_sector = (
-        db.query(Sector)
-        .filter(Sector.id == sector.id, Sector.level == sector.level)
-        .first()
-    )
-
-    if db_sector:
-        for key, value in sector.model_dump().items():
-            setattr(db_sector, key, value)
-    else:
-        db_sector = Sector(**sector.model_dump())
-        db.add(db_sector)
-
-    db.commit()
-    db.refresh(db_sector)
-    return db_sector
+from app.schemas.sector import StockSymbolCreate, SectorSummary
 
 
 def get_sectors(db: Session, level: int) -> List[Sector]:

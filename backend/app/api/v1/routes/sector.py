@@ -5,7 +5,6 @@ from sqlalchemy.orm import Session
 from app.db.base import get_db
 from app.schemas.sector import (
     Sector,
-    SectorCreate,
     StockSymbol,
     StockSymbolCreate,
     SectorSummary,

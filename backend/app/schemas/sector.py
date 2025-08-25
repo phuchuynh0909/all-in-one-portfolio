@@ -1,8 +1,7 @@
-from datetime import datetime
+from datetime import datetime, date
 from decimal import Decimal
-from typing import Optional, List
-from pydantic import BaseModel
-
+from typing import Optional, Dict, List, Union
+from pydantic import BaseModel, Field
 
 class SectorBase(BaseModel):
     id: int
@@ -30,10 +29,6 @@ class SectorBase(BaseModel):
     phaithu_q: Optional[Decimal] = None
     tts_q: Optional[Decimal] = None
     vcsh_q: Optional[Decimal] = None
-
-
-class SectorCreate(SectorBase):
-    pass
 
 
 class Sector(SectorBase):
@@ -67,3 +62,17 @@ class StockSymbol(StockSymbolBase):
 class SectorSummary(BaseModel):
     sector: Sector
     stocks: List[StockSymbol]
+
+
+class SectorTimeseriesData(BaseModel):
+    id: int
+    name: str
+    data: List[float]
+
+
+class SectorTimeseries(BaseModel):
+    sector_level: int
+    interval: str = Field(default="1d", description="Data interval (e.g., 1d, 1h)")
+    meta: Dict = Field(default_factory=dict)
+    timestamps: List[str]
+    sector_data: List[SectorTimeseriesData]

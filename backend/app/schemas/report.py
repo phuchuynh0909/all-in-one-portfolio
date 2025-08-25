@@ -1,5 +1,6 @@
 from pydantic import BaseModel
 from typing import List, Optional
+from datetime import datetime
 
 class Report(BaseModel):
     id: int
@@ -7,7 +8,7 @@ class Report(BaseModel):
     tenbaocao: str
     url: str
     nguon: str
-    ngaykn: Optional[str] = None
+    ngaykn: Optional[datetime] = None
     rsnganh: Optional[str] = None
 
 class ReportResponse(BaseModel):

@@ -11,6 +11,8 @@ from app.schemas.portfolio import (
     InvestmentAmount,
     InvestmentAmountCreate,
     PortfolioSummary,
+    OptimizationRequest,
+    OptimizationResult,
 )
 from app.services import portfolio_service
 
@@ -101,3 +103,11 @@ def get_investment_amount(db: Session = Depends(get_db)) -> InvestmentAmount:
 @router.get("/summary", response_model=PortfolioSummary)
 async def get_portfolio_summary(db: Session = Depends(get_db)) -> PortfolioSummary:
     return await portfolio_service.get_portfolio_summary(db)
+
+
+@router.post("/optimize", response_model=OptimizationResult)
+def optimize_portfolio(
+    body: OptimizationRequest,
+    db: Session = Depends(get_db),
+) -> OptimizationResult:
+    return portfolio_service.optimize_portfolio(db, body)

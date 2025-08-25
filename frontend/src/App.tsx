@@ -44,7 +44,6 @@ const theme = createTheme({
 
 const navItems = [
   { path: '/', label: 'Home' },
-  { path: '/health', label: 'Health' },
   { path: '/portfolio', label: 'Portfolio' },
   { path: '/chart', label: 'Chart' },
   { path: '/sector', label: 'Sector' },
@@ -106,7 +105,6 @@ export default function App() {
           <Box component="main" sx={{ py: 3 }}>
             <Routes>
               <Route path="/" element={<Home />} />
-              <Route path="/health" element={<Health />} />
               <Route path="/portfolio" element={<Portfolio />} />
               <Route path="/chart" element={<Chart />} />
               <Route path="/sector" element={<Sector />} />

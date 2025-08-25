@@ -2,6 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
 from pydantic import BaseModel, Field
+from enum import Enum
 
 
 class PositionBase(BaseModel):
@@ -75,3 +76,30 @@ class PortfolioSummary(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class OptimizationMethod(str, Enum):
+    """Supported optimization methods."""
+    HRP = "hrp"
+    EFFICIENT_FRONTIER = "ef"
+    CVAR = "cvar"
+    CLA = "cla"
+
+
+class OptimizationRequest(BaseModel):
+    """Request body for portfolio optimization."""
+    tickers: List[str]
+    start_date: date | None = None
+    end_date: date | None = None
+    method: OptimizationMethod
+    risk_free_rate: float | None = 0.0
+    constraints: dict | None = None  # e.g., {"min_weight": 0.0, "max_weight": 0.2}
+
+
+class OptimizationResult(BaseModel):
+    method: OptimizationMethod
+    weights: dict[str, float]
+    expected_return: float | None = None
+    volatility: float | None = None
+    sharpe_ratio: float | None = None
+

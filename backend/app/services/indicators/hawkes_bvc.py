@@ -1,32 +1,31 @@
 import numpy as np
-from scipy.special import stdtr
+from scipy.special import stdtr  # Student's t CDF
 
-def hawkes_BVC(close: np.array, volume: np.array, window: int = 20, kappa: float = 0.1) -> np.array:
-    """Calculate Hawkes Bid Volume Classification indicator.
-    
-    Args:
-        close: Array of closing prices
-        volume: Array of volume values
-        window: Window size for calculation (default: 20)
-        kappa: Decay factor (default: 0.1)
-    
-    Returns:
-        Array of BVC values
-    """
+def hawkes_BVC(close: np.ndarray, volume: np.ndarray, window: int = 20, kappa: float = 0.1) -> np.ndarray:
+    """Calculate Hawkes Bid Volume Classification indicator."""
+    # Ensure float arrays
+    close = np.asarray(close, dtype=np.float64)
+    volume = np.asarray(volume, dtype=np.float64)
+
     alpha = np.exp(-kappa)
-    bvc = np.full(close.shape, np.nan, dtype=np.float64)  # Ensure bvc is of type float
-    cumr = np.log(close[:] / close[0])
+    bvc = np.full(close.shape, np.nan, dtype=np.float64)
+
+    # Log-returns with stable prepend
+    cumr = np.log(close / close[0])
     r = np.diff(cumr, prepend=cumr[0])
-    r[np.isnan(r)] = 0.0  # Replace NaNs with 0.0
-    sum = 0
-    for i in range(window, close.shape[0]):
+    r[np.isnan(r)] = 0.0
+
+    acc = 0.0
+    n = close.shape[0]
+    for i in range(window, n):
         r_window = r[i - window:i]
-        sigma = np.nan_to_num(np.std(r_window), 0.0)
+        sigma = np.nan_to_num(np.std(r_window), nan=0.0)  # <-- fixed
         if sigma > 0.0:
-            cum = stdtr(0.25, r[i]/sigma)
-            label = 2 * cum - 1.0
+            cum = stdtr(0.25, r[i] / sigma)  # df=0.25 as in your code
+            label = 2.0 * cum - 1.0
         else:
             label = 0.0
-        sum = sum * alpha + volume[i] * label
-        bvc[i] = sum
-    return bvc / 100000  # Scale down the values for better visualization
+        acc = acc * alpha + volume[i] * label
+        bvc[i] = acc
+
+    return bvc / 100000.0

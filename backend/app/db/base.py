@@ -7,12 +7,16 @@ from app.core.settings import settings
 # SQLAlchemy models base class
 Base = declarative_base()
 
+# Import all models to ensure they're registered with SQLAlchemy
+from app.db.models.portfolio import Position, Transaction, InvestmentAmount
+from app.db.models.market import Sector, StockSymbol
+
 # Create SQLite engine with thread-safe connection pool
 engine = create_engine(
     settings.database_url,
     connect_args={"check_same_thread": False} if settings.database_url.startswith("sqlite") else {},
     poolclass=StaticPool,
-    echo=settings.environment == "development",
+    echo=settings.environment == "development"
 )
 
 # Session factory

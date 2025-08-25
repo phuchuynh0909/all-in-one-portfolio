@@ -12,12 +12,14 @@ import {
 } from 'recharts';
 
 type Position = {
+  id: number;
   ticker: string;
   quantity: number;
-  cost_basis: number;
-  current_value: number;
-  unrealized_gain: number;
-  return_pct: number;
+  purchase_price: number;
+  current_price: number;
+  purchase_date: string;
+  notes?: string;
+  created_at: string;
 };
 
 type AggregatedPosition = {
@@ -48,9 +50,11 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
     }
     
     acc[pos.ticker].total_quantity += Math.round(pos.quantity);
-    acc[pos.ticker].total_cost_basis += Math.round(pos.cost_basis);
-    acc[pos.ticker].total_current_value += Math.round(pos.current_value);
-    acc[pos.ticker].total_unrealized_gain += Math.round(pos.unrealized_gain);
+    const cost_basis = pos.purchase_price * pos.quantity;
+    const current_value = pos.current_price * pos.quantity;
+    acc[pos.ticker].total_cost_basis += Math.round(cost_basis);
+    acc[pos.ticker].total_current_value += Math.round(current_value);
+    acc[pos.ticker].total_unrealized_gain += Math.round(current_value - cost_basis);
     
     // Calculate weighted average return
     acc[pos.ticker].return_pct = 
@@ -68,27 +72,8 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
   const bottomPerformers = sortedPositions.slice(-5).reverse();
 
   const formatYAxis = (value: number) => `${Math.round(value)}%`;
-  const formatTooltip = (value: number, name: string, props: { payload: AggregatedPosition }) => {
-    const position = props.payload;
-    return [
-      `${Math.round(value)}%`,
-      `Quantity: ${Math.round(position.total_quantity)}`,
-      `Cost Basis: ${position.total_cost_basis.toLocaleString('en-US', {
-        style: 'currency',
-        currency: 'VND',
-        maximumFractionDigits: 0,
-      })}`,
-      `Current Value: ${position.total_current_value.toLocaleString('en-US', {
-        style: 'currency',
-        currency: 'VND',
-        maximumFractionDigits: 0,
-      })}`,
-      `Unrealized Gain: ${position.total_unrealized_gain.toLocaleString('en-US', {
-        style: 'currency',
-        currency: 'VND',
-        maximumFractionDigits: 0,
-      })}`,
-    ].join('\n');
+  const formatTooltip = (value: number) => {
+    return `${Math.round(value)}%`;
   };
 
   const chartHeight = 400;
@@ -97,7 +82,7 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
     <Box sx={{ mt: 4, mb: 4 }}>
       <Grid container spacing={2}>
         <Grid item xs={12} md={6}>
-          <Typography variant="h6" gutterBottom align="center">
+          <Typography variant="h6" gutterBottom align="center" color="text.primary">
             Top 5 Performers (%)
           </Typography>
           <ResponsiveContainer width="100%" height={chartHeight}>
@@ -105,7 +90,7 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
               data={topPerformers}
               margin={{ top: 20, right: 30, left: 30, bottom: 5 }}
             >
-              <CartesianGrid strokeDasharray="3 3" />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
               <XAxis 
                 dataKey="ticker"
                 axisLine={false}
@@ -114,6 +99,8 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
               />
               <YAxis 
                 tickFormatter={formatYAxis}
+                stroke="#fff"
+                tick={{ fill: '#fff' }}
               >
                 <Label
                   value="Return (%)"
@@ -143,15 +130,16 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
                   dataKey="ticker"
                   position="bottom"
                   offset={5}
-                  fill="#000"
+                  fill="#fff"
                   angle={0}
+                  style={{ fontWeight: 'bold' }}
                 />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
         </Grid>
         <Grid item xs={12} md={6}>
-          <Typography variant="h6" gutterBottom align="center">
+          <Typography variant="h6" gutterBottom align="center" color="text.primary">
             Bottom 5 Performers (%)
           </Typography>
           <ResponsiveContainer width="100%" height={chartHeight}>
@@ -159,7 +147,7 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
               data={bottomPerformers}
               margin={{ top: 20, right: 30, left: 30, bottom: 5 }}
             >
-              <CartesianGrid strokeDasharray="3 3" />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
               <XAxis 
                 dataKey="ticker"
                 axisLine={false}
@@ -168,6 +156,8 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
               />
               <YAxis 
                 tickFormatter={formatYAxis}
+                stroke="#fff"
+                tick={{ fill: '#fff' }}
               >
                 <Label
                   value="Return (%)"
@@ -197,8 +187,9 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
                   dataKey="ticker"
                   position="bottom"
                   offset={5}
-                  fill="#000"
+                  fill="#fff"
                   angle={0}
+                  style={{ fontWeight: 'bold' }}
                 />
               </Bar>
             </BarChart>

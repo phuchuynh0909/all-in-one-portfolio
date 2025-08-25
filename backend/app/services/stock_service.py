@@ -11,6 +11,7 @@ from loguru import logger
 from .indicators import trailing_sl, avwap, hawkes_BVC, kalman_zscore, calculate_yz_volatility
 from .utils import convert_nans
 from app.schemas.timeseries import TimeseriesResponse, Indicators, IndicatorParams
+from app.schemas.sector import SectorTimeseries, SectorTimeseriesData
 import pyarrow.dataset as ds
 
 from datetime import datetime, date, timedelta
@@ -65,8 +66,6 @@ def _load_delta_stocks(
         else:
             logger.warning(f"Watchlist not found at {watchlist_path}, using all available symbols")
             symbols = None
-    
-    print(symbols)
 
     dt = DeltaTable(settings.stocks_delta_table, storage_options=_delta_storage_options())
     dataset = dt.to_pyarrow_dataset()
@@ -166,6 +165,7 @@ async def get_stock_timeseries(
         close_prices = df["close"].values
         high_prices = df["high"].values
         low_prices = df["low"].values
+        volume_prices = df["volume"].values
         
         for ind in indicators:
             try:
@@ -241,12 +241,13 @@ async def get_stock_timeseries(
                 elif ind.name == "bvc":
                     window = ind.params.get("window", 20)
                     kappa = ind.params.get("kappa", 0.1)
-                    indicator_data["bvc"] = convert_nans(hawkes_BVC(
+                    bvc_values = hawkes_BVC(
                         close_prices,
-                        df["volume"].values,
+                        volume_prices,
                         window=window,
                         kappa=kappa
-                    ))
+                    )
+                    indicator_data["bvc"] = convert_nans(bvc_values)
                 
                 elif ind.name == "stoch":
                     fastk_period = ind.params.get("fastk_period", 14)
@@ -319,3 +320,47 @@ def calculate_macd(
         signalperiod=signal_period
     )
     return map(convert_nans, (macd_line, signal_line, histogram))
+
+
+async def get_sector_timeseries(
+    sector_level: int
+) -> SectorTimeseries:
+    """Get sector timeseries data with optional indicators."""
+    dt = DeltaTable(settings.sector_delta_table, storage_options=_delta_storage_options())
+    pdf = dt.to_pyarrow_table(filters=[("sector_type", "=", sector_level)]).to_pandas()
+
+    print(pdf)
+    if not pdf.empty:
+        pdf["date"] = pd.to_datetime(pdf["date"])
+        pdf = pdf.sort_values(["sector_name", "date"])  # stable order
+        
+        # Convert to SectorTimeseries format
+        timestamps = pdf["date"].unique().astype(str).tolist()
+        
+        # Group by sector and pivot the data
+        sectors_data = []
+        for sector_name in pdf["sector_name"].unique():
+            sector_df = pdf[pdf["sector_name"] == sector_name]
+            sector_data = SectorTimeseriesData(
+                id=sector_df["sector_id"].iloc[0],
+                name=sector_name,
+                data=sector_df["close"].tolist()
+            )
+            sectors_data.append(sector_data)
+        
+        return SectorTimeseries(
+            sector_level=sector_level,
+            interval="1d",
+            meta={},
+            timestamps=timestamps,
+            data=sectors_data
+        )
+    
+    # Return empty SectorTimeseries if no data
+    return SectorTimeseries(
+        sector_level=sector_level,
+        interval="1d",
+        meta={},
+        timestamps=[],
+        data=[]
+    )

@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     minio_secret_key: str = os.getenv("MINIO_SECRET_KEY", "")
     minio_endpoint: str = os.getenv("MINIO_ENDPOINT", "localhost:9000")
     stocks_delta_table: str = os.getenv("STOCKS_DELTA_TABLE", "s3://delta-table-storage/stocks")
+    sector_delta_table: str = os.getenv("SECTOR_DELTA_TABLE", "s3://delta-table-storage/wichart_sector")
     wichart_report_delta_table: str = os.getenv("WICHART_REPORT_DELTA_TABLE", "s3://delta-table-storage/raw_wichart_report")
     stocks_feature_store: str = os.getenv("STOCKS_FEATURE_STORE", "s3://delta-table-storage/stocks_feature_store")
     model_path: str = os.getenv("MODEL_PATH", "models")

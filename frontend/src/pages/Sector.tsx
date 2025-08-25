@@ -1,22 +1,20 @@
-import { Container, Grid, Paper } from '@mui/material';
+import { Box } from '@mui/material';
+import SectorPerformanceChart from '../components/sector/SectorPerformanceChart';
 import SectorList from '../components/sector/SectorList';
-import SectorChart from '../components/sector/SectorChart';
+import StockList from '../components/sector/StockList';
 
 export default function Sector() {
   return (
-    <Container maxWidth="xl">
-      <Grid container spacing={3}>
-        <Grid item xs={12}>
-          <Paper sx={{ p: 3 }}>
-            <SectorChart />
-          </Paper>
-        </Grid>
-        <Grid item xs={12}>
-          <Paper sx={{ p: 3 }}>
-            <SectorList />
-          </Paper>
-        </Grid>
-      </Grid>
-    </Container>
+    <Box sx={{ width: '95%', margin: '0 auto' }}>
+      <SectorPerformanceChart />
+      <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 2, mt: 2 }}>
+        <Box sx={{ flex: 1 }}>
+          <SectorList />
+        </Box>
+        <Box sx={{ flex: 2 }}>
+          <StockList />
+        </Box>
+      </Box>
+    </Box>
   );
 }

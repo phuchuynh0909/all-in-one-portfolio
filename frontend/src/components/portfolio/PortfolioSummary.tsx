@@ -30,11 +30,20 @@ export default function PortfolioSummary() {
   if (!summary) return <Typography>Loading...</Typography>;
 
   const formatCurrency = (value: number) => {
-    return Number(value) + ' VND';
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'currency',
+      currency: 'VND',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0
+    }).format(value);
   };
 
   const formatPercent = (value: number) => {
-    return Number(value) + '%';
+    return new Intl.NumberFormat('vi-VN', {
+      style: 'percent',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2
+    }).format(value / 100);
   };
 
   return (

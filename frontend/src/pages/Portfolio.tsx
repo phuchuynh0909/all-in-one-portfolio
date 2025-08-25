@@ -5,6 +5,8 @@ import TransactionList from '../components/portfolio/TransactionList';
 import PortfolioSummary from '../components/portfolio/PortfolioSummary';
 import PerformanceCharts from '../components/portfolio/PerformanceCharts';
 import PositionsTable from '../components/portfolio/PositionsTable';
+import PortfolioPieChart from '../components/portfolio/PortfolioPieChart';
+import CurrentPortfolioPieChart from '../components/portfolio/CurrentPortfolioPieChart';
 import { apiGet } from '../lib/api';
 
 type TabPanelProps = {
@@ -31,12 +33,13 @@ function TabPanel(props: TabPanelProps) {
 
 type Position = {
   id: number;
-  symbol: string;
+  ticker: string;
   quantity: number;
-  cost_basis: number;
-  current_value: number;
-  unrealized_gain: number;
-  return_pct: number;
+  purchase_price: number;
+  current_price: number;
+  purchase_date: string;
+  notes?: string;
+  created_at: string;
 };
 
 export default function Portfolio() {
@@ -49,14 +52,7 @@ export default function Portfolio() {
       try {
         const data = await apiGet<Position[]>('/portfolio/positions');
         // Calculate performance metrics for each position
-        const positionsWithMetrics = data.map(pos => ({
-          ...pos,
-          cost_basis: pos.purchase_price * pos.quantity,
-          current_value: pos.current_price * pos.quantity,
-          unrealized_gain: (pos.current_price * pos.quantity) - (pos.purchase_price * pos.quantity),
-          return_pct: ((pos.current_price / pos.purchase_price) - 1) * 100
-        }));
-        setPositions(positionsWithMetrics);
+        setPositions(data);
       } catch (error) {
         console.error('Error loading positions:', error);
       } finally {
@@ -67,7 +63,7 @@ export default function Portfolio() {
     loadPositions();
   }, []);
 
-  const handleChange = (event: React.SyntheticEvent, newValue: number) => {
+  const handleChange = (_: React.SyntheticEvent, newValue: number) => {
     setValue(newValue);
   };
 
@@ -81,8 +77,28 @@ export default function Portfolio() {
       
       {positions.length > 0 && (
         <>
-          <PerformanceCharts positions={positions} />
-          <PositionsTable positions={positions} />
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <PerformanceCharts positions={positions.map(p => ({
+              ...p,
+              cost_basis: p.purchase_price * p.quantity,
+              current_value: p.current_price * p.quantity,
+              unrealized_gain: (p.current_price - p.purchase_price) * p.quantity,
+              return_pct: ((p.current_price / p.purchase_price) - 1) * 100
+            }))} />
+            
+            <Box sx={{ display: 'flex', flexDirection: { xs: 'column', md: 'row' }, gap: 2 }}>
+              <Box sx={{ flex: 1 }}>
+                <CurrentPortfolioPieChart positions={positions} />
+              </Box>
+              <Box sx={{ flex: 1 }}>
+                <PortfolioPieChart tickers={positions.map(p => p.ticker)} />
+              </Box>
+            </Box>
+          </Box>
+
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
+            <PositionsTable positions={positions} />
+          </Box>
         </>
       )}
 

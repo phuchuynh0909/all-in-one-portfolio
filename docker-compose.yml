@@ -2,14 +2,17 @@ version: "3.9"
 services:
   backend:
     build: ./backend
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
     ports:
       - "8000:8000"
     volumes:
-      - ./backend/app:/app/app
+      - ./backend:/app
+      - ./backend/portfolio.db:/app/portfolio.db
     environment:
       - APP_ENVIRONMENT=development
       - APP_PROJECT_NAME=Investment Tracker API
       - APP_API_V1_PREFIX=/api/v1
+      - DATABASE_URL=sqlite:///app/portfolio.db
     networks:
       - appnet
   frontend:

@@ -5,10 +5,11 @@ type Position = {
   id: number;
   ticker: string;
   quantity: number;
-  cost_basis: number;
-  current_value: number;
-  unrealized_gain: number;
-  return_pct: number;
+  purchase_price: number;
+  current_price: number;
+  purchase_date: string;
+  notes?: string;
+  created_at: string;
 };
 
 type PositionsTableProps = {
@@ -31,8 +32,8 @@ export default function PositionsTable({ positions }: PositionsTableProps) {
       valueFormatter: (params) => Math.floor(params.value),
     },
     {
-      field: 'cost_basis',
-      headerName: 'Cost Basis',
+      field: 'purchase_price',
+      headerName: 'Purchase Price',
       flex: 1.2,
       minWidth: 120,
       valueFormatter: (params) => params.value?.toLocaleString('en-US', {
@@ -42,8 +43,8 @@ export default function PositionsTable({ positions }: PositionsTableProps) {
       }),
     },
     {
-      field: 'current_value',
-      headerName: 'Current Value',
+      field: 'current_price',
+      headerName: 'Current Price',
       flex: 1.2,
       minWidth: 120,
       valueFormatter: (params) => params.value?.toLocaleString('en-US', {
@@ -53,22 +54,11 @@ export default function PositionsTable({ positions }: PositionsTableProps) {
       }),
     },
     {
-      field: 'unrealized_gain',
-      headerName: 'Unrealized Gain',
+      field: 'purchase_date',
+      headerName: 'Purchase Date',
       flex: 1.2,
       minWidth: 120,
-      valueFormatter: (params) => params.value?.toLocaleString('en-US', {
-        style: 'currency',
-        currency: 'VND',
-        maximumFractionDigits: 0,
-      }),
-    },
-    {
-      field: 'return_pct',
-      headerName: 'Return %',
-      flex: 1,
-      minWidth: 100,
-      valueFormatter: (params) => `${params.value?.toFixed(2)}%`,
+      valueFormatter: (params) => new Date(params.value).toLocaleDateString(),
     },
   ];
 
@@ -80,7 +70,7 @@ export default function PositionsTable({ positions }: PositionsTableProps) {
         initialState={{
           pagination: { pageSize: 10 },
           sorting: {
-            sortModel: [{ field: 'return_pct', sort: 'desc' }],
+            sortModel: [{ field: 'purchase_date', sort: 'desc' }],
           },
         }}
         pageSizeOptions={[10, 25, 50]}

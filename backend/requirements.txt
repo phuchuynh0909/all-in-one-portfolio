@@ -33,3 +33,9 @@ scikit-learn>=1.4.1
 python-dateutil>=2.9.0
 pykalman>=0.9.5
 vectorbt>=0.26.2
+fastapi-cache2>=0.2.1
+
+# Portfolio optimization
+PyPortfolioOpt>=1.5.4
+scipy>=1.10.0
+

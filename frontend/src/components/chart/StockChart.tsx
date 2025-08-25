@@ -70,7 +70,7 @@ export default function StockChart({ symbol }: StockChartProps) {
 
   // Initialize chart
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    if (!chartContainerRef.current || chartRef.current) return; // Prevent re-initialization if chart exists
 
     // Create and style the legend element
     const legend = document.createElement('div');
@@ -457,83 +457,41 @@ export default function StockChart({ symbol }: StockChartProps) {
       setIsChartReady(false);
       chart.unsubscribeCrosshairMove(crosshairHandler);
     };
-  }, [reports]);
+  }, []); // Empty dependency array since this should only run once
 
-  // Load reports when symbol changes and chart is ready
+  // Fetch data and reports
   useEffect(() => {
-    if (!isChartReady || !candlestickSeriesRef.current) return;
-
-    // Clear existing markers immediately
-    if (markersRef.current) {
-      markersRef.current = markersRef.current.setMarkers([]);
-    }
-
-    const loadReports = async () => {
-      try {
-        const data = await fetchReports(symbol);
-        setReports(data);
-
-      } catch (error) {
-        console.error('Error loading reports:', error);
-      }
-    };
-
-    loadReports();
-
-    // Clear markers when symbol changes or component unmounts
-    return () => {
-    };
-  }, [symbol, isChartReady]);
-
-  // Fetch and update data
-  useEffect(() => {
-    if (!symbol || !chartRef.current || !candlestickSeriesRef.current || !volumeSeriesRef.current) return;
-
-    // Clear existing markers
-    if (candlestickSeriesRef.current) {
-      createSeriesMarkers(candlestickSeriesRef.current, []);
-    }
+    if (!symbol || !chartRef.current) return;
 
     const fetchData = async () => {
       try {
         setLoading(true);
         setError(null);
 
-        const result = await fetchTimeseries(symbol, {
+        // Clear existing markers
+        if (markersRef.current) {
+          markersRef.current = markersRef.current.setMarkers([]);
+        }
+
+        // Fetch both data and reports in parallel
+        const [result, reportsData] = await Promise.all([
+          fetchTimeseries(symbol, {
           interval: "1d",
-          ...getDateRange(360 * 5), // 5 years of data
+          ...getDateRange(360 * 5),
           indicators: [
-            {
-              name: "rsi",
-              params: { period: 14 }
-            },
-            {
-              name: "atr_trailing",
-            },
-            {
-              name: "vwap",
-              params: { window: 200 }
-            },
-            {
-              name: "bvc",
-              params: { 
-                window: 20,
-                kappa: 0.1
-              }
-            },
-            {
-              name: "kalman_zscore",
-              params: { window: 20 }
-            },
-            {
-              name: "yz_volatility",
-              params: { 
-                window: 30,
-                periods: 252  // Annualize using 252 trading days
-              }
-            }
+            { name: "rsi", params: { period: 14 } },
+            { name: "atr_trailing" },
+            { name: "vwap", params: { window: 200 } },
+            { name: "bvc", params: { window: 20, kappa: 0.1 } },
+            { name: "kalman_zscore", params: { window: 20 } },
+            { name: "yz_volatility", params: { window: 30, periods: 252 } }
           ]
-        });
+        }),
+          fetchReports(symbol)
+        ]);
+
+        // Update reports state
+        setReports(reportsData);
 
         // Format data for the chart
         const candleData = result.timestamps.map((timestamp: string, i: number) => ({
@@ -554,67 +512,62 @@ export default function StockChart({ symbol }: StockChartProps) {
         candlestickSeriesRef.current?.setData(candleData);
         volumeSeriesRef.current?.setData(volumeData);
 
-        // Create markers for reports
-        const markers: SeriesMarker<UTCTimestamp>[] = reports
-          .filter(report => report.ngaykn) // Only include reports with dates
-          .map(report => ({
-            time: formatChartTime(report.ngaykn || '') as UTCTimestamp,
-            position: 'aboveBar',
-            color: '#2196F3',
-            text: '📄',
-            shape: 'circle',
-            size: 2,
-            title: `${report.tenbaocao}\n${report.nguon}\n${new Date(report.ngaykn || '').toLocaleDateString()}`,
-          }));
-        // Create new markers
-        if (markers.length > 0) {
-          markersRef.current = createSeriesMarkers(candlestickSeriesRef.current, markers);
-        }
-        
-        // Format RSI data
-        const rsiChartData = formatIndicatorData(result.timestamps, result.indicators?.rsi ?? []);;
-        rsiSeriesRef.current?.setData(rsiChartData);
-        const rsi5ChartData = formatIndicatorData(result.timestamps, result.indicators?.rsi_5 ?? []);
-        rsi5SeriesRef.current?.setData(rsi5ChartData);
-        const timeRange = createConstantLine(rsiChartData, 70);
-        const timeRange2 = createConstantLine(rsiChartData, 30);
-        const zeroLineData = createConstantLine(rsiChartData, 0);
-        overboughtLineRef.current?.setData(timeRange);
-        oversoldLineRef.current?.setData(timeRange2);
-        zeroLineRef.current?.setData(zeroLineData);
+        // Only update additional indicators if chart is ready
+        if (isChartReady) {
+          // Create markers for reports
+          const markers: SeriesMarker<UTCTimestamp>[] = reports
+            .filter(report => report.ngaykn)
+            .map(report => ({
+              time: formatChartTime(report.ngaykn || '') as UTCTimestamp,
+              position: 'aboveBar',
+              color: '#2196F3',
+              text: '📄',
+              shape: 'circle',
+              size: 2,
+              title: `${report.tenbaocao}\n${report.nguon}\n${new Date(report.ngaykn || '').toLocaleDateString()}`,
+            }));
 
-        // Format ATR Trailing Stop data
-        const atrTrailingData = formatIndicatorData(result.timestamps, result.indicators?.atr_trailing ?? []);
-        atrTrailingRef.current?.setData(atrTrailingData);
+          if (markers.length > 0) {
+            markersRef.current = createSeriesMarkers(candlestickSeriesRef.current, markers);
+          }
+          
+          // Format and update all indicators
+          const rsiChartData = formatIndicatorData(result.timestamps, result.indicators?.rsi ?? []);
+          rsiSeriesRef.current?.setData(rsiChartData);
+          const rsi5ChartData = formatIndicatorData(result.timestamps, result.indicators?.rsi_5 ?? []);
+          rsi5SeriesRef.current?.setData(rsi5ChartData);
+          
+          const timeRange = createConstantLine(rsiChartData, 70);
+          const timeRange2 = createConstantLine(rsiChartData, 30);
+          const zeroLineData = createConstantLine(rsiChartData, 0);
+          overboughtLineRef.current?.setData(timeRange);
+          oversoldLineRef.current?.setData(timeRange2);
+          zeroLineRef.current?.setData(zeroLineData);
 
-        // Format VWAP data
-        const vwapHighestData = formatIndicatorData(result.timestamps, result.indicators?.vwap_highest ?? []);
-        const vwapLowestData = formatIndicatorData(result.timestamps, result.indicators?.vwap_lowest ?? []);
-        vwapHighestRef.current?.setData(vwapHighestData);
-        vwapLowestRef.current?.setData(vwapLowestData);
+          const atrTrailingData = formatIndicatorData(result.timestamps, result.indicators?.atr_trailing ?? []);
+          atrTrailingRef.current?.setData(atrTrailingData);
 
-        // Format BVC data
-        const bvcData = formatIndicatorData(result.timestamps, result.indicators?.bvc ?? []);
-        bvcSeriesRef.current?.setData(bvcData);
+          const vwapHighestData = formatIndicatorData(result.timestamps, result.indicators?.vwap_highest ?? []);
+          const vwapLowestData = formatIndicatorData(result.timestamps, result.indicators?.vwap_lowest ?? []);
+          vwapHighestRef.current?.setData(vwapHighestData);
+          vwapLowestRef.current?.setData(vwapLowestData);
 
-        // Format Yang-Zhang Volatility data
-        const yzVolatilityData = formatIndicatorData(result.timestamps, result.indicators?.yz_volatility ?? []);
-        yzVolatilitySeriesRef.current?.setData(yzVolatilityData);
+          const bvcData = formatIndicatorData(result.timestamps, result.indicators?.bvc ?? []);
+          bvcSeriesRef.current?.setData(bvcData);
 
-        // Format Kalman Z-Score data
-        const kalmanZscoreData = formatIndicatorData(result.timestamps, result.indicators?.kalman_zscore ?? []);
-        kalmanZscoreSeriesRef.current?.setData(kalmanZscoreData);
-        const kalmanUpperBound = createConstantLine(kalmanZscoreData, 2);
-        const kalmanLowerBound = createConstantLine(kalmanZscoreData, -2);
-        kalmanZscoreUpperRef.current?.setData(kalmanUpperBound);
-        kalmanZscoreLowerRef.current?.setData(kalmanLowerBound);
+          const yzVolatilityData = formatIndicatorData(result.timestamps, result.indicators?.yz_volatility ?? []);
+          yzVolatilitySeriesRef.current?.setData(yzVolatilityData);
 
-        // Fit the content to visible range
-        const timeScale = chartRef.current?.timeScale();
-        if (timeScale) {
-          const visibleRange = timeScale.getVisibleRange();
-          if (visibleRange) {
-            // Set visible range to exactly one year
+          const kalmanZscoreData = formatIndicatorData(result.timestamps, result.indicators?.kalman_zscore ?? []);
+          kalmanZscoreSeriesRef.current?.setData(kalmanZscoreData);
+          const kalmanUpperBound = createConstantLine(kalmanZscoreData, 2);
+          const kalmanLowerBound = createConstantLine(kalmanZscoreData, -2);
+          kalmanZscoreUpperRef.current?.setData(kalmanUpperBound);
+          kalmanZscoreLowerRef.current?.setData(kalmanLowerBound);
+
+          // Set visible range
+          const timeScale = chartRef.current?.timeScale();
+          if (timeScale) {
             const endTime = Math.floor(Date.now() / 1000);
             const startTime = endTime - 365 * 24 * 60 * 60;
             timeScale.setVisibleRange({
@@ -622,6 +575,8 @@ export default function StockChart({ symbol }: StockChartProps) {
               to: endTime as UTCTimestamp,
             });
           }
+        } else {
+          setIsChartReady(true);
         }
 
       } catch (error) {
@@ -633,7 +588,7 @@ export default function StockChart({ symbol }: StockChartProps) {
     };
 
     fetchData();
-  }, [symbol]);
+  }, [symbol, isChartReady]);
 
 
 
@@ -642,6 +597,12 @@ export default function StockChart({ symbol }: StockChartProps) {
   // Handle resize
   useEffect(() => {
     const handleResize = () => {
+      if (chartRef.current) {
+        chartRef.current.resize(
+          chartContainerRef.current?.clientWidth || 0,
+          chartContainerRef.current?.clientHeight || 0
+        );
+      }
     };
 
     window.addEventListener('resize', handleResize);
