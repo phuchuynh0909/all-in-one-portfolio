@@ -10,8 +10,8 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
-    expose:
-      - "8000"
+    ports:
+      - "8000:8000"  # Expose backend API on port 8000
     volumes:
       - ./backend/portfolio.db:/app/portfolio.db
     environment:
