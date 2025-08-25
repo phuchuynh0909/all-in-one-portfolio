@@ -51,7 +51,7 @@ export default function StockList({
   }, [sectorId, level]);
 
   return (
-    <Box sx={{ height: 400, width: '100%' }}>
+    <Box sx={{ height: 600, width: '100%' }}>
       <Typography variant="h6" gutterBottom>
         Stocks in Sector
       </Typography>

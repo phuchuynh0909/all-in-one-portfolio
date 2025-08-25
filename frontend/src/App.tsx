@@ -15,7 +15,6 @@ import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
 import Home from './pages/Home';
-import Health from './pages/Health';
 import Portfolio from './pages/Portfolio';
 import Chart from './pages/Chart';
 import Sector from './pages/Sector';

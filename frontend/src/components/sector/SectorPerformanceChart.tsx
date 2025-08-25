@@ -22,7 +22,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { Add as AddIcon, Remove as RemoveIcon } from '@mui/icons-material';
-import { apiGet } from '../../lib/api';
+
 
 type TimePeriod = 'YTD' | '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | '10Y' | 'ALL';
 
@@ -43,18 +43,18 @@ const COLORS = [
   '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
 ];
 
-interface SectorData {
-  dates: string[];
-  sectors: string[];
-  returns: number[][];
-  latest_returns: Record<string, number>;
+interface SectorTimeseries {
+  timestamps: string[];
+  sectors: {
+    [key: string]: number[];
+  };
 }
 
 export default function SectorPerformanceChart() {
   const [period, setPeriod] = useState<TimePeriod>('6M');
   const [topN, setTopN] = useState(10);
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
-  const [data, setData] = useState<SectorData | null>(null);
+  const [data, setData] = useState<SectorTimeseries | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -63,13 +63,52 @@ export default function SectorPerformanceChart() {
       try {
         setLoading(true);
         setError(null);
-        const params = new URLSearchParams({
-          period,
-          top_n: topN.toString(),
-          ...(selectedSectors.length > 0 && { sectors: selectedSectors.join(',') })
+        // Calculate start date based on period
+        const endDate = new Date();
+        let startDate = new Date();
+        switch (period) {
+          case '1M':
+            startDate.setMonth(endDate.getMonth() - 1);
+            break;
+          case '3M':
+            startDate.setMonth(endDate.getMonth() - 3);
+            break;
+          case '6M':
+            startDate.setMonth(endDate.getMonth() - 6);
+            break;
+          case '1Y':
+            startDate.setFullYear(endDate.getFullYear() - 1);
+            break;
+          case '3Y':
+            startDate.setFullYear(endDate.getFullYear() - 3);
+            break;
+          case '5Y':
+            startDate.setFullYear(endDate.getFullYear() - 5);
+            break;
+          case '10Y':
+            startDate.setFullYear(endDate.getFullYear() - 10);
+            break;
+          case 'YTD':
+            startDate = new Date(endDate.getFullYear(), 0, 1); // January 1st of current year
+            break;
+          case 'ALL':
+            startDate = new Date(2000, 0, 1); // Default to year 2000
+            break;
+        }
+
+        const result = await fetch('/api/v1/timeseries/sector/3', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            start_date: startDate.toISOString().split('T')[0],
+            end_date: endDate.toISOString().split('T')[0],
+            interval: "1d"
+          })
         });
-        const result = await apiGet<SectorData>(`/sector/performance?${params.toString()}`);
-        setData(result);
+        const data = await result.json();
+        setData(data);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Failed to load sector data');
       } finally {
@@ -78,19 +117,32 @@ export default function SectorPerformanceChart() {
     };
 
     loadData();
-  }, [period, topN, selectedSectors]);
+  }, []);
 
   if (loading) return <Typography>Loading...</Typography>;
   if (error) return <Typography color="error">{error}</Typography>;
   if (!data) return null;
 
-  // Transform data for Recharts
-  const chartData = data.dates.map((date, i) => ({
-    date,
-    ...Object.fromEntries(
-      data.sectors.map((sector, j) => [sector, data.returns[i][j] * 100])
-    ),
-  }));
+  // Transform data for Recharts and calculate percentage changes
+  const chartData = data.timestamps.map((timestamp, index) => {
+    const dataPoint: { [key: string]: any } = { date: timestamp };
+    Object.entries(data.sectors).forEach(([sector, values]) => {
+      // Calculate percentage change from initial value
+      const initialValue = values[0];
+      const currentValue = values[index];
+      const percentageChange = ((currentValue - initialValue) / initialValue) * 100;
+      dataPoint[sector] = Number(percentageChange.toFixed(2));
+    });
+    return dataPoint;
+  });
+
+  // Calculate latest returns for each sector
+  const latestReturns = Object.entries(data.sectors).reduce((acc, [sector, values]) => {
+    const initialValue = values[0];
+    const currentValue = values[values.length - 1];
+    acc[sector] = ((currentValue - initialValue) / initialValue) * 100;
+    return acc;
+  }, {} as Record<string, number>);
 
   return (
     <Card>
@@ -145,10 +197,10 @@ export default function SectorPerformanceChart() {
 
         <Box sx={{ mb: 2 }}>
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {data.sectors.map((sector) => (
+            {Object.keys(data.sectors).map((sector) => (
               <Chip
                 key={sector}
-                label={`${sector} (${(data.latest_returns[sector] * 100).toFixed(1)}%)`}
+                label={`${sector} (${latestReturns[sector].toFixed(1)}%)`}
                 onClick={() => {
                   if (selectedSectors.includes(sector)) {
                     setSelectedSectors(selectedSectors.filter((s) => s !== sector));
@@ -180,7 +232,9 @@ export default function SectorPerformanceChart() {
                 labelFormatter={(label) => new Date(label as string).toLocaleDateString()}
               />
               <Legend />
-              {data.sectors.map((sector, i) => (
+              {Object.keys(data.sectors)
+                .filter(sector => selectedSectors.length === 0 || selectedSectors.includes(sector))
+                .map((sector, i) => (
                 <Line
                   key={sector}
                   type="monotone"

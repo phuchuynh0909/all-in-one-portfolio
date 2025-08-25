@@ -323,13 +323,15 @@ def calculate_macd(
 
 
 async def get_sector_timeseries(
-    sector_level: int
+    sector_level: str
 ) -> SectorTimeseries:
+    
+    print(sector_level)
+    
     """Get sector timeseries data with optional indicators."""
     dt = DeltaTable(settings.sector_delta_table, storage_options=_delta_storage_options())
-    pdf = dt.to_pyarrow_table(filters=[("sector_type", "=", sector_level)]).to_pandas()
+    pdf = dt.to_pyarrow_table(filters=[("sector_type", "==", int(sector_level))]).to_pandas()
 
-    print(pdf)
     if not pdf.empty:
         pdf["date"] = pd.to_datetime(pdf["date"])
         pdf = pdf.sort_values(["sector_name", "date"])  # stable order
@@ -353,7 +355,7 @@ async def get_sector_timeseries(
             interval="1d",
             meta={},
             timestamps=timestamps,
-            data=sectors_data
+            sector_data=sectors_data
         )
     
     # Return empty SectorTimeseries if no data
@@ -362,5 +364,5 @@ async def get_sector_timeseries(
         interval="1d",
         meta={},
         timestamps=[],
-        data=[]
+        sector_data=[]
     )

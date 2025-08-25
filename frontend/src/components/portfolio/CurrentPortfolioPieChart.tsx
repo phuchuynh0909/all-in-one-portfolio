@@ -1,5 +1,6 @@
 import { Card, CardContent, Typography, Box } from '@mui/material';
 import { PieChart } from '@mui/x-charts/PieChart';
+import { ChartsTooltipContainer, useItemTooltip } from '@mui/x-charts/ChartsTooltip';
 
 interface CurrentPortfolioPieChartProps {
   positions: Array<{
@@ -59,34 +60,48 @@ export default function CurrentPortfolioPieChart({ positions }: CurrentPortfolio
                 data: pieData,
                 highlightScope: { fade: 'global', highlight: 'item' },
                 arcLabel: 'label',
-                tooltip: {
-                  trigger: 'item',
-                },
               },
             ]}
-            tooltip={{
-              formatter: (item: any) => {
-                const data = pieData.find(d => d.id === item.id);
-                if (!data) return item.label;
-                return {
-                  title: `${item.id} (${(item.value * 100).toFixed(1)}%)`,
-                  body: [
-                    `-----------------------`,
-                    `Quantity: ${Math.round(data.totalQuantity)}`,
-                    `Market Value: ${formatCurrency(data.totalValue)}`,
-                    `Weight: ${(item.value * 100).toFixed(1)}%`
-                  ].join('\n')
-                };
+            slotProps={{
+              legend: {
+                position: { vertical: 'bottom', horizontal: 'center' },
+              },
+              tooltip: {
+                trigger: 'item',
+                renderer: (params) => {
+                  const { series, itemData } = params;
+                  const data = pieData.find(d => d.id === itemData.id);
+                  if (!data) return null;
+                  return (
+                    <ChartsTooltipContainer>
+                      <table style={{ borderSpacing: '8px' }}>
+                        <tbody>
+                          <tr>
+                            <td colSpan={2} style={{ fontWeight: 'bold' }}>
+                              {itemData.id}
+                            </td>
+                          </tr>
+                          <tr>
+                            <td>Quantity:</td>
+                            <td style={{ textAlign: 'right' }}>{Math.round(data.totalQuantity)}</td>
+                          </tr>
+                          <tr>
+                            <td>Market Value:</td>
+                            <td style={{ textAlign: 'right' }}>{formatCurrency(data.totalValue)}</td>
+                          </tr>
+                          <tr>
+                            <td>Weight:</td>
+                            <td style={{ textAlign: 'right' }}>{(itemData.value * 100).toFixed(1)}%</td>
+                          </tr>
+                        </tbody>
+                      </table>
+                    </ChartsTooltipContainer>
+                  );
+                }
               }
             }}
             height={500}
             margin={{ right: 5 }}
-            slotProps={{
-              legend: {
-
-                position: { vertical: 'bottom', horizontal: 'center' },
-              },
-            }}
           />
         </Box>
       </CardContent>

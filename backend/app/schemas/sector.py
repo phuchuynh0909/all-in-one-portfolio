@@ -71,8 +71,8 @@ class SectorTimeseriesData(BaseModel):
 
 
 class SectorTimeseries(BaseModel):
-    sector_level: int
+    sector_level: str
     interval: str = Field(default="1d", description="Data interval (e.g., 1d, 1h)")
     meta: Dict = Field(default_factory=dict)
     timestamps: List[str]
-    sector_data: List[SectorTimeseriesData]
+    sector_data: Optional[List[SectorTimeseriesData]] = None

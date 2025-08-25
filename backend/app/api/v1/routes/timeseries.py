@@ -25,7 +25,7 @@ async def get_symbol_timeseries(
 
 @router.post("/sector/{sector_level}", response_model=SectorTimeseries)
 async def sector_timeseries(
-    sector_level: int
+    sector_level: str
 ) -> TimeseriesResponse:
     """
     Get timeseries data for a sector with optional technical indicators.

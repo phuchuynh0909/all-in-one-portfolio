@@ -3,7 +3,6 @@ import { Box, CircularProgress, Typography } from '@mui/material';
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 import type { SeriesMarker } from 'lightweight-charts';
 import type { UTCTimestamp } from 'lightweight-charts';
-import type { IPaneApi } from 'lightweight-charts';
 import { 
   fetchTimeseries, 
   formatIndicatorData, 
@@ -45,7 +44,7 @@ export default function StockChart({ symbol }: StockChartProps) {
   const [error, setError] = useState<string | null>(null);
   const [isChartReady, setIsChartReady] = useState(false);
   const toolTipWidth = 200;
-  const legendWidth = 400;
+  const legendWidth = 450;
 
   // Helper function to calculate percentage change from previous close
   const calculatePercentageChange = (prevClose: number, currentClose: number): string => {
@@ -72,51 +71,7 @@ export default function StockChart({ symbol }: StockChartProps) {
   useEffect(() => {
     if (!chartContainerRef.current || chartRef.current) return; // Prevent re-initialization if chart exists
 
-    // Create and style the legend element
-    const legend = document.createElement('div');
-    legend.style.cssText = `
-      position: absolute;
-      left: 12px;
-      top: 12px;
-      z-index: 2;
-      font-size: 14px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
-      line-height: 18px;
-      font-weight: 300;
-      width: ${legendWidth}px;
-      padding: 8px 12px;
-      background: rgba(18, 18, 18, 0.8);
-      color: #fff;
-      border-radius: 4px;
-      box-shadow: 0 2px 5px 0 rgba(117, 134, 150, 0.45);
-    `;
-    chartContainerRef.current.appendChild(legend);
 
-    // Create and style the tooltip html element
-    const toolTip = document.createElement('div');
-    toolTip.style.cssText = `
-      width: ${toolTipWidth}px;
-      position: absolute;
-      display: none;
-      padding: 8px;
-      box-sizing: border-box;
-      font-size: 12px;
-      text-align: left;
-      z-index: 1000;
-      top: 12px;
-      left: 12px;
-      pointer-events: none;
-      border-radius: 4px;
-      border-bottom: none;
-      box-shadow: 0 2px 5px 0 rgba(117, 134, 150, 0.45);
-      font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
-      -webkit-font-smoothing: antialiased;
-      -moz-osx-font-smoothing: grayscale;
-      background: rgba(255, 255, 255, 0.25);
-      color: black;
-      border-color: rgba(239, 83, 80, 1);
-    `;
-    chartContainerRef.current.appendChild(toolTip);
 
 
 
@@ -344,7 +299,102 @@ export default function StockChart({ symbol }: StockChartProps) {
     kalmanZscoreLowerRef.current = kalmanZscoreLower;
     // Cleanup
 
-    const crosshairHandler = (param: any) => {
+    // Signal that chart is ready
+    setIsChartReady(true);
+
+    return () => {
+      if (chartRef.current) {
+        chartRef.current.remove();
+        chartRef.current = null;
+      }
+      candlestickSeriesRef.current = null;
+      volumeSeriesRef.current = null;
+      rsiSeriesRef.current = null;
+      rsi5SeriesRef.current = null;
+      overboughtLineRef.current = null;
+      oversoldLineRef.current = null;
+      atrTrailingRef.current = null;
+      vwapHighestRef.current = null;
+      vwapLowestRef.current = null;
+      bvcSeriesRef.current = null;
+      zeroLineRef.current = null;
+      yzVolatilitySeriesRef.current = null;
+      kalmanZscoreSeriesRef.current = null;
+      kalmanZscoreUpperRef.current = null;
+      kalmanZscoreLowerRef.current = null;
+      markersRef.current = null;
+      setIsChartReady(false);
+    };
+  }, []); // Empty dependency array since this should only run once
+
+  // Setup legend and crosshair handler
+  useEffect(() => {
+    if (!chartRef.current || !chartContainerRef.current) return;
+
+    // Create and style the legend and tooltip elements
+    const legendElement = document.createElement('div');
+    const toolTipElement = document.createElement('div');
+
+    legendElement.style.cssText = `
+      position: absolute;
+      left: 12px;
+      top: 12px;
+      z-index: 2;
+      font-size: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
+      line-height: 18px;
+      font-weight: 300;
+      width: ${legendWidth}px;
+      padding: 8px 12px;
+      background: rgba(18, 18, 18, 0.8);
+      color: #fff;
+      border-radius: 4px;
+      box-shadow: 0 2px 5px 0 rgba(117, 134, 150, 0.45);
+    `;
+
+    toolTipElement.style.cssText = `
+      width: ${toolTipWidth}px;
+      position: absolute;
+      display: none;
+      padding: 8px;
+      box-sizing: border-box;
+      font-size: 12px;
+      text-align: left;
+      z-index: 1000;
+      top: 12px;
+      left: 12px;
+      pointer-events: none;
+      border-radius: 4px;
+      border-bottom: none;
+      box-shadow: 0 2px 5px 0 rgba(117, 134, 150, 0.45);
+      font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+      background: rgba(255, 255, 255, 0.25);
+      color: black;
+      border-color: rgba(239, 83, 80, 1);
+    `;
+
+    // Set initial legend content
+    legendElement.innerHTML = `
+      <div style="font-size: 16px; margin-bottom: 4px;">${symbol}</div>
+      <div style="font-size: 12px; margin-bottom: 8px; opacity: 0.8;">Loading...</div>
+      <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px;">
+        <div>
+          O: <span>--</span>
+          H: <span>--</span>
+          L: <span>--</span>
+          C: <span>--</span>
+        </div>
+        <div>Change: <span>--</span></div>
+      </div>
+    `;
+
+    chartContainerRef.current.appendChild(legendElement);
+    chartContainerRef.current.appendChild(toolTipElement);
+
+    // Subscribe to crosshair move
+    const subscription = chartRef.current.subscribeCrosshairMove((param: any) => {
       // Update legend with OHLC data
       const candleData = param.seriesData.get(candlestickSeriesRef.current);
       if (candleData) {
@@ -359,7 +409,7 @@ export default function StockChart({ symbol }: StockChartProps) {
         const percentChange = calculatePercentageChange(prevClose, close);
         const color = close >= prevClose ? '#4CAF50' : '#F44336';
         
-        legend.innerHTML = `
+        legendElement.innerHTML = `
           <div style="font-size: 16px; margin-bottom: 4px;">${symbol}</div>
           <div style="font-size: 12px; margin-bottom: 8px; opacity: 0.8;">${formatDate(time)}</div>
           <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px;">
@@ -382,7 +432,7 @@ export default function StockChart({ symbol }: StockChartProps) {
         param.point.y < 0 ||
         param.point.y > chartContainerRef.current!.clientHeight
       ) {
-        toolTip.style.display = 'none';
+        toolTipElement.style.display = 'none';
       } else {
         const hoveredReport = reports.find((report: Report) => {
           if (!report.ngaykn) return false;
@@ -393,8 +443,8 @@ export default function StockChart({ symbol }: StockChartProps) {
         });
 
         if (hoveredReport) {
-          toolTip.style.display = 'block';
-          toolTip.innerHTML = `
+          toolTipElement.style.display = 'block';
+          toolTipElement.innerHTML = `
             <div style="color: rgba(239, 83, 80, 1)">📄 Research Report</div>
             <div style="font-size: 14px; margin: 4px 0px; color: black">
               ${hoveredReport.tenbaocao}
@@ -405,8 +455,8 @@ export default function StockChart({ symbol }: StockChartProps) {
           `;
 
           let left = param.point.x;
-          const timeScaleWidth = chart.timeScale().width();
-          const priceScaleWidth = chart.priceScale('left').width();
+          const timeScaleWidth = chartRef.current.timeScale().width();
+          const priceScaleWidth = chartRef.current.priceScale('left').width();
           const halfTooltipWidth = toolTipWidth / 2;
           const newLeft = Math.max(
             Math.min(
@@ -416,48 +466,28 @@ export default function StockChart({ symbol }: StockChartProps) {
             priceScaleWidth
           );
 
-          toolTip.style.left = newLeft + 'px';
-          toolTip.style.top = '0px';
+          toolTipElement.style.left = newLeft + 'px';
+          toolTipElement.style.top = '0px';
         } else {
-          toolTip.style.display = 'none';
+          toolTipElement.style.display = 'none';
         }
       }
-    }
-    // Subscribe to crosshair move
-    chart.subscribeCrosshairMove(crosshairHandler);
-    // Signal that chart is ready
-    setIsChartReady(true);
+    });
 
     return () => {
-      if (chartContainerRef.current?.contains(toolTip)) {
-        chartContainerRef.current.removeChild(toolTip);
+      if (chartContainerRef.current) {
+        if (chartContainerRef.current.contains(legendElement)) {
+          chartContainerRef.current.removeChild(legendElement);
+        }
+        if (chartContainerRef.current.contains(toolTipElement)) {
+          chartContainerRef.current.removeChild(toolTipElement);
+        }
       }
-      if (chartContainerRef.current?.contains(legend)) {
-        chartContainerRef.current.removeChild(legend);
+      if (chartRef.current) {
+        chartRef.current.unsubscribeCrosshairMove(subscription);
       }
-
-      chart.remove();
-      chartRef.current = null;
-      candlestickSeriesRef.current = null;
-      volumeSeriesRef.current = null;
-      rsiSeriesRef.current = null;
-      rsi5SeriesRef.current = null;
-      overboughtLineRef.current = null;
-      oversoldLineRef.current = null;
-      atrTrailingRef.current = null;
-      vwapHighestRef.current = null;
-      vwapLowestRef.current = null;
-      bvcSeriesRef.current = null;
-      zeroLineRef.current = null;
-      yzVolatilitySeriesRef.current = null;
-      kalmanZscoreSeriesRef.current = null;
-      kalmanZscoreUpperRef.current = null;
-      kalmanZscoreLowerRef.current = null;
-      markersRef.current = null;
-      setIsChartReady(false);
-      chart.unsubscribeCrosshairMove(crosshairHandler);
     };
-  }, []); // Empty dependency array since this should only run once
+  }, [symbol, reports]); // Depend on symbol and reports
 
   // Fetch data and reports
   useEffect(() => {

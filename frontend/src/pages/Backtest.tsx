@@ -121,11 +121,19 @@ export default function BacktestPage() {
     setStrategy(newStrategy);
   };
 
-  const addIdToTrades = (trades: Trade[]) => 
-    trades.map((trade, index) => ({
-      ...trade,
-      id: `${trade.symbol}-${trade.date}-${index}`
-    }));
+  const addIdAndDaysToTrades = (trades: Trade[], isOpenTrades: boolean) => 
+    trades.map((trade, index) => {
+      const entryDate = new Date(trade.date);
+      const days = isOpenTrades 
+        ? Math.floor((new Date().getTime() - entryDate.getTime()) / (1000 * 60 * 60 * 24))
+        : trade.trading_days;
+
+      return {
+        ...trade,
+        id: `${trade.symbol}-${trade.date}-${index}`,
+        trading_days: days
+      };
+    });
 
   return (
     <Container maxWidth="xl">
@@ -206,11 +214,16 @@ export default function BacktestPage() {
               </Typography>
               <Box sx={{ width: '100%' }}>
                 <DataGrid<Trade>
-                  rows={addIdToTrades((rawData as BacktestData).open_trades)}
+                  rows={addIdAndDaysToTrades((rawData as BacktestData).open_trades, true)}
                   columns={columns}
                   disableSelectionOnClick
                   hideFooter
                   autoHeight
+                  initialState={{
+                    sorting: {
+                      sortModel: [{ field: 'date', sort: 'desc' }],
+                    },
+                  }}
                   components={{
                     Toolbar: GridToolbar,
                   }}
@@ -238,7 +251,7 @@ export default function BacktestPage() {
               </Typography>
               <Box sx={{ width: '100%' }}>
                 <DataGrid<Trade>
-                  rows={addIdToTrades((rawData as BacktestData).closed_trades)}
+                  rows={addIdAndDaysToTrades((rawData as BacktestData).closed_trades, false)}
                   columns={columns}
                   disableSelectionOnClick
                   hideFooter

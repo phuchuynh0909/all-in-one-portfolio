@@ -46,3 +46,4 @@ class StockSymbol(Base):
     vonhoa_d = Column(DECIMAL(20, 8), nullable=True)
     created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
     updated_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))
+

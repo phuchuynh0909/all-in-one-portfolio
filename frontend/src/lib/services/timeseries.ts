@@ -87,3 +87,30 @@ export const timestampToDate = (timestamp: string): UTCTimestamp =>
 
 export const formatChartTime = (timestamp: string): UTCTimestamp => 
   (new Date(timestamp).getTime() / 1000) as UTCTimestamp;
+
+export interface SectorData {
+  id: number;
+  name: string;
+  data: number[];
+}
+
+export interface SectorTimeseries {
+  timestamps: string[];
+  sector_data: SectorData[];
+}
+
+export const fetchSectorTimeseries = async (level: number, params: TimeseriesRequest): Promise<SectorTimeseries> => {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/sector/${level}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+};
