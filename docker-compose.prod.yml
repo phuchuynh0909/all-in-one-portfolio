@@ -14,6 +14,8 @@ services:
       - "8000:8000"  # Expose backend API on port 8000
     volumes:
       - ./backend/portfolio.db:/app/portfolio.db
+    env_file:
+      - prod.env
     environment:
       - APP_ENVIRONMENT=production
       - APP_PROJECT_NAME=Investment Tracker API
