@@ -23,6 +23,11 @@ class Settings(BaseSettings):
         "http://127.0.0.1:3000",
         "http://localhost",
         "http://127.0.0.1",
+        "http://localhost:8080",
+        "https://phuchuynh.xyz",
+        "https://www.phuchuynh.xyz",
+        "https://api.phuchuynh.xyz",
+        "http://api.phuchuynh.xyz",
         "*",
     ]
 
