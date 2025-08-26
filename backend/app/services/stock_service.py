@@ -58,7 +58,7 @@ def _load_delta_stocks(
     """Load OHLCV from Delta table using predicate pushdown via PyArrow filters."""
     # Load watchlist if no symbols provided
     if not symbols:
-        watchlist_path = os.path.join(settings.model_path, "watchlist.csv")
+        watchlist_path = os.path.join("models", "watchlist.csv")
         if os.path.exists(watchlist_path):
             with open(watchlist_path, 'r') as f:
                 symbols = [line.strip() for line in f if line.strip()]

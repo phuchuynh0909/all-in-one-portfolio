@@ -13,6 +13,7 @@ services:
     ports:
       - "8000:8000"  # Expose backend API on port 8000
     volumes:
+      - ./backend/models:/app/models
       - ./backend/portfolio.db:/app/app/portfolio.db
     env_file:
       - prod.env
