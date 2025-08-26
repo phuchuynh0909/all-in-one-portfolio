@@ -79,12 +79,7 @@ export default function PositionList() {
       flex: 1.2,
       minWidth: 120,
       valueFormatter: (params: any) => {
-        return params.value?.toLocaleString('en-US', {
-          style: 'currency',
-          currency: 'VND',
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        });
+        return Math.round(params.value * 100) / 100;
       },
     },
     {

@@ -9,7 +9,6 @@ class PositionBase(BaseModel):
     ticker: str = Field(..., min_length=1, max_length=10)
     quantity: Decimal = Field(..., gt=0)
     purchase_price: Decimal = Field(..., gt=0)
-    current_price: Optional[Decimal] = None
     purchase_date: date
     notes: Optional[str] = None
 
@@ -20,6 +19,7 @@ class PositionCreate(PositionBase):
 
 class Position(PositionBase):
     id: int
+    current_price: Optional[Decimal] = None  # Computed field, not stored in DB
     created_at: datetime
 
     class Config:
@@ -102,4 +102,25 @@ class OptimizationResult(BaseModel):
     expected_return: float | None = None
     volatility: float | None = None
     sharpe_ratio: float | None = None
+
+
+class ClosePositionRequest(BaseModel):
+    """Request body for closing a position."""
+    position_id: int = Field(..., gt=0)
+    quantity_to_close: Decimal = Field(..., gt=0)
+    closing_price: Decimal = Field(..., gt=0)
+    closing_date: date
+    fees: Optional[Decimal] = Field(default=0, ge=0)
+    notes: Optional[str] = None
+
+
+class ClosePositionResponse(BaseModel):
+    """Response for closing a position operation."""
+    success: bool
+    message: str
+    position_updated: bool  # True if position was updated, False if deleted
+    remaining_quantity: Optional[Decimal] = None
+    transaction_id: int
+    realized_pl: Decimal
+    realized_pl_pct: Decimal
 

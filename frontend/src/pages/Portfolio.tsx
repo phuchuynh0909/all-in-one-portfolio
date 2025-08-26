@@ -47,19 +47,20 @@ export default function Portfolio() {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const loadPositions = async () => {
-      try {
-        const data = await apiGet<Position[]>('/portfolio/positions');
-        // Calculate performance metrics for each position
-        setPositions(data);
-      } catch (error) {
-        console.error('Error loading positions:', error);
-      } finally {
-        setLoading(false);
-      }
-    };
+  const loadPositions = async () => {
+    try {
+      setLoading(true);
+      const data = await apiGet<Position[]>('/portfolio/positions');
+      // Calculate performance metrics for each position
+      setPositions(data);
+    } catch (error) {
+      console.error('Error loading positions:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
+  useEffect(() => {
     loadPositions();
   }, []);
 
@@ -97,7 +98,7 @@ export default function Portfolio() {
           </Box>
 
           <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, marginTop: 2 }}>
-            <PositionsTable positions={positions} />
+            <PositionsTable positions={positions} onPositionUpdate={loadPositions} />
           </Box>
         </>
       )}

@@ -7,7 +7,7 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./backend/portfolio.db:/app/portfolio.db
+      - ./backend/portfolio.db:/app/app/portfolio.db
     environment:
       - APP_ENVIRONMENT=development
       - APP_PROJECT_NAME=Investment Tracker API
@@ -21,8 +21,16 @@ services:
     ports:
       - "5173:5173"
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - ./frontend/src:/app/src
+      - ./frontend/public:/app/public
+      - ./frontend/index.html:/app/index.html
+      - ./frontend/vite.config.ts:/app/vite.config.ts
+      - ./frontend/tsconfig.json:/app/tsconfig.json
+      - ./frontend/tsconfig.app.json:/app/tsconfig.app.json
+      - ./frontend/tsconfig.node.json:/app/tsconfig.node.json
+      - ./frontend/package.json:/app/package.json
+      - ./frontend/package-lock.json:/app/package-lock.json
+      - frontend_node_modules:/app/node_modules
     environment:
       - VITE_API_BASE_URL=http://localhost:8000/api/v1
     depends_on:
@@ -32,3 +40,6 @@ services:
 networks:
   appnet:
     driver: bridge
+
+volumes:
+  frontend_node_modules:

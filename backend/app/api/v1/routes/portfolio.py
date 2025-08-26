@@ -13,6 +13,8 @@ from app.schemas.portfolio import (
     PortfolioSummary,
     OptimizationRequest,
     OptimizationResult,
+    ClosePositionRequest,
+    ClosePositionResponse,
 )
 from app.services import portfolio_service
 
@@ -59,6 +61,28 @@ def delete_position(position_id: int, db: Session = Depends(get_db)) -> dict:
     return {"status": "success"}
 
 
+@router.post("/positions/close", response_model=ClosePositionResponse)
+def close_position(
+    request: ClosePositionRequest,
+    db: Session = Depends(get_db),
+) -> ClosePositionResponse:
+    """
+    Close a position (partially or fully) and create a corresponding sell transaction.
+    
+    This endpoint:
+    - Validates the position exists and has sufficient quantity
+    - Calculates realized P/L
+    - Creates a sell transaction
+    - Updates or deletes the position based on remaining quantity
+    """
+    try:
+        return portfolio_service.close_position(db, request)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error closing position: {str(e)}")
+
+
 @router.post("/transactions", response_model=Transaction)
 def create_transaction(
     transaction: TransactionCreate,
@@ -80,6 +104,13 @@ def get_transaction(
     if not transaction:
         raise HTTPException(status_code=404, detail="Transaction not found")
     return transaction
+
+
+@router.delete("/transactions/{transaction_id}")
+def delete_transaction(transaction_id: int, db: Session = Depends(get_db)) -> dict:
+    if not portfolio_service.delete_transaction(db, transaction_id):
+        raise HTTPException(status_code=404, detail="Transaction not found")
+    return {"status": "success"}
 
 
 @router.post("/investment", response_model=InvestmentAmount)

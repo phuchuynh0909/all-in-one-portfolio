@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
+import Chip from '@mui/material/Chip';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
 import type { GridColDef } from '@mui/x-data-grid';
 import EditIcon from '@mui/icons-material/Edit';
@@ -20,17 +21,39 @@ interface Transaction {
   notes?: string;
 }
 
+interface TransactionWithPL extends Transaction {
+  realized_pl?: number;
+}
+
 export default function TransactionList() {
-  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [transactions, setTransactions] = useState<TransactionWithPL[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [formOpen, setFormOpen] = useState(false);
   const [editTransaction, setEditTransaction] = useState<Transaction | undefined>();
 
+  const calculateRealizedPL = (transactions: Transaction[]): TransactionWithPL[] => {
+    return transactions.map(transaction => {
+      // Sell transactions - proper P/L calculation
+      const sellingPrice = transaction.close_price || transaction.price; // Actual selling price
+      const referencePrice = transaction.price; // Reference/purchase price for comparison
+      const fees = transaction.fees || 0;
+      const transactionPL = (sellingPrice - referencePrice) * transaction.quantity - fees;
+      
+      return {
+        ...transaction,
+        realized_pl: transactionPL
+      };
+    });
+  };
+
   const loadTransactions = () => {
     setLoading(true);
     apiGet<Transaction[]>('/portfolio/transactions')
-      .then(setTransactions)
+      .then(data => {
+        const transactionsWithPL = calculateRealizedPL(data);
+        setTransactions(transactionsWithPL);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   };
@@ -39,9 +62,21 @@ export default function TransactionList() {
     loadTransactions();
   }, []);
 
-  const handleEdit = (transaction: Transaction) => {
-    setEditTransaction(transaction);
+  const handleEdit = (transaction: TransactionWithPL) => {
+    // Remove the realized_pl field when editing
+    const { realized_pl, ...editableTransaction } = transaction;
+    setEditTransaction(editableTransaction);
     setFormOpen(true);
+  };
+
+  const formatCurrency = (value: number) => {
+    const rounded = Math.round((value || 0) * 100) / 100;
+    return rounded.toLocaleString('vi-VN', {
+      style: 'currency',
+      currency: 'VND',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    });
   };
 
   const handleDelete = async (id: number) => {
@@ -69,15 +104,6 @@ export default function TransactionList() {
       minWidth: 100 
     },
     {
-      field: 'transaction_type',
-      headerName: 'Type',
-      flex: 0.8,
-      minWidth: 80,
-      valueFormatter: (params: any) => {
-        return params.value?.toUpperCase();
-      },
-    },
-    {
       field: 'quantity',
       headerName: 'Quantity',
       flex: 1,
@@ -92,12 +118,7 @@ export default function TransactionList() {
       flex: 1.2,
       minWidth: 120,
       valueFormatter: (params: any) => {
-        return params.value?.toLocaleString('en-US', {
-          style: 'currency',
-          currency: 'VND',
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        });
+        return Math.round(params.value * 100) / 100;
       },
     },
     {
@@ -106,12 +127,7 @@ export default function TransactionList() {
       flex: 1.2,
       minWidth: 120,
       valueFormatter: (params: any) => {
-        return params.value?.toLocaleString('en-US', {
-          style: 'currency',
-          currency: 'VND',
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        });
+        return Math.round(params.value * 100) / 100;
       },
     },
     {
@@ -126,12 +142,27 @@ export default function TransactionList() {
       flex: 1,
       minWidth: 100,
       valueFormatter: (params: any) => {
-        return params.value?.toLocaleString('en-US', {
-          style: 'currency',
-          currency: 'VND',
-          minimumFractionDigits: 2,
-          maximumFractionDigits: 2,
-        });
+        return Math.round(params.value * 100) / 100;
+      },
+    },
+    {
+      field: 'realized_pl',
+      headerName: 'Realized P/L',
+      flex: 1.3,
+      minWidth: 130,
+      renderCell: (params: any) => {
+        const value = params.value;
+        const rounded = Math.round(value * 100) / 100;
+        const color = rounded >= 0 ? 'success' : 'error';
+        
+        return (
+          <Chip
+            label={formatCurrency(rounded)}
+            color={color}
+            variant="outlined"
+            size="small"
+          />
+        );
       },
     },
     { 
