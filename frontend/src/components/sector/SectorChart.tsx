@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import {
   Box,
   Typography,
@@ -16,8 +16,11 @@ import {
   OutlinedInput,
 } from '@mui/material';
 import { LineChart } from '@mui/x-charts/LineChart';
+import { DatePicker } from '@mui/x-date-pickers/DatePicker';
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
+import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
-type TimePeriod = 'YTD' | '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | '10Y' | 'ALL';
+type TimePeriod = 'YTD' | '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | '10Y' | 'ALL' | 'CUSTOM';
 
 const PERIODS: { value: TimePeriod; label: string }[] = [
   { value: 'YTD', label: 'YTD' },
@@ -29,6 +32,7 @@ const PERIODS: { value: TimePeriod; label: string }[] = [
   { value: '5Y', label: '5Y' },
   { value: '10Y', label: '10Y' },
   { value: 'ALL', label: 'All' },
+  { value: 'CUSTOM', label: 'Custom' },
 ];
 
 const COLORS = [
@@ -68,6 +72,9 @@ const getStartDateForPeriod = (period: TimePeriod): string => {
     case '10Y':
       startDate = new Date(now.getFullYear() - 10, now.getMonth(), now.getDate());
       break;
+    case 'CUSTOM':
+      startDate = new Date('2020-01-01'); // Fallback for custom, should not be used
+      break;
     default: // 'ALL'
       startDate = new Date('2020-01-01'); // Start from a reasonable past date
   }
@@ -84,8 +91,10 @@ export default function SectorChart({
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [period, setPeriod] = useState<TimePeriod>('6M');
+  const [customStartDate, setCustomStartDate] = useState<Date | null>(null);
   const [topN, setTopN] = useState<number>(10);
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
+  const [dateRangeMessage, setDateRangeMessage] = useState<string>('');
 
   useEffect(() => {
     const loadData = async () => {
@@ -111,12 +120,25 @@ export default function SectorChart({
   }, [level]); // Only reload when level changes, not period
 
   // Filter data based on selected period (frontend filtering)
-  const filterDataByPeriod = (timestamps: string[], sectorData: any[], period: TimePeriod) => {
+  const filterDataByPeriod = (timestamps: string[], sectorData: any[], period: TimePeriod, customDate?: Date | null) => {
     if (period === 'ALL') {
       return { timestamps, sectorData };
     }
 
-    const startDate = getStartDateForPeriod(period);
+    let startDate: string;
+    
+    if (period === 'CUSTOM') {
+      if (customDate) {
+        startDate = customDate.toISOString().split('T')[0];
+      } else {
+        // If CUSTOM is selected but no date provided, use 1 year ago
+        const fallbackDate = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000);
+        startDate = fallbackDate.toISOString().split('T')[0];
+      }
+    } else {
+      startDate = getStartDateForPeriod(period);
+    }
+    
     const startTime = new Date(startDate).getTime();
     
     // Find the index where data should start
@@ -125,8 +147,14 @@ export default function SectorChart({
     });
 
     if (startIndex === -1) {
-      // If no data found for the period, return empty
-      return { timestamps: [], sectorData: [] };
+      // If no data found for the period (requested date is after all available data), return full dataset
+      return { timestamps, sectorData };
+    }
+    
+    // Check if requested date is before all available data
+    if (startIndex === 0 && new Date(timestamps[0]).getTime() > startTime) {
+      // Requested date is before all available data, return full dataset
+      return { timestamps, sectorData };
     }
 
     // Filter timestamps
@@ -144,16 +172,49 @@ export default function SectorChart({
     };
   };
 
+  // Memoize the filtered data to prevent multiple calculations during state transitions
+  const filteredData = useMemo(() => {
+    if (!data || !data.sector_data) {
+      setDateRangeMessage('');
+      return null;
+    }
+
+    // Skip processing if CUSTOM period is selected but no date is set yet
+    if (period === 'CUSTOM' && !customStartDate) {
+      setDateRangeMessage('');
+      return null;
+    }
+
+    // Check date range for CUSTOM period and set message
+    if (period === 'CUSTOM' && customStartDate && data.timestamps.length > 0) {
+      const requestedTime = customStartDate.getTime();
+      const firstDataTime = new Date(data.timestamps[0]).getTime();
+      const lastDataTime = new Date(data.timestamps[data.timestamps.length - 1]).getTime();
+      
+      if (requestedTime < firstDataTime) {
+        const firstDataDate = new Date(data.timestamps[0]).toLocaleDateString();
+        setDateRangeMessage(`⚠️ Selected date is before available data. Showing data from ${firstDataDate} onwards.`);
+      } else if (requestedTime > lastDataTime) {
+        setDateRangeMessage(`⚠️ Selected date is after available data. Showing all available data.`);
+      } else {
+        setDateRangeMessage('');
+      }
+    } else {
+      setDateRangeMessage('');
+    }
+
+    // Apply period filtering first
+    return filterDataByPeriod(data.timestamps, data.sector_data, period, customStartDate);
+  }, [data, period, customStartDate]);
+
   // Calculate normalized performance data and set default selections
   useEffect(() => {
-    if (!data || !data.sector_data) {
+    if (!filteredData) {
       setSelectedSectors([]);
       return;
     }
 
-    // Apply period filtering first
-    const { sectorData: filteredSectorData } = 
-      filterDataByPeriod(data.timestamps, data.sector_data, period);
+    const { sectorData: filteredSectorData } = filteredData;
 
     // Calculate final performance for each sector (like Streamlit)
     const sectorPerformance: Array<{ sector: string; performance: number }> = [];
@@ -173,15 +234,14 @@ export default function SectorChart({
     sectorPerformance.sort((a, b) => b.performance - a.performance);
     const topSectors = sectorPerformance.slice(0, topN).map(item => item.sector);
     setSelectedSectors(topSectors);
-  }, [data, topN, period]); // Added period dependency
+  }, [filteredData, topN]); // Now depends only on filtered data and topN
 
   if (loading) return <CircularProgress />;
   if (error) return <Typography color="error">{error}</Typography>;
-  if (!data || !data.sector_data) return null;
+  if (!data || !data.sector_data || !filteredData) return null;
 
-  // Apply period filtering
-  const { timestamps: filteredTimestamps, sectorData: filteredSectorData } = 
-    filterDataByPeriod(data.timestamps, data.sector_data, period);
+  // Use the memoized filtered data
+  const { timestamps: filteredTimestamps, sectorData: filteredSectorData } = filteredData;
 
   // Transform data for MUI X Charts - calculate normalized returns (like Streamlit)
   const chartSeries = selectedSectors.map((sector, index) => {
@@ -239,33 +299,72 @@ export default function SectorChart({
         </Typography>
 
         {/* Controls */}
-        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
-          <ToggleButtonGroup
-            value={period}
-            exclusive
-            onChange={(_, value) => value && setPeriod(value)}
-            size="small"
-          >
-            {PERIODS.map(({ value, label }) => (
-              <ToggleButton key={value} value={value}>
-                {label}
-              </ToggleButton>
-            ))}
-          </ToggleButtonGroup>
-
-          <FormControl size="small" sx={{ minWidth: 120 }}>
-            <InputLabel>Top N</InputLabel>
-            <Select
-              value={topN}
-              label="Top N"
-              onChange={(e) => setTopN(e.target.value as number)}
+        <LocalizationProvider dateAdapter={AdapterDateFns}>
+          <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }}>
+            <ToggleButtonGroup
+              value={period}
+              exclusive
+              onChange={(_, value) => {
+                if (value) {
+                  setPeriod(value);
+                  // Set default custom start date when switching to CUSTOM
+                  if (value === 'CUSTOM' && !customStartDate) {
+                    setCustomStartDate(new Date(Date.now() - 365 * 24 * 60 * 60 * 1000)); // 1 year ago
+                  }
+                }
+              }}
+              size="small"
             >
-              {[5, 10, 15, 20, 25].map(num => (
-                <MenuItem key={num} value={num}>{num}</MenuItem>
+              {PERIODS.map(({ value, label }) => (
+                <ToggleButton key={value} value={value}>
+                  {label}
+                </ToggleButton>
               ))}
-            </Select>
-          </FormControl>
-        </Stack>
+            </ToggleButtonGroup>
+
+            {/* Custom Date Picker - only show when CUSTOM is selected */}
+            {period === 'CUSTOM' && (
+              <Box>
+                <DatePicker
+                  label="Start Date"
+                  value={customStartDate}
+                  onChange={(newValue) => setCustomStartDate(newValue)}
+                  slotProps={{
+                    textField: {
+                      size: 'small',
+                      sx: { minWidth: 150 }
+                    }
+                  }}
+                />
+                {dateRangeMessage && (
+                  <Typography
+                    variant="body2"
+                    sx={{ 
+                      mt: 1, 
+                      color: 'warning.main',
+                      fontSize: '0.75rem'
+                    }}
+                  >
+                    {dateRangeMessage}
+                  </Typography>
+                )}
+              </Box>
+            )}
+
+            <FormControl size="small" sx={{ minWidth: 120 }}>
+              <InputLabel>Top N</InputLabel>
+              <Select
+                value={topN}
+                label="Top N"
+                onChange={(e) => setTopN(e.target.value as number)}
+              >
+                {[5, 10, 15, 20, 25].map(num => (
+                  <MenuItem key={num} value={num}>{num}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+          </Stack>
+        </LocalizationProvider>
 
         {/* Sector selection dropdown */}
         <Box sx={{ mb: 2 }}>

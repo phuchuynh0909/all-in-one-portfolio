@@ -45,26 +45,36 @@ export default function StockList({
 
     setLoading(true);
     apiGet<Stock[]>(`/sector/symbols/${level}/${sectorId}`)
-      .then(setStocks)
+      .then((data) => {
+        // Filter out stocks with null, undefined, or zero market cap
+        const filteredStocks = data.filter(stock => 
+          stock.vonhoa_d && 
+          stock.vonhoa_d > 0 && 
+          !isNaN(stock.vonhoa_d)
+        );
+        
+        // Sort by market cap in descending order
+        const sortedStocks = filteredStocks.sort((a, b) => b.vonhoa_d - a.vonhoa_d);
+        
+        setStocks(sortedStocks);
+      })
       .catch((e) => setError(e.message))
       .finally(() => setLoading(false));
   }, [sectorId, level]);
 
   return (
-    <Box sx={{ height: 600, width: '100%' }}>
+    <Box sx={{ height: 500, width: '100%' }}>
       <Typography variant="h6" gutterBottom>
         Stocks in Sector
       </Typography>
       <DataGrid
+        sx={{ mt: 10 }}
         rows={stocks}
         columns={columns}
         loading={loading}
         error={error}
         initialState={{
           pagination: { paginationModel: { pageSize: 10 } },
-          sorting: {
-            sortModel: [{ field: 'vonhoa_d', sort: 'desc' }],
-          },
         }}
         pageSizeOptions={[10, 25, 50]}
       />

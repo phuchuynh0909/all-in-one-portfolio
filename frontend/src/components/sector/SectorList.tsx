@@ -143,7 +143,7 @@ export default function SectorList({
   });
 
   return (
-    <Box sx={{ height: 600, width: '100%' }}>
+    <Box sx={{ height: 500, width: '100%' }}>
       <Box sx={{ mb: 3 }}>
         <Typography variant="h6">
           Sectors (Level {level})
