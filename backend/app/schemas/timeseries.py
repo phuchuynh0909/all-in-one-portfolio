@@ -31,6 +31,12 @@ class Indicators(BaseModel):
     stoch: Optional[Dict[str, List[Optional[float]]]] = None
     kalman_zscore: Optional[List[Optional[float]]] = None
     yz_volatility: Optional[List[Optional[float]]] = None
+    rs_rating_20: Optional[List[Optional[float]]] = None
+    rs_rating_50: Optional[List[Optional[float]]] = None
+    rs_rating_252: Optional[List[Optional[float]]] = None
+    rs_rating_20_ema: Optional[List[Optional[float]]] = None
+    rs_rating_50_ema: Optional[List[Optional[float]]] = None
+    rs_rating_252_ema: Optional[List[Optional[float]]] = None
 
 class Timeseries(BaseModel):
     open: List[float]

@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Box, CircularProgress, Typography } from '@mui/material';
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
-import type { SeriesMarker } from 'lightweight-charts';
-import type { UTCTimestamp } from 'lightweight-charts';
+import type { SeriesMarker, UTCTimestamp } from 'lightweight-charts';
 import { 
   fetchTimeseries, 
   formatIndicatorData, 
@@ -38,6 +37,10 @@ export default function StockChart({ symbol }: StockChartProps) {
   const kalmanZscoreUpperRef = useRef<any>(null);
   const kalmanZscoreLowerRef = useRef<any>(null);
   const yzVolatilitySeriesRef = useRef<any>(null);
+  const rsRating20SeriesRef = useRef<any>(null);
+  const rsRating20EmaSeriesRef = useRef<any>(null);
+  const rsRating50SeriesRef = useRef<any>(null);
+  const rsRating252SeriesRef = useRef<any>(null);
   const markersRef = useRef<any>(null);
 
   const [loading, setLoading] = useState(true);
@@ -70,10 +73,6 @@ export default function StockChart({ symbol }: StockChartProps) {
   // Initialize chart
   useEffect(() => {
     if (!chartContainerRef.current || chartRef.current) return; // Prevent re-initialization if chart exists
-
-
-
-
 
     const chart = createChart(chartContainerRef.current, {
       leftPriceScale: {
@@ -280,6 +279,58 @@ export default function StockChart({ symbol }: StockChartProps) {
       priceScaleId: 'right',
     }, 3);
 
+    // Create RS Rating series in a separate pane (Panel 4)
+    const rsRating20Series = chart.addSeries(LineSeries, {
+      color: '#FF6B35',  // Orange-red
+      lineWidth: 2,
+      priceFormat: {
+        type: 'custom',
+        formatter: (price: number) => price.toFixed(0),
+      },
+      title: 'RS Rating 20',
+      priceScaleId: 'right',
+    }, 4);
+    rsRating20Series.moveToPane(4);
+
+    // Create RS Rating EMA series in the same pane
+    const rsRating20EmaSeries = chart.addSeries(LineSeries, {
+      color: '#7B68EE',  // Medium Slate Blue
+      lineWidth: 2,
+      priceFormat: {
+        type: 'custom',
+        formatter: (price: number) => price.toFixed(0),
+      },
+      title: 'RS Rating 20 EMA',
+      priceScaleId: 'right',
+    }, 4);
+    rsRating20EmaSeries.moveToPane(4);
+
+    // Create RS Rating 50 series in the same pane
+    const rsRating50Series = chart.addSeries(LineSeries, {
+      color: '#00CED1',  // Dark Turquoise
+      lineWidth: 2,
+      priceFormat: {
+        type: 'custom',
+        formatter: (price: number) => price.toFixed(0),
+      },
+      title: 'RS Rating 50',
+      priceScaleId: 'right',
+    }, 4);
+    rsRating50Series.moveToPane(4);
+
+    // Create RS Rating 252 series in the same pane
+    const rsRating252Series = chart.addSeries(LineSeries, {
+      color: '#32CD32',  // Lime Green
+      lineWidth: 2,
+      priceFormat: {
+        type: 'custom',
+        formatter: (price: number) => price.toFixed(0),
+      },
+      title: 'RS Rating 252',
+      priceScaleId: 'right',
+    }, 4);
+    rsRating252Series.moveToPane(4);
+
     // Store references
     chartRef.current = chart;
     candlestickSeriesRef.current = candlestickSeries;
@@ -297,6 +348,10 @@ export default function StockChart({ symbol }: StockChartProps) {
     kalmanZscoreSeriesRef.current = kalmanZscoreSeries;
     kalmanZscoreUpperRef.current = kalmanZscoreUpper;
     kalmanZscoreLowerRef.current = kalmanZscoreLower;
+    rsRating20SeriesRef.current = rsRating20Series;
+    rsRating20EmaSeriesRef.current = rsRating20EmaSeries;
+    rsRating50SeriesRef.current = rsRating50Series;
+    rsRating252SeriesRef.current = rsRating252Series;
     // Cleanup
 
     // Signal that chart is ready
@@ -322,6 +377,10 @@ export default function StockChart({ symbol }: StockChartProps) {
       kalmanZscoreSeriesRef.current = null;
       kalmanZscoreUpperRef.current = null;
       kalmanZscoreLowerRef.current = null;
+      rsRating20SeriesRef.current = null;
+      rsRating20EmaSeriesRef.current = null;
+      rsRating50SeriesRef.current = null;
+      rsRating252SeriesRef.current = null;
       markersRef.current = null;
       setIsChartReady(false);
     };
@@ -514,7 +573,8 @@ export default function StockChart({ symbol }: StockChartProps) {
             { name: "vwap", params: { window: 200 } },
             { name: "bvc", params: { window: 20, kappa: 0.1 } },
             { name: "kalman_zscore", params: { window: 20 } },
-            { name: "yz_volatility", params: { window: 30, periods: 252 } }
+            { name: "yz_volatility", params: { window: 30, periods: 252 } },
+            { name: "rs_rating" }
           ]
         }),
           fetchReports(symbol)
@@ -595,6 +655,17 @@ export default function StockChart({ symbol }: StockChartProps) {
           kalmanZscoreUpperRef.current?.setData(kalmanUpperBound);
           kalmanZscoreLowerRef.current?.setData(kalmanLowerBound);
 
+          // Handle RS Rating indicators
+          const rsRating20Data = formatIndicatorData(result.timestamps, result.indicators?.rs_rating_20 ?? []);
+          const rsRating20EmaData = formatIndicatorData(result.timestamps, result.indicators?.rs_rating_20_ema ?? []);
+          const rsRating50Data = formatIndicatorData(result.timestamps, result.indicators?.rs_rating_50 ?? []);
+          const rsRating252Data = formatIndicatorData(result.timestamps, result.indicators?.rs_rating_252 ?? []);
+          
+          rsRating20SeriesRef.current?.setData(rsRating20Data);
+          rsRating20EmaSeriesRef.current?.setData(rsRating20EmaData);
+          rsRating50SeriesRef.current?.setData(rsRating50Data);
+          rsRating252SeriesRef.current?.setData(rsRating252Data);
+
           // Set visible range
           const timeScale = chartRef.current?.timeScale();
           if (timeScale) {
@@ -640,8 +711,7 @@ export default function StockChart({ symbol }: StockChartProps) {
   }, []);
 
   return (
-    <Box 
-      sx={{ 
+    <Box sx={{ 
         width: '100%', 
         height: '100%', 
         minHeight: 1000,
@@ -649,13 +719,13 @@ export default function StockChart({ symbol }: StockChartProps) {
         bgcolor: '#121212'
       }}
     >
-      <div 
-        ref={chartContainerRef}
-        style={{ 
-          width: '100%', 
+      <div
+        ref={chartContainerRef as React.RefObject<HTMLDivElement>}
+        style={{
+          width: '100%',
           height: '100%',
-        }} 
-      />
+        }}
+      ></div>
       
       {/* Overlay loading states */}
       {loading && (

@@ -510,12 +510,16 @@ def sync_features_to_delta_lake(features_data: pd.DataFrame):
         isExist = DeltaTable.is_deltatable(table_path, storage_options=storage_options)
         if isExist:
             dt = DeltaTable(table_path, storage_options=storage_options)
+
+            now = pd.Timestamp.now()
+            three_days_ago = now - pd.DateOffset(days=3)
             result = dt.merge(
                 source=features_data,
                 predicate="target.key = source.key",
                 source_alias="source",
                 target_alias="target"
-            ).when_not_matched_insert_all().execute()
+            ).when_not_matched_insert_all().\
+                when_matched_update_all(predicate=f"target.date >= '{three_days_ago.strftime('%Y-%m-%d')}'").execute()
             print("Merge features data to delta-lake")
         else:
             result = write_deltalake(table_path, features_data, storage_options=storage_options, mode="overwrite")

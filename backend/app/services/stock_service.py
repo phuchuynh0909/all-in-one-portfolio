@@ -13,7 +13,7 @@ from .utils import convert_nans
 from app.schemas.timeseries import TimeseriesResponse, Indicators, IndicatorParams
 from app.schemas.sector import SectorTimeseries, SectorTimeseriesData
 import pyarrow.dataset as ds
-
+from app.stores.feature_store import FeatureStore
 from datetime import datetime, date, timedelta
 from fastapi_cache.decorator import cache
 from app.core.settings import settings
@@ -167,6 +167,10 @@ async def get_stock_timeseries(
         low_prices = df["low"].values
         volume_prices = df["volume"].values
         
+
+                    
+        feature_store = FeatureStore()
+        
         for ind in indicators:
             try:
                 if ind.name == "rsi":
@@ -281,6 +285,25 @@ async def get_stock_timeseries(
                             window=window,
                             periods=periods
                         )
+                    
+                elif ind.name == "rs_rating":
+                    rs_rating = feature_store.get_features(symbol, start=df["date"].min(), end=df["date"].max(), columns=["date", "rs_rating_20", 'rs_rating_50', 'rs_rating_252'])
+                    # left join with df
+                    df = df.merge(rs_rating, on="date", how="left")
+
+                    # calculate exponential moving average of rs_rating_20, rs_rating_50, rs_rating_252
+                    df["rs_rating_20_ema"] = df["rs_rating_20"].ewm(span=20).mean().round(2)
+                    df["rs_rating_50_ema"] = df["rs_rating_50"].ewm(span=50).mean().round(2)
+                    df["rs_rating_252_ema"] = df["rs_rating_252"].ewm(span=252).mean().round(2)
+
+                    indicator_data["rs_rating_20"] = convert_nans(df["rs_rating_20"].values)
+                    indicator_data["rs_rating_50"] = convert_nans(df["rs_rating_50"].values)
+                    indicator_data["rs_rating_252"] = convert_nans(df["rs_rating_252"].values)
+
+                    indicator_data["rs_rating_20_ema"] = convert_nans(df["rs_rating_20_ema"].values)
+                    indicator_data["rs_rating_50_ema"] = convert_nans(df["rs_rating_50_ema"].values)
+                    indicator_data["rs_rating_252_ema"] = convert_nans(df["rs_rating_252_ema"].values)
+
             except Exception as e:
                 print(f"Error calculating {ind.name}: {e}")
 

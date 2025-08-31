@@ -22,6 +22,12 @@ export interface TimeseriesResponse {
     bvc?: (number | null)[];
     kalman_zscore?: (number | null)[];
     yz_volatility?: (number | null)[];
+    rs_rating_20?: (number | null)[];
+    rs_rating_50?: (number | null)[];
+    rs_rating_252?: (number | null)[];
+    rs_rating_20_ema?: (number | null)[];
+    rs_rating_50_ema?: (number | null)[];
+    rs_rating_252_ema?: (number | null)[];
   };
 }
 
