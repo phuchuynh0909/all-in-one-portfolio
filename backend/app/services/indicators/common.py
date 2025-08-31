@@ -32,3 +32,22 @@ def lowest_at_entry(low, entry):
             else:
                 lowest_low[i, col] = lowest_low[i-1, col]
     return lowest_low
+
+
+@njit
+def relative_strength_nb(close, benmark_close, window):
+    rs = np.full(close.shape, np.nan, dtype=np.float64)
+    mrs = np.full(close.shape, np.nan, dtype=np.float64)
+    rs_ratio = close / benmark_close
+
+    mean_rs_ratio = np.full(close.shape, np.nan, dtype=np.float64)
+    for col in range(close.shape[1]):
+        for i in range(window, close.shape[0]):
+            mean_rs_ratio[i, col] = np.mean(rs_ratio[i-window:i, col])
+
+    for col in range(close.shape[1]):
+        for i in range(window, close.shape[0]):
+            rs[i, col] = (rs_ratio[i, col] / rs_ratio[i-window, col]) * 100 - 100 
+            mrs[i, col] = ((rs_ratio[i, col] / mean_rs_ratio[i, col]) - 1) * 100
+            
+    return rs, mrs
