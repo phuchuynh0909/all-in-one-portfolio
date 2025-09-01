@@ -56,6 +56,15 @@ def get_stock_symbols_by_sector(
         )
 
 
+def get_all_stock_symbols(db: Session, limit: int = 1000) -> List[StockSymbol]:
+    """Get all available stock symbols for portfolio selection"""
+    return (
+        db.query(StockSymbol)
+        .limit(limit)
+        .all()
+    )
+
+
 def get_sector_summary(
     db: Session, sector_id: int, level: int
 ) -> Optional[SectorSummary]:

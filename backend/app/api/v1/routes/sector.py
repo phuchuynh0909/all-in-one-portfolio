@@ -43,6 +43,14 @@ def list_sector_symbols(
     return sector_service.get_stock_symbols_by_sector(db, sector_id, level)
 
 
+@router.get("/symbols", response_model=List[StockSymbol])
+def list_all_symbols(
+    limit: int = 1000, db: Session = Depends(get_db)
+) -> List[StockSymbol]:
+    """Get all available stock symbols for portfolio optimization"""
+    return sector_service.get_all_stock_symbols(db, limit)
+
+
 @router.get("/summary/{level}/{sector_id}", response_model=SectorSummary)
 def get_sector_summary(
     level: int, sector_id: int, db: Session = Depends(get_db)

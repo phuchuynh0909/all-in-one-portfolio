@@ -1,6 +1,17 @@
-import { apiPost } from '../api';
+import { apiPost, apiGet } from '../api';
 
 export type OptimizationMethod = 'hrp' | 'ef' | 'cvar' | 'cla';
+
+export interface StockSymbol {
+  id: number;
+  symbol: string;
+  name: string | null;
+  id_sector_level_3: number | null;
+  id_sector_level_4: number | null;
+  vonhoa_d: number | null;
+  created_at: string;
+  updated_at: string;
+}
 
 export interface OptimizationRequest {
   tickers: string[];
@@ -47,4 +58,9 @@ export async function optimizePortfolio(request: OptimizationRequest): Promise<O
 
 export async function closePosition(request: ClosePositionRequest): Promise<ClosePositionResponse> {
   return apiPost<ClosePositionResponse>('/portfolio/positions/close', request);
+}
+
+export async function getAllStockSymbols(limit?: number): Promise<StockSymbol[]> {
+  const params = limit ? `?limit=${limit}` : '';
+  return apiGet<StockSymbol[]>(`/sector/symbols${params}`);
 }
