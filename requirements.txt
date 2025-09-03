@@ -1,0 +1,9 @@
+# PostgreSQL adapter for Python
+psycopg2-binary>=2.9.0
+
+# Optional: for better JSON handling and data validation
+# jsonschema>=4.0.0
+
+# Optional: for development and testing
+# pytest>=7.0.0
+# pytest-postgresql>=4.0.0

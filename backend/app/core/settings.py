@@ -1,4 +1,5 @@
 import os
+from pathlib import Path
 from typing import List
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings
@@ -8,11 +9,11 @@ class Settings(BaseSettings):
     project_name: str = "Investment Tracker API"
     api_v1_prefix: str = "/api/v1"
     environment: str = "development"
-
+    
     # Database
     database_url: str = os.getenv(
         "DATABASE_URL",
-        "sqlite:///./portfolio.db"  # SQLite file in current directory by default
+        "sqlite:////Users/phuchdh/Documents/Work/all-in-one-portfolio/backend/portfolio.db"
     )
 
     # CORS

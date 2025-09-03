@@ -49,6 +49,41 @@ export default function StockChart({ symbol }: StockChartProps) {
   const toolTipWidth = 200;
   const legendWidth = 450;
 
+  // Panel height configuration - 70% main chart, 30% indicators
+  // 
+  // Current distribution:
+  // ┌─────────────────────────────┐
+  // │ Panel 0: Main Chart (70%)   │ ← 840px (candlesticks, volume, VWAP, ATR)
+  // │         (840px)             │
+  // ├─────────────────────────────┤
+  // │ Panel 1: RSI (7.5%)         │ ← 90px (RSI 5, RSI 14, bounds)
+  // ├─────────────────────────────┤
+  // │ Panel 2: BVC (7.5%)         │ ← 90px (BVC + zero line)
+  // ├─────────────────────────────┤
+  // │ Panel 3: Volatility (7.5%)  │ ← 90px (Yang-Zhang + Kalman)
+  // ├─────────────────────────────┤
+  // │ Panel 4: RS Rating (7.5%)   │ ← 90px (RS Rating 20/50/252 + EMAs)
+  // └─────────────────────────────┘
+  // Total: 1200px (100%)
+  //
+  // To adjust: Modify the panelRatios values below (must sum to 1.0)
+  // 
+  // Example alternative configurations:
+  // - More focus on RS Rating: { main: 0.65, rsi: 0.07, bvc: 0.07, volatility: 0.07, rsRating: 0.14 }
+  // - Minimal indicators: { main: 0.80, rsi: 0.05, bvc: 0.05, volatility: 0.05, rsRating: 0.05 }
+  // - Equal indicators: { main: 0.70, rsi: 0.075, bvc: 0.075, volatility: 0.075, rsRating: 0.075 }
+  const chartConfig = {
+    totalHeight: 1200, // Total chart height in pixels
+    panelRatios: {
+      main: 0.70,        // 70% - Main price chart (840px)
+      rsi: 0.075,        // 7.5% - RSI indicators (90px)
+      bvc: 0.075,        // 7.5% - BVC indicator (90px)
+      volatility: 0.075, // 7.5% - Volatility indicators (90px)
+      rsRating: 0.075,   // 7.5% - RS Rating indicators (90px)
+    },
+    globalScaleMargins: { top: 0.02, bottom: 0.02 },
+  };
+
   // Helper function to calculate percentage change from previous close
   const calculatePercentageChange = (prevClose: number, currentClose: number): string => {
     const change = ((currentClose - prevClose) / prevClose) * 100;
@@ -78,9 +113,8 @@ export default function StockChart({ symbol }: StockChartProps) {
       leftPriceScale: {
         visible: true,
       },
-      autoSize: true,
-      // width: chartContainerRef.current.clientWidth,
-      // height: chartContainerRef.current.clientHeight - 100,
+      height: chartConfig.totalHeight,
+      width: chartContainerRef.current.clientWidth,
       layout: {
         background: { color: '#0f0f0f' },
         textColor: '#b8b8b8',
@@ -109,10 +143,7 @@ export default function StockChart({ symbol }: StockChartProps) {
       },
       rightPriceScale: {
         borderColor: '#2B2B43',
-        scaleMargins: {
-          top: 0.3,
-          bottom: 0.3,
-        },
+        scaleMargins: chartConfig.globalScaleMargins,
       },
       timeScale: {
         borderColor: '#2B2B43',
@@ -330,6 +361,17 @@ export default function StockChart({ symbol }: StockChartProps) {
       priceScaleId: 'right',
     }, 4);
     rsRating252Series.moveToPane(4);
+
+    // Configure global chart options after all series are created
+    chart.applyOptions({
+      overlayPriceScales: {
+        borderVisible: false,
+      },
+      rightPriceScale: {
+        borderColor: '#2B2B43',
+        scaleMargins: chartConfig.globalScaleMargins,
+      },
+    });
 
     // Store references
     chartRef.current = chart;
@@ -713,8 +755,7 @@ export default function StockChart({ symbol }: StockChartProps) {
   return (
     <Box sx={{ 
         width: '100%', 
-        height: '100%', 
-        minHeight: 1000,
+        height: chartConfig.totalHeight,
         position: 'relative',
         bgcolor: '#121212'
       }}

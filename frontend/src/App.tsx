@@ -20,6 +20,7 @@ import Chart from './pages/Chart';
 import Sector from './pages/Sector';
 import Report from './pages/Report';
 import Backtest from './pages/Backtest';
+import { FinancialStatements } from './pages/FinancialStatements';
 
 const theme = createTheme({
   palette: {
@@ -48,6 +49,7 @@ const navItems = [
   { path: '/sector', label: 'Sector' },
   { path: '/report', label: 'Report' },
   { path: '/backtest', label: 'Backtest' },
+  { path: '/financial', label: 'Financial Statements' },
 ];
 
 // Create a client
@@ -109,6 +111,7 @@ export default function App() {
               <Route path="/sector" element={<Sector />} />
               <Route path="/report" element={<Report />} />
               <Route path="/backtest" element={<Backtest />} />
+              <Route path="/financial" element={<FinancialStatements />} />
             </Routes>
           </Box>
         </BrowserRouter>
