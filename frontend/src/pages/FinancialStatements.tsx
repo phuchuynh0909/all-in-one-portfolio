@@ -14,6 +14,7 @@ import {
   Paper
 } from '@mui/material';
 import { FinancialStatementsTable } from '../components/financial/FinancialStatementsTable';
+import { DataCrawler } from '../components/financial/DataCrawler';
 import { financialApi, CompanyWithFinancialData } from '../lib/services/financial';
 
 interface FinancialStatementData {
@@ -85,6 +86,12 @@ export const FinancialStatements: React.FC = () => {
     }
   };
 
+  const handleDataCrawled = (symbol: string) => {
+    // Refresh companies list when new data is crawled
+    fetchCompanies();
+    console.log(`Data crawled for ${symbol}, refreshing companies list`);
+  };
+
   const fetchFinancialData = async () => {
     if (!selectedCompany) return;
 
@@ -121,6 +128,9 @@ export const FinancialStatements: React.FC = () => {
       <Typography variant="h4" gutterBottom>
         Báo cáo tài chính
       </Typography>
+
+      {/* Data Crawler Section */}
+      <DataCrawler onDataCrawled={handleDataCrawled} />
 
       {/* Controls */}
       <Box sx={{ display: 'flex', gap: 2, mb: 3, alignItems: 'center' }}>
