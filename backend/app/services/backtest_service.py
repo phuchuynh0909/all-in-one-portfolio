@@ -158,6 +158,9 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     all_trades_df['symbol'] = all_trades_df.apply(lambda x: stocks.close.columns[x['col']], axis=1)
     all_trades_df['date'] = all_trades_df.apply(lambda x: stocks.index[x['entry_idx']], axis=1)
     
+    # Keep a copy of original trades before feature building
+    original_trades_df = all_trades_df.copy()
+    
     # Build features and make predictions
     logger.info(f"Strategy execution took {time.time() - strategy_start_time:.2f} seconds")
     
@@ -169,30 +172,72 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     feature_df = predict_features(feature_df)
     logger.info(f"ML predictions took {time.time() - prediction_start_time:.2f} seconds")
 
+    # Merge original trades with feature/prediction results
+    # Create merge keys for both dataframes
+    merge_cols = ['col', 'entry_idx', 'type']
+    
+    # Merge predictions back to original trades (left join to keep all original trades)
+    prediction_cols = ['y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost'] + \
+                     [col for col in feature_df.columns if col.startswith('msr_rank')]
+    
+    complete_trades_df = pd.merge(
+        original_trades_df, 
+        feature_df[merge_cols + prediction_cols],
+        on=merge_cols, 
+        how='left'
+    )
+    
+    # # Fill missing prediction values with defaults for trades without features
+    # complete_trades_df['y_pred_xgb'] = complete_trades_df['y_pred_xgb'].fillna(0.5)
+    # complete_trades_df['y_pred_lgbm'] = complete_trades_df['y_pred_lgbm'].fillna(0.5)
+    # complete_trades_df['y_pred_catboost'] = complete_trades_df['y_pred_catboost'].fillna(0.5)
+    
+    # Fill missing feature columns (like msr_rank_10) with None
+    # for col in complete_trades_df.columns:
+    #     if col.startswith('msr_rank') or col in FEATURES_LIST:
+            # complete_trades_df[col] = complete_trades_df[col].fillna(None)
+    
     # Prepare response with proper copies
-    open_trades_df = feature_df[feature_df['type'] == 'open_trades'].copy()
-    closed_trades_df = feature_df[feature_df['type'] == 'closed_trades'].copy()
+    open_trades_df = complete_trades_df[complete_trades_df['type'] == 'open_trades'].copy()
+    closed_trades_df = complete_trades_df[complete_trades_df['type'] == 'closed_trades'].copy()
 
     # Format open trades
     # Parse JSON metadata before converting to records
     open_trades_df.loc[:, 'metadata'] = open_trades_df['metadata'].apply(lambda x: json.loads(x) if x else {})
 
-    # Convert to records
-    open_trades = open_trades_df[[
-        'symbol', 'date', 'entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm', 
-        'y_pred_catboost', 'msr_rank_10', 'metadata', 'type', 'entry_idx'
-    ]].to_dict('records')
+    # Handle NaN and infinity values before JSON serialization
+    numeric_cols = ['entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'msr_rank_10']
+    for col in numeric_cols:
+        if col in open_trades_df.columns:
+            # Replace NaN and infinity with None for JSON compliance
+            open_trades_df[col] = open_trades_df[col].replace([np.nan, np.inf, -np.inf], None)
+
+    # Convert to records - select only available columns
+    open_trades_columns = ['symbol', 'date', 'entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm', 
+                          'y_pred_catboost', 'msr_rank_10', 'metadata', 'type', 'entry_idx']
+    available_open_cols = [col for col in open_trades_columns if col in open_trades_df.columns]
+    
+    open_trades = open_trades_df[available_open_cols].to_dict('records')
 
     # Format closed trades
     closed_trades_df.loc[:, 'metadata'] = closed_trades_df['metadata'].apply(lambda x: json.loads(x) if x else {})
     closed_trades_df.loc[:, 'trading_days'] = closed_trades_df['exit_idx'] - closed_trades_df['entry_idx']
     closed_trades_df.loc[:, 'close_date'] = closed_trades_df.apply(lambda x: stocks.index[x['exit_idx']], axis=1)
-    closed_trades = closed_trades_df[[
-        
-        'symbol', 'date', 'close_date', 'entry_price', 'pnl', 'trading_days',
-        'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'msr_rank_10', 'metadata',
-        'type', 'entry_idx', 'exit_idx'
-    ]].to_dict('records')
+    
+    # Handle NaN and infinity values before JSON serialization
+    numeric_cols = ['entry_price', 'pnl', 'trading_days', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'msr_rank_10']
+    for col in numeric_cols:
+        if col in closed_trades_df.columns:
+            # Replace NaN and infinity with None for JSON compliance
+            closed_trades_df[col] = closed_trades_df[col].replace([np.nan, np.inf, -np.inf], None)
+    
+    # Convert to records - select only available columns 
+    closed_trades_columns = ['symbol', 'date', 'close_date', 'entry_price', 'pnl', 'trading_days',
+                             'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'msr_rank_10', 'metadata',
+                             'type', 'entry_idx', 'exit_idx']
+    available_closed_cols = [col for col in closed_trades_columns if col in closed_trades_df.columns]
+    
+    closed_trades = closed_trades_df[available_closed_cols].to_dict('records')
 
     total_time = time.time() - total_start_time
     logger.info(f"Total backtest execution took {total_time:.2f} seconds")

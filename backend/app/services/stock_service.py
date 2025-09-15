@@ -294,7 +294,7 @@ async def get_stock_timeseries(
                     # calculate exponential moving average of rs_rating_20, rs_rating_50, rs_rating_252
                     df["rs_rating_20_ema"] = df["rs_rating_20"].ewm(span=20).mean().round(2)
                     df["rs_rating_50_ema"] = df["rs_rating_50"].ewm(span=50).mean().round(2)
-                    df["rs_rating_252_ema"] = df["rs_rating_252"].ewm(span=252).mean().round(2)
+                    df["rs_rating_252_ema"] = df["rs_rating_252"].ewm(span=252).mean()
 
                     indicator_data["rs_rating_20"] = convert_nans(df["rs_rating_20"].values)
                     indicator_data["rs_rating_50"] = convert_nans(df["rs_rating_50"].values)

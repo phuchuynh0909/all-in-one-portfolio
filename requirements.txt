@@ -1,5 +1,27 @@
-# PostgreSQL adapter for Python
+# Core dependencies
+fastapi>=0.104.0
+uvicorn[standard]>=0.24.0
+sqlalchemy>=2.0.0
+alembic>=1.12.0
+pydantic>=2.4.0
+python-multipart>=0.0.6
+
+# Database adapters
 psycopg2-binary>=2.9.0
+
+# Encryption and API utilities
+pycryptodomex>=3.19.0
+requests>=2.31.0
+
+# Data processing
+pandas>=2.1.0
+numpy>=1.24.0
+
+# Background tasks
+fastapi-cache2[redis]>=0.2.1
+
+# Logging
+loguru>=0.7.0
 
 # Optional: for better JSON handling and data validation
 # jsonschema>=4.0.0

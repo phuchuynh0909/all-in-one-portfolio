@@ -13,6 +13,8 @@ services:
       - APP_PROJECT_NAME=Investment Tracker API
       - APP_API_V1_PREFIX=/api/v1
       - DATABASE_URL=sqlite:///app/portfolio.db
+    env_file:
+      - .env
     networks:
       - appnet
   frontend:
