@@ -41,6 +41,8 @@ class StockSymbol(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     symbol = Column(String(20), nullable=False)
     name = Column(String(255))
+    id_sector_level_1 = Column(Integer, nullable=True)
+    id_sector_level_2 = Column(Integer, nullable=True)
     id_sector_level_3 = Column(Integer, nullable=True)
     id_sector_level_4 = Column(Integer, nullable=True)
     vonhoa_d = Column(DECIMAL(20, 8), nullable=True)

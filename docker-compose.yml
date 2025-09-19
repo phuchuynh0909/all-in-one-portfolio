@@ -7,12 +7,11 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
-      - ./backend/portfolio.db:/app/app/portfolio.db
     environment:
       - APP_ENVIRONMENT=development
       - APP_PROJECT_NAME=Investment Tracker API
       - APP_API_V1_PREFIX=/api/v1
-      - DATABASE_URL=sqlite:///app/portfolio.db
+      - APP_DATABASE_URL=sqlite:///portfolio.db
     env_file:
       - .env
     networks:

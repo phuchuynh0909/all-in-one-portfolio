@@ -25,7 +25,6 @@ const removeDiacritics = (str: string): string => {
 type Sector = {
   id: number;
   level: number;
-  type: string;
   name: string;
   smg: number;
   dif: number;
@@ -43,7 +42,6 @@ type Sector = {
 
 const columns: GridColDef[] = [
   { field: 'name', headerName: 'Name', width: 200 },
-  { field: 'type', headerName: 'Type', width: 120 },
   {
     field: 'smg',
     headerName: 'SMG',
@@ -129,16 +127,11 @@ export default function SectorList({
     const nameLower = sector.name.toLowerCase();
     const nameNoDiacritics = removeDiacritics(nameLower);
     
-    const typeLower = sector.type.toLowerCase();
-    const typeNoDiacritics = removeDiacritics(typeLower);
-    
     return (
       // Search with diacritics
       nameLower.includes(searchLower) ||
-      typeLower.includes(searchLower) ||
       // Search without diacritics
-      nameNoDiacritics.includes(searchNoDiacritics) ||
-      typeNoDiacritics.includes(searchNoDiacritics)
+      nameNoDiacritics.includes(searchNoDiacritics)
     );
   });
 
@@ -155,7 +148,7 @@ export default function SectorList({
         </Typography>
         <TextField
           size="small"
-          placeholder="Search by name or type..."
+          placeholder="Search by name..."
           value={searchTerm}
           onChange={(e) => setSearchTerm(e.target.value)}
           sx={{ mt: 2, width: '100%' }}

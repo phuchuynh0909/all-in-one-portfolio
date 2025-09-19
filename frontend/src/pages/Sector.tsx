@@ -33,6 +33,8 @@ export default function Sector() {
               setSelectedSectorId(null); // Clear selection when level changes
             }}
           >
+            <MenuItem value={1}>Level 1</MenuItem>
+            <MenuItem value={2}>Level 2</MenuItem>
             <MenuItem value={3}>Level 3</MenuItem>
             <MenuItem value={4}>Level 4</MenuItem>
           </Select>

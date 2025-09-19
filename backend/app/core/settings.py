@@ -12,8 +12,8 @@ class Settings(BaseSettings):
     
     # Database
     database_url: str = os.getenv(
-        "DATABASE_URL",
-        "sqlite:////Users/phuchdh/Documents/Work/all-in-one-portfolio/backend/portfolio.db"
+        "APP_DATABASE_URL",
+        os.getenv("DATABASE_URL", "sqlite:///app/portfolio.db")
     )
 
     # CORS

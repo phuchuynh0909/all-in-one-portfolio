@@ -7,6 +7,7 @@ type PortfolioSummary = {
   total_invested: number;
   total_profit_loss: number;
   total_profit_loss_pct: number;
+  total_realized_pl: number;
   positions: Array<{
     id: number;
     ticker: string;
@@ -49,7 +50,7 @@ export default function PortfolioSummary() {
   return (
     <Box sx={{ mb: 4 }}>
       <Grid container spacing={2}>
-        <Grid item xs={12} md={3}>
+        <Grid item xs={12} sm={6} lg={2.4}>
           <Card>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary">
@@ -61,7 +62,7 @@ export default function PortfolioSummary() {
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={12} md={3}>
+        <Grid item xs={12} sm={6} lg={2.4}>
           <Card>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary">
@@ -73,11 +74,11 @@ export default function PortfolioSummary() {
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={12} md={3}>
+        <Grid item xs={12} sm={6} lg={2.4}>
           <Card>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary">
-                Profit/Loss
+                Unrealized P/L
               </Typography>
               <Typography
                 variant="h6"
@@ -88,7 +89,22 @@ export default function PortfolioSummary() {
             </CardContent>
           </Card>
         </Grid>
-        <Grid item xs={12} md={3}>
+        <Grid item xs={12} sm={6} lg={2.4}>
+          <Card>
+            <CardContent>
+              <Typography variant="subtitle2" color="text.secondary">
+                Realized P/L
+              </Typography>
+              <Typography
+                variant="h6"
+                color={summary.total_realized_pl >= 0 ? 'success.main' : 'error.main'}
+              >
+                {formatCurrency(summary.total_realized_pl)}
+              </Typography>
+            </CardContent>
+          </Card>
+        </Grid>
+        <Grid item xs={12} sm={6} lg={2.4}>
           <Card>
             <CardContent>
               <Typography variant="subtitle2" color="text.secondary">

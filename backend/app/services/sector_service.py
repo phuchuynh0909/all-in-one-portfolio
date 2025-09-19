@@ -42,13 +42,25 @@ def upsert_stock_symbol(
 def get_stock_symbols_by_sector(
     db: Session, sector_id: int, level: int
 ) -> List[StockSymbol]:
-    if level == 3:
+    if level == 1:
+        return (
+            db.query(StockSymbol)
+            .filter(StockSymbol.id_sector_level_1 == sector_id)
+            .all()
+        )
+    elif level == 2:
+        return (
+            db.query(StockSymbol)
+            .filter(StockSymbol.id_sector_level_2 == sector_id)
+            .all()
+        )
+    elif level == 3:
         return (
             db.query(StockSymbol)
             .filter(StockSymbol.id_sector_level_3 == sector_id)
             .all()
         )
-    else:
+    else:  # level == 4
         return (
             db.query(StockSymbol)
             .filter(StockSymbol.id_sector_level_4 == sector_id)

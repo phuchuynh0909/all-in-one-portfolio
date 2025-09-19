@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import List, Optional, Tuple
+from sqlalchemy.orm import Session
 import os
 from deltalake import DeltaTable
 import deltalake
@@ -345,24 +346,111 @@ def calculate_macd(
     return map(convert_nans, (macd_line, signal_line, histogram))
 
 
-async def get_sector_timeseries(
+def _create_empty_sector_timeseries(sector_level: str) -> SectorTimeseries:
+    """Create an empty SectorTimeseries response."""
+    return SectorTimeseries(
+        sector_level=sector_level,
+        interval="1d",
+        meta={},
+        timestamps=[],
+        sector_data=[]
+    )
+
+
+def _get_sectors_from_db(db: Session, sector_level: int) -> List:
+    """Get all sectors at the specified level from database."""
+    from app.db.models.market import Sector
+    return db.query(Sector).filter(Sector.level == sector_level).all()
+
+
+def _process_ohlc_data_for_sectors(sectors: List, sector_level: str) -> SectorTimeseries:
+    """Process OHLC data for multiple sectors using a single query."""
+    try:
+        dt = DeltaTable(settings.stocks_delta_table, storage_options=_delta_storage_options())
+        
+        # Prepare sector data with 4-digit padding transformation
+        padded_sectors = [(f"{sector.id:04d}", sector.id, sector.name) for sector in sectors]
+        sector_ids = [padded_id for padded_id, _, _ in padded_sectors]
+        sector_info_map = {padded_id: (original_id, name) for padded_id, original_id, name in padded_sectors}
+        
+        print(f"Querying OHLC data for {len(sector_ids)} sectors in single query")
+        
+        # Single query for all sectors
+        all_sectors_pdf = dt.to_pyarrow_table(
+            filters=[("symbol", "in", sector_ids)]
+        ).to_pandas()
+        
+        if all_sectors_pdf.empty:
+            print("No OHLC data found for any sectors")
+            return _create_empty_sector_timeseries(sector_level)
+        
+        return _build_sector_timeseries_from_dataframe(
+            all_sectors_pdf, sector_ids, sector_info_map, sector_level
+        )
+        
+    except Exception as e:
+        print(f"Error accessing OHLC delta table: {e}")
+        return _create_empty_sector_timeseries(sector_level)
+
+
+def _build_sector_timeseries_from_dataframe(
+    df: pd.DataFrame, 
+    sector_ids: List[str], 
+    sector_info_map: dict,
     sector_level: str
 ) -> SectorTimeseries:
+    """Build SectorTimeseries from processed dataframe."""
+    # Process dataframe
+    df["date"] = pd.to_datetime(df["date"])
+    df = df.sort_values(["symbol", "date"])
     
-    print(sector_level)
+    # Collect timestamps
+    timestamps = df["date"].dt.strftime('%Y-%m-%d').unique()
+    sorted_timestamps = sorted(timestamps.tolist())
     
-    """Get sector timeseries data with optional indicators."""
-    dt = DeltaTable(settings.sector_delta_table, storage_options=_delta_storage_options())
-    pdf = dt.to_pyarrow_table(filters=[("sector_type", "==", int(sector_level))]).to_pandas()
+    # Create sector data
+    sectors_data = []
+    for sector_id in sector_ids:
+        sector_df = df[df["symbol"] == sector_id]
+        
+        if not sector_df.empty:
+            original_id, name = sector_info_map[sector_id]
+            sector_data = SectorTimeseriesData(
+                id=original_id,
+                name=name,
+                data=sector_df["close"].tolist()
+            )
+            sectors_data.append(sector_data)
+            print(f"Added data for {name}: {len(sector_df)} records")
+        else:
+            _, name = sector_info_map[sector_id]
+            print(f"No data found for {name} (ID: {sector_id})")
+    
+    return SectorTimeseries(
+        sector_level=sector_level,
+        interval="1d",
+        meta={},
+        timestamps=sorted_timestamps,
+        sector_data=sectors_data
+    )
 
-    if not pdf.empty:
+
+def _get_sector_timeseries_from_delta_table(sector_level: str) -> SectorTimeseries:
+    """Get sector timeseries from original delta table approach."""
+    try:
+        dt = DeltaTable(settings.sector_delta_table, storage_options=_delta_storage_options())
+        pdf = dt.to_pyarrow_table(filters=[("sector_type", "==", int(sector_level))]).to_pandas()
+
+        if pdf.empty:
+            return _create_empty_sector_timeseries(sector_level)
+
         pdf["date"] = pd.to_datetime(pdf["date"])
-        pdf = pdf.sort_values(["sector_name", "date"])  # stable order
+        pdf = pdf.sort_values(["sector_name", "date"])
         
         # Convert to SectorTimeseries format
-        timestamps = pdf["date"].unique().astype(str).tolist()
+        timestamps = pdf["date"].dt.strftime('%Y-%m-%d').unique().tolist()
         
-        # Group by sector and pivot the data
+        # Group by sector and create data
         sectors_data = []
         for sector_name in pdf["sector_name"].unique():
             sector_df = pdf[pdf["sector_name"] == sector_name]
@@ -380,12 +468,39 @@ async def get_sector_timeseries(
             timestamps=timestamps,
             sector_data=sectors_data
         )
+        
+    except Exception as e:
+        print(f"Error with delta table approach: {e}")
+        return _create_empty_sector_timeseries(sector_level)
+
+
+async def get_sector_timeseries(
+    sector_level: str,
+    db: Session = None
+) -> SectorTimeseries:
+    """Get sector timeseries data with optional indicators."""
+    from app.db.base import get_db
     
-    # Return empty SectorTimeseries if no data
-    return SectorTimeseries(
-        sector_level=sector_level,
-        interval="1d",
-        meta={},
-        timestamps=[],
-        sector_data=[]
-    )
+    print(f"Getting sector timeseries for level: {sector_level}")
+    level = int(sector_level)
+    
+    # For levels 1 and 2, use database sectors with OHLC data
+    if level in [1, 2]:
+        if db is None:
+            db = next(get_db())
+        
+        try:
+            sectors = _get_sectors_from_db(db, level)
+            print(f"Found {len(sectors)} sectors at level {sector_level}")
+            
+            if not sectors:
+                return _create_empty_sector_timeseries(sector_level)
+            
+            return _process_ohlc_data_for_sectors(sectors, sector_level)
+            
+        except Exception as e:
+            print(f"Error querying sector database: {e}")
+            return _create_empty_sector_timeseries(sector_level)
+    
+    # For other levels, use original delta table approach
+    return _get_sector_timeseries_from_delta_table(sector_level)

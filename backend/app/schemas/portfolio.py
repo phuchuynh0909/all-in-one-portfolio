@@ -72,6 +72,7 @@ class PortfolioSummary(BaseModel):
     total_invested: Decimal
     total_profit_loss: Decimal
     total_profit_loss_pct: Decimal
+    total_realized_pl: Decimal
     positions: List[Position]
 
     class Config:
@@ -81,9 +82,27 @@ class PortfolioSummary(BaseModel):
 class OptimizationMethod(str, Enum):
     """Supported optimization methods."""
     HRP = "hrp"
-    EFFICIENT_FRONTIER = "ef"
+    EFFICIENT_FRONTIER = "ef"  # Legacy: same as max_sharpe
+    MAX_SHARPE = "max_sharpe"
+    MIN_VOLATILITY = "min_volatility"
+    MAX_QUADRATIC_UTILITY = "max_quadratic_utility"
+    EFFICIENT_RISK = "efficient_risk"
+    EFFICIENT_RETURN = "efficient_return"
+    BLACK_LITTERMAN = "black_litterman"
     CVAR = "cvar"
     CLA = "cla"
+
+
+class RiskModel(str, Enum):
+    """Supported risk models for covariance matrix calculation."""
+    SAMPLE_COV = "sample_cov"
+    SEMICOVARIANCE = "semicovariance"
+    EXP_COV = "exp_cov"
+    LEDOIT_WOLF = "ledoit_wolf"
+    LEDOIT_WOLF_CONSTANT_VARIANCE = "ledoit_wolf_constant_variance"
+    LEDOIT_WOLF_SINGLE_FACTOR = "ledoit_wolf_single_factor"
+    LEDOIT_WOLF_CONSTANT_CORRELATION = "ledoit_wolf_constant_correlation"
+    ORACLE_APPROXIMATING = "oracle_approximating"
 
 
 class OptimizationRequest(BaseModel):
@@ -92,8 +111,19 @@ class OptimizationRequest(BaseModel):
     start_date: date | None = None
     end_date: date | None = None
     method: OptimizationMethod
+    risk_model: RiskModel = RiskModel.SAMPLE_COV  # Default to sample covariance
     risk_free_rate: float | None = 0.0
     constraints: dict | None = None  # e.g., {"min_weight": 0.0, "max_weight": 0.2}
+    
+    # Additional parameters for specific optimization methods
+    risk_aversion: float | None = None  # For max_quadratic_utility and black_litterman
+    target_risk: float | None = None    # For efficient_risk
+    target_return: float | None = None  # For efficient_return
+    
+    # Black-Litterman specific parameters
+    market_caps: dict[str, float] | None = None  # Market cap weights for equilibrium portfolio
+    views: dict[str, float] | None = None        # Investor views on expected returns
+    view_confidences: dict[str, float] | None = None  # Confidence in views (lower = more confident)
 
 
 class OptimizationResult(BaseModel):

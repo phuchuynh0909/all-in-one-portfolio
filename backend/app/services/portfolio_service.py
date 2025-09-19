@@ -13,6 +13,7 @@ from app.schemas.portfolio import (
     OptimizationRequest,
     OptimizationResult,
     OptimizationMethod,
+    RiskModel,
     ClosePositionRequest,
     ClosePositionResponse,
 )
@@ -20,7 +21,7 @@ from app.services.stock_service import get_current_price
 import pandas as pd
 import numpy as np
 from datetime import datetime, timedelta
-from pypfopt import EfficientFrontier, HRPOpt, risk_models, expected_returns, objective_functions, CLA, EfficientCVaR
+from pypfopt import EfficientFrontier, HRPOpt, risk_models, expected_returns, objective_functions, CLA, EfficientCVaR, black_litterman
 
 from app.services.stock_service import _load_delta_stocks
 
@@ -224,13 +225,46 @@ async def get_portfolio_summary(db: Session) -> PortfolioSummary:
         else Decimal(0)
     )
     
+    # Calculate realized P/L from sell transactions
+    total_realized_pl = _calculate_realized_pl(db)
+    
     return PortfolioSummary(
         total_value=total_value,
         total_invested=total_invested,
         total_profit_loss=total_profit_loss,
         total_profit_loss_pct=total_profit_loss_pct,
+        total_realized_pl=total_realized_pl,
         positions=positions,
     )
+
+
+def _calculate_realized_pl(db: Session) -> Decimal:
+    """Calculate total realized profit/loss from all sell transactions."""
+    # Get all sell transactions
+    sell_transactions = (
+        db.query(Transaction)
+        .filter(Transaction.transaction_type == "sell")
+        .all()
+    )
+    
+    total_realized_pl = Decimal(0)
+    
+    for transaction in sell_transactions:
+        # For sell transactions, realized P/L is calculated as:
+        # (close_price - purchase_price) * quantity - fees
+        # If close_price is None, we use the transaction price as both buy and sell price (no gain/loss)
+        if transaction.close_price is not None:
+            # Realized P/L = (selling_price - purchase_price) * quantity - fees
+            selling_price = transaction.close_price
+            purchase_price = transaction.price
+            realized_pl = (selling_price - purchase_price) * transaction.quantity - (transaction.fees or Decimal(0))
+        else:
+            # If no close_price, assume no realized gain/loss, just deduct fees
+            realized_pl = -(transaction.fees or Decimal(0))
+        
+        total_realized_pl += realized_pl
+    
+    return total_realized_pl
 
 
 def _load_price_history(db: Session, tickers: list[str], start: date, end: date) -> pd.DataFrame:
@@ -258,6 +292,46 @@ def _load_price_history(db: Session, tickers: list[str], start: date, end: date)
     return df
 
 
+def _get_risk_model_function(risk_model: RiskModel):
+    """Map risk model enum to the corresponding pypfopt risk_models function."""
+    def ledoit_wolf_basic(prices):
+        return risk_models.CovarianceShrinkage(prices).ledoit_wolf()
+    
+    def ledoit_wolf_constant_variance(prices):
+        try:
+            return risk_models.CovarianceShrinkage(prices).ledoit_wolf(shrinkage_target="constant_variance")
+        except (TypeError, ValueError):
+            # Fallback to basic ledoit_wolf if shrinkage_target not supported
+            return risk_models.CovarianceShrinkage(prices).ledoit_wolf()
+    
+    def ledoit_wolf_single_factor(prices):
+        try:
+            return risk_models.CovarianceShrinkage(prices).ledoit_wolf(shrinkage_target="single_factor")
+        except (TypeError, ValueError):
+            return risk_models.CovarianceShrinkage(prices).ledoit_wolf()
+    
+    def ledoit_wolf_constant_correlation(prices):
+        try:
+            return risk_models.CovarianceShrinkage(prices).ledoit_wolf(shrinkage_target="constant_correlation")
+        except (TypeError, ValueError):
+            return risk_models.CovarianceShrinkage(prices).ledoit_wolf()
+    
+    def oracle_approximating(prices):
+        return risk_models.CovarianceShrinkage(prices).oracle_approximating()
+    
+    risk_model_mapping = {
+        RiskModel.SAMPLE_COV: risk_models.sample_cov,
+        RiskModel.SEMICOVARIANCE: risk_models.semicovariance,
+        RiskModel.EXP_COV: risk_models.exp_cov,
+        RiskModel.LEDOIT_WOLF: ledoit_wolf_basic,
+        RiskModel.LEDOIT_WOLF_CONSTANT_VARIANCE: ledoit_wolf_constant_variance,
+        RiskModel.LEDOIT_WOLF_SINGLE_FACTOR: ledoit_wolf_single_factor,
+        RiskModel.LEDOIT_WOLF_CONSTANT_CORRELATION: ledoit_wolf_constant_correlation,
+        RiskModel.ORACLE_APPROXIMATING: oracle_approximating,
+    }
+    return risk_model_mapping[risk_model]
+
+
 def optimize_portfolio(db: Session, req: OptimizationRequest) -> OptimizationResult:
     ## default start date is 5 year ago
     if req.start_date is None:
@@ -273,8 +347,9 @@ def optimize_portfolio(db: Session, req: OptimizationRequest) -> OptimizationRes
     
     ## Calculate the expected returns
     mu = expected_returns.mean_historical_return(prices, frequency=252)
-    ## Calculate the covariance matrix
-    S = risk_models.sample_cov(prices)
+    ## Calculate the covariance matrix using selected risk model
+    risk_model_func = _get_risk_model_function(req.risk_model)
+    S = risk_model_func(prices)
     
 
     if req.method == OptimizationMethod.HRP:
@@ -298,7 +373,105 @@ def optimize_portfolio(db: Session, req: OptimizationRequest) -> OptimizationRes
         # Get optimal weights for maximum Sharpe Ratio point
         weights = cla.max_sharpe()
         ret, vol, sharpe = cla.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
-    else:  # Efficient Frontier max Sharpe
+    elif req.method == OptimizationMethod.MIN_VOLATILITY:
+        # Minimize portfolio volatility
+        ef = EfficientFrontier(mu, S)
+        ef.min_volatility()
+        weights = ef.clean_weights()
+        ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
+    elif req.method == OptimizationMethod.MAX_QUADRATIC_UTILITY:
+        # Maximize quadratic utility with given risk aversion
+        if req.risk_aversion is None:
+            raise ValueError("risk_aversion parameter is required for max_quadratic_utility method")
+        ef = EfficientFrontier(mu, S)
+        ef.max_quadratic_utility(risk_aversion=req.risk_aversion)
+        weights = ef.clean_weights()
+        ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
+    elif req.method == OptimizationMethod.EFFICIENT_RISK:
+        # Maximize return for given target risk
+        if req.target_risk is None:
+            raise ValueError("target_risk parameter is required for efficient_risk method")
+        ef = EfficientFrontier(mu, S)
+        ef.efficient_risk(target_volatility=req.target_risk)
+        weights = ef.clean_weights()
+        ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
+    elif req.method == OptimizationMethod.EFFICIENT_RETURN:
+        # Minimize risk for given target return
+        if req.target_return is None:
+            raise ValueError("target_return parameter is required for efficient_return method")
+        ef = EfficientFrontier(mu, S)
+        ef.efficient_return(target_return=req.target_return)
+        weights = ef.clean_weights()
+        ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
+    elif req.method == OptimizationMethod.BLACK_LITTERMAN:
+        # Black-Litterman optimization
+        if req.risk_aversion is None:
+            raise ValueError("risk_aversion parameter is required for black_litterman method")
+        
+        # Market capitalization weights (equilibrium portfolio)
+        if req.market_caps:
+            # Normalize market caps to get weights
+            total_market_cap = sum(req.market_caps.values())
+            market_cap_weights = {ticker: cap / total_market_cap for ticker, cap in req.market_caps.items()}
+            # Ensure all tickers are present
+            missing_tickers = set(req.tickers) - set(market_cap_weights.keys())
+            if missing_tickers:
+                # Assign small equal weights to missing tickers
+                remaining_weight = 0.05
+                equal_weight = remaining_weight / len(missing_tickers) if missing_tickers else 0
+                # Scale down existing weights
+                scale_factor = (1 - remaining_weight)
+                market_cap_weights = {ticker: weight * scale_factor for ticker, weight in market_cap_weights.items()}
+                for ticker in missing_tickers:
+                    market_cap_weights[ticker] = equal_weight
+            
+            # Convert to pandas Series with correct order
+            market_cap_weights = pd.Series([market_cap_weights.get(ticker, 1.0/len(req.tickers)) for ticker in req.tickers], 
+                                         index=req.tickers)
+        else:
+            # Default to equal weights if no market caps provided
+            market_cap_weights = pd.Series([1.0/len(req.tickers)] * len(req.tickers), index=req.tickers)
+        
+        # Calculate implied equilibrium returns
+        implied_returns = black_litterman.market_implied_prior_returns(
+            market_cap_weights, req.risk_aversion, S
+        )
+        
+        # If views are provided, incorporate them
+        if req.views and req.view_confidences:
+            # Convert views to matrix format expected by Black-Litterman
+            P = np.zeros((len(req.views), len(req.tickers)))
+            Q = np.zeros(len(req.views))
+            omega_diag = []
+            
+            for i, (view_ticker, view_return) in enumerate(req.views.items()):
+                if view_ticker in req.tickers:
+                    ticker_idx = req.tickers.index(view_ticker)
+                    P[i, ticker_idx] = 1.0
+                    Q[i] = view_return
+                    # Use confidence if provided, otherwise default to 0.1
+                    confidence = req.view_confidences.get(view_ticker, 0.1)
+                    omega_diag.append(confidence)
+            
+            # Create omega matrix (uncertainty in views)
+            omega = np.diag(omega_diag)
+            
+            # Apply Black-Litterman with views
+            bl_returns, bl_cov = black_litterman.black_litterman(
+                implied_returns, S, P, Q, omega
+            )
+            
+            # Optimize with updated returns and covariance
+            ef = EfficientFrontier(bl_returns, bl_cov)
+        else:
+            # Use implied returns without views
+            ef = EfficientFrontier(implied_returns, S)
+        
+        # Optimize for maximum Sharpe ratio with Black-Litterman inputs
+        ef.max_sharpe(risk_free_rate=req.risk_free_rate or 0.0)
+        weights = ef.clean_weights()
+        ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
+    else:  # Efficient Frontier max Sharpe (for both EFFICIENT_FRONTIER and MAX_SHARPE)
         ef = EfficientFrontier(mu, S)
         ef.max_sharpe(risk_free_rate=req.risk_free_rate or 0.0)
         weights = ef.clean_weights()

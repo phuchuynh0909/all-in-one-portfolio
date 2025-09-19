@@ -1,6 +1,16 @@
 import { apiPost, apiGet } from '../api';
 
-export type OptimizationMethod = 'hrp' | 'ef' | 'cvar' | 'cla';
+export type OptimizationMethod = 'hrp' | 'ef' | 'max_sharpe' | 'min_volatility' | 'max_quadratic_utility' | 'efficient_risk' | 'efficient_return' | 'black_litterman' | 'cvar' | 'cla';
+
+export type RiskModel = 
+  | 'sample_cov'
+  | 'semicovariance' 
+  | 'exp_cov'
+  | 'ledoit_wolf'
+  | 'ledoit_wolf_constant_variance'
+  | 'ledoit_wolf_single_factor'
+  | 'ledoit_wolf_constant_correlation'
+  | 'oracle_approximating';
 
 export interface StockSymbol {
   id: number;
@@ -18,11 +28,21 @@ export interface OptimizationRequest {
   start_date?: string;
   end_date?: string;
   method: OptimizationMethod;
+  risk_model?: RiskModel;
   risk_free_rate?: number;
   constraints?: {
     min_weight?: number;
     max_weight?: number;
   };
+  // Additional parameters for specific optimization methods
+  risk_aversion?: number;  // For max_quadratic_utility and black_litterman
+  target_risk?: number;    // For efficient_risk
+  target_return?: number;  // For efficient_return
+  
+  // Black-Litterman specific parameters
+  market_caps?: Record<string, number>;  // Market cap weights for equilibrium portfolio
+  views?: Record<string, number>;        // Investor views on expected returns
+  view_confidences?: Record<string, number>;  // Confidence in views (lower = more confident)
 }
 
 export interface OptimizationResult {
