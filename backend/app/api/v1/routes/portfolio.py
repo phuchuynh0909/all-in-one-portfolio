@@ -17,6 +17,7 @@ from app.schemas.portfolio import (
     ClosePositionResponse,
 )
 from app.services import portfolio_service
+from app.services import optimization_service
 
 router = APIRouter(prefix="/portfolio", tags=["portfolio"])
 
@@ -141,4 +142,4 @@ def optimize_portfolio(
     body: OptimizationRequest,
     db: Session = Depends(get_db),
 ) -> OptimizationResult:
-    return portfolio_service.optimize_portfolio(db, body)
+    return optimization_service.optimize_portfolio(db, body)

@@ -105,6 +105,12 @@ class RiskModel(str, Enum):
     ORACLE_APPROXIMATING = "oracle_approximating"
 
 
+class ReturnPredictionMethod(str, Enum):
+    """Supported methods for predicting expected returns."""
+    HISTORICAL_MEAN = "historical_mean"
+    BVAR = "bvar"
+
+
 class OptimizationRequest(BaseModel):
     """Request body for portfolio optimization."""
     tickers: List[str]
@@ -124,6 +130,10 @@ class OptimizationRequest(BaseModel):
     market_caps: dict[str, float] | None = None  # Market cap weights for equilibrium portfolio
     views: dict[str, float] | None = None        # Investor views on expected returns
     view_confidences: dict[str, float] | None = None  # Confidence in views (lower = more confident)
+    
+    # Return prediction method
+    return_prediction_method: ReturnPredictionMethod = ReturnPredictionMethod.HISTORICAL_MEAN
+    bvar_forecast_periods: int | None = 21  # Number of periods to forecast for BVAR (only used if return_prediction_method is BVAR)
 
 
 class OptimizationResult(BaseModel):

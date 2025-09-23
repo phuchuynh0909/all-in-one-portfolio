@@ -14,16 +14,101 @@ import {
   Chip,
   Alert,
   Grid,
-  IconButton
+  IconButton,
+  Tooltip
 } from '@mui/material';
 import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { PieChart } from '@mui/x-charts/PieChart';
 import { optimizePortfolio, getAllStockSymbols } from '../../lib/services/portfolio';
-import type { OptimizationMethod, RiskModel, OptimizationResult, StockSymbol } from '../../lib/services/portfolio';
+import type { OptimizationMethod, RiskModel, OptimizationResult, StockSymbol, ReturnPredictionMethod } from '../../lib/services/portfolio';
 
 interface PortfolioPieChartProps {
   tickers: string[];
 }
+
+// Optimization method descriptions and use cases
+const getOptimizationMethodInfo = (method: OptimizationMethod) => {
+  const methodInfo: Record<OptimizationMethod, {
+    name: string;
+    description: string;
+    strengths: string;
+    weaknesses: string;
+    useCase: string;
+  }> = {
+    'ef': {
+      name: 'Efficient Frontier (Legacy)',
+      description: 'Classic mean-variance optimization that finds portfolios with maximum expected return for each level of risk.',
+      strengths: 'Well-established theory, mathematically optimal under assumptions.',
+      weaknesses: 'Sensitive to input estimates, may produce extreme allocations.',
+      useCase: 'Academic applications, baseline comparison for other methods.'
+    },
+    'max_sharpe': {
+      name: 'Maximum Sharpe Ratio',
+      description: 'Finds the portfolio that maximizes the ratio of excess return to volatility (risk-adjusted return).',
+      strengths: 'Intuitive risk-adjusted optimization, widely used in practice.',
+      weaknesses: 'May concentrate in few assets, sensitive to expected return estimates.',
+      useCase: 'General portfolio optimization when seeking best risk-adjusted returns.'
+    },
+    'min_volatility': {
+      name: 'Minimum Volatility',
+      description: 'Finds the portfolio with the lowest possible risk (volatility) regardless of expected returns.',
+      strengths: 'Stable, diversified portfolios; less sensitive to return estimates.',
+      weaknesses: 'May sacrifice potential returns for lower risk.',
+      useCase: 'Conservative investors, risk-parity strategies, defensive portfolios.'
+    },
+    'max_quadratic_utility': {
+      name: 'Maximum Quadratic Utility',
+      description: 'Maximizes investor utility using quadratic utility function with configurable risk aversion.',
+      strengths: 'Incorporates investor risk preferences directly into optimization.',
+      weaknesses: 'Requires specification of risk aversion parameter.',
+      useCase: 'Personalized portfolio optimization based on investor risk tolerance.'
+    },
+    'efficient_risk': {
+      name: 'Efficient Risk (Target Risk)',
+      description: 'Maximizes expected return subject to a specific target volatility constraint.',
+      strengths: 'Allows precise risk budgeting, useful for institutional constraints.',
+      weaknesses: 'Requires accurate volatility targeting, may be infeasible.',
+      useCase: 'Risk budgeting, institutional portfolios with volatility targets.'
+    },
+    'efficient_return': {
+      name: 'Efficient Return (Target Return)',
+      description: 'Minimizes portfolio risk subject to achieving a specific target expected return.',
+      strengths: 'Useful when return targets are mandated or desired.',
+      weaknesses: 'May be infeasible if target return is too high.',
+      useCase: 'Goal-based investing, pension funds with return requirements.'
+    },
+    'black_litterman': {
+      name: 'Black-Litterman',
+      description: 'Bayesian approach that starts with market equilibrium and incorporates investor views.',
+      strengths: 'Addresses input sensitivity, incorporates market information and views.',
+      weaknesses: 'Complex to implement, requires market cap data and view specification.',
+      useCase: 'Professional asset management, incorporating tactical views into strategic allocation.'
+    },
+    'hrp': {
+      name: 'Hierarchical Risk Parity',
+      description: 'Modern diversification approach using machine learning clustering and inverse volatility weighting.',
+      strengths: 'Robust, stable allocations; works well out-of-sample.',
+      weaknesses: 'Complex methodology, may not optimize for specific objectives.',
+      useCase: 'Alternative to mean-variance, systematic diversification strategies.'
+    },
+    'cvar': {
+      name: 'Conditional Value at Risk',
+      description: 'Optimizes portfolio to minimize expected losses in worst-case scenarios (tail risk).',
+      strengths: 'Focuses on tail risk management, coherent risk measure.',
+      weaknesses: 'Computationally intensive, may ignore upside potential.',
+      useCase: 'Risk management focus, downside protection, institutional risk limits.'
+    },
+    'cla': {
+      name: 'Critical Line Algorithm',
+      description: 'Efficient algorithm for solving mean-variance optimization with linear constraints.',
+      strengths: 'Computationally efficient, handles constraints well.',
+      weaknesses: 'Still subject to mean-variance optimization limitations.',
+      useCase: 'Large-scale optimization problems, portfolios with many constraints.'
+    }
+  };
+  
+  return methodInfo[method] || methodInfo['max_sharpe'];
+};
 
 // Risk model descriptions and use cases
 const getRiskModelInfo = (riskModel: RiskModel) => {
@@ -113,12 +198,14 @@ export default function PortfolioPieChart({ tickers }: PortfolioPieChartProps) {
   const [marketCaps, setMarketCaps] = useState<Record<string, number>>({});
   const [views, setViews] = useState<Record<string, number>>({});
   const [viewConfidences, setViewConfidences] = useState<Record<string, number>>({});
-
-  // Compute risk model info once per render
-  const currentRiskModelInfo = getRiskModelInfo(riskModel);
   
-  // Debug: Log when risk model changes
-  console.log('Current risk model:', riskModel, 'Info:', currentRiskModelInfo.name);
+  // BVAR specific parameters
+  const [returnPredictionMethod, setReturnPredictionMethod] = useState<ReturnPredictionMethod>('historical_mean');
+  const [bvarForecastPeriods, setBvarForecastPeriods] = useState<number>(21);
+
+  // Compute method and risk model info once per render
+  const currentOptimizationMethodInfo = getOptimizationMethodInfo(method);
+  const currentRiskModelInfo = getRiskModelInfo(riskModel);
   
   // Symbol selection state
   const [availableSymbols, setAvailableSymbols] = useState<StockSymbol[]>([]);
@@ -181,6 +268,12 @@ export default function PortfolioPieChart({ tickers }: PortfolioPieChartProps) {
           request.view_confidences = viewConfidences;
         }
       }
+
+      // Set return prediction method and related parameters
+      request.return_prediction_method = returnPredictionMethod;
+      if (returnPredictionMethod === 'bvar') {
+        request.bvar_forecast_periods = bvarForecastPeriods;
+      }
       
       const optimizationResult = await optimizePortfolio(request);
       setResult(optimizationResult);
@@ -207,62 +300,136 @@ export default function PortfolioPieChart({ tickers }: PortfolioPieChartProps) {
         </Typography>
 
         <Box sx={{ mb: 2 }}>
-          <FormControl fullWidth sx={{ mb: 2 }}>
-            <InputLabel>Optimization Method</InputLabel>
-            <Select
-              value={method}
-              label="Optimization Method"
-              onChange={(e) => setMethod(e.target.value as OptimizationMethod)}
-            >
-              <MenuItem value="ef">Efficient Frontier (Legacy)</MenuItem>
-              <MenuItem value="max_sharpe">Maximum Sharpe Ratio</MenuItem>
-              <MenuItem value="min_volatility">Minimum Volatility</MenuItem>
-              <MenuItem value="max_quadratic_utility">Maximum Quadratic Utility</MenuItem>
-              <MenuItem value="efficient_risk">Efficient Risk (Target Risk)</MenuItem>
-              <MenuItem value="efficient_return">Efficient Return (Target Return)</MenuItem>
-              <MenuItem value="black_litterman">Black-Litterman</MenuItem>
-              <MenuItem value="hrp">Hierarchical Risk Parity</MenuItem>
-              <MenuItem value="cvar">Conditional Value at Risk</MenuItem>
-              <MenuItem value="cla">Critical Line Algorithm</MenuItem>
-            </Select>
-          </FormControl>
+          <Tooltip
+            title={
+              <Box sx={{ maxWidth: 400, p: 1 }}>
+                <Typography variant="subtitle2" gutterBottom sx={{ color: 'inherit' }}>
+                  {currentOptimizationMethodInfo.name}
+                </Typography>
+                <Typography variant="body2" paragraph sx={{ color: 'inherit' }}>
+                  <strong>Description:</strong> {currentOptimizationMethodInfo.description}
+                </Typography>
+                <Typography variant="body2" paragraph sx={{ color: 'inherit' }}>
+                  <strong>Strengths:</strong> {currentOptimizationMethodInfo.strengths}
+                </Typography>
+                <Typography variant="body2" paragraph sx={{ color: 'inherit' }}>
+                  <strong>Weaknesses:</strong> {currentOptimizationMethodInfo.weaknesses}
+                </Typography>
+                <Typography variant="body2" sx={{ color: 'inherit' }}>
+                  <strong>Best Use Case:</strong> {currentOptimizationMethodInfo.useCase}
+                </Typography>
+              </Box>
+            }
+            arrow
+            placement="right"
+            enterDelay={300}
+            leaveDelay={200}
+          >
+            <FormControl fullWidth sx={{ mb: 2 }}>
+              <InputLabel>Optimization Method</InputLabel>
+              <Select
+                value={method}
+                label="Optimization Method"
+                onChange={(e) => setMethod(e.target.value as OptimizationMethod)}
+              >
+                <MenuItem value="ef">Efficient Frontier (Legacy)</MenuItem>
+                <MenuItem value="max_sharpe">Maximum Sharpe Ratio</MenuItem>
+                <MenuItem value="min_volatility">Minimum Volatility</MenuItem>
+                <MenuItem value="max_quadratic_utility">Maximum Quadratic Utility</MenuItem>
+                <MenuItem value="efficient_risk">Efficient Risk (Target Risk)</MenuItem>
+                <MenuItem value="efficient_return">Efficient Return (Target Return)</MenuItem>
+                <MenuItem value="black_litterman">Black-Litterman</MenuItem>
+                <MenuItem value="hrp">Hierarchical Risk Parity</MenuItem>
+                <MenuItem value="cvar">Conditional Value at Risk</MenuItem>
+                <MenuItem value="cla">Critical Line Algorithm</MenuItem>
+              </Select>
+            </FormControl>
+          </Tooltip>
 
-          <FormControl fullWidth sx={{ mb: 2 }}>
-            <InputLabel>Risk Model</InputLabel>
-            <Select
-              value={riskModel}
-              label="Risk Model"
-              onChange={(e) => setRiskModel(e.target.value as RiskModel)}
-            >
-              {(['sample_cov', 'semicovariance', 'exp_cov', 'ledoit_wolf', 'ledoit_wolf_constant_variance', 'ledoit_wolf_single_factor', 'ledoit_wolf_constant_correlation', 'oracle_approximating'] as RiskModel[]).map((model) => {
-                const info = getRiskModelInfo(model);
-                return (
-                  <MenuItem key={model} value={model}>
-                    {info.name}
-                  </MenuItem>
-                );
-              })}
-            </Select>
-          </FormControl>
+          <Tooltip
+            title={
+              returnPredictionMethod === 'bvar' ? (
+                <Box sx={{ maxWidth: 400, p: 1 }}>
+                  <Typography variant="subtitle2" gutterBottom sx={{ color: 'inherit' }}>
+                    Bayesian Vector Autoregression (BVAR) Expected Returns
+                  </Typography>
+                  <Typography variant="body2" paragraph sx={{ color: 'inherit' }}>
+                    <strong>Overview:</strong> Uses Bayesian Vector Autoregression to predict expected returns based on historical relationships between assets, rather than using simple historical averages.
+                  </Typography>
+                  <Typography variant="body2" paragraph sx={{ color: 'inherit' }}>
+                    <strong>Benefits:</strong> Captures dynamic relationships between assets and provides forward-looking return forecasts.
+                  </Typography>
+                  <Typography variant="body2" sx={{ color: 'inherit' }}>
+                    <strong>Forecast Periods:</strong> Number of days to forecast ahead for return prediction (21 = monthly, 63 = quarterly).
+                  </Typography>
+                </Box>
+              ) : (
+                <Typography variant="body2" sx={{ color: 'inherit' }}>
+                  Historical Mean: Uses simple historical average returns as expected returns for optimization.
+                </Typography>
+              )
+            }
+            arrow
+            placement="right"
+            enterDelay={300}
+            leaveDelay={200}
+          >
+            <FormControl fullWidth sx={{ mb: 2 }}>
+              <InputLabel>Expected Returns Method</InputLabel>
+              <Select
+                value={returnPredictionMethod}
+                label="Expected Returns Method"
+                onChange={(e) => setReturnPredictionMethod(e.target.value as ReturnPredictionMethod)}
+              >
+                <MenuItem value="historical_mean">Historical Mean</MenuItem>
+                <MenuItem value="bvar">Bayesian Vector Autoregression (BVAR)</MenuItem>
+              </Select>
+            </FormControl>
+          </Tooltip>
 
-          {/* Risk Model Information Box */}
-          <Alert severity="info" sx={{ mb: 2 }} key={riskModel}>
-            <Typography variant="subtitle2" gutterBottom>
-              {currentRiskModelInfo.name}
-            </Typography>
-            <Typography variant="body2" paragraph>
-              <strong>Description:</strong> {currentRiskModelInfo.description}
-            </Typography>
-            <Typography variant="body2" paragraph>
-              <strong>Strengths:</strong> {currentRiskModelInfo.strengths}
-            </Typography>
-            <Typography variant="body2" paragraph>
-              <strong>Weaknesses:</strong> {currentRiskModelInfo.weaknesses}
-            </Typography>
-            <Typography variant="body2">
-              <strong>Best Use Case:</strong> {currentRiskModelInfo.useCase}
-            </Typography>
-          </Alert>
+          <Tooltip
+            title={
+              <Box sx={{ maxWidth: 400, p: 1 }}>
+                <Typography variant="subtitle2" gutterBottom sx={{ color: 'inherit' }}>
+                  {currentRiskModelInfo.name}
+                </Typography>
+                <Typography variant="body2" paragraph sx={{ color: 'inherit' }}>
+                  <strong>Description:</strong> {currentRiskModelInfo.description}
+                </Typography>
+                <Typography variant="body2" paragraph sx={{ color: 'inherit' }}>
+                  <strong>Strengths:</strong> {currentRiskModelInfo.strengths}
+                </Typography>
+                <Typography variant="body2" paragraph sx={{ color: 'inherit' }}>
+                  <strong>Weaknesses:</strong> {currentRiskModelInfo.weaknesses}
+                </Typography>
+                <Typography variant="body2" sx={{ color: 'inherit' }}>
+                  <strong>Best Use Case:</strong> {currentRiskModelInfo.useCase}
+                </Typography>
+              </Box>
+            }
+            arrow
+            placement="right"
+            enterDelay={300}
+            leaveDelay={200}
+          >
+            <FormControl fullWidth sx={{ mb: 2 }}>
+              <InputLabel>Risk Model</InputLabel>
+              <Select
+                value={riskModel}
+                label="Risk Model"
+                onChange={(e) => setRiskModel(e.target.value as RiskModel)}
+              >
+                {(['sample_cov', 'semicovariance', 'exp_cov', 'ledoit_wolf', 'ledoit_wolf_constant_variance', 'ledoit_wolf_single_factor', 'ledoit_wolf_constant_correlation', 'oracle_approximating'] as RiskModel[]).map((model) => {
+                  const info = getRiskModelInfo(model);
+                  return (
+                    <MenuItem key={model} value={model}>
+                      {info.name}
+                    </MenuItem>
+                  );
+                })}
+              </Select>
+            </FormControl>
+          </Tooltip>
 
           <TextField
             fullWidth
@@ -309,6 +476,19 @@ export default function PortfolioPieChart({ tickers }: PortfolioPieChartProps) {
               sx={{ mb: 2 }}
             />
           )}
+
+        {returnPredictionMethod === 'bvar' && (
+          <TextField
+            fullWidth
+            type="number"
+            label="Forecast Periods"
+            value={bvarForecastPeriods}
+            onChange={(e) => setBvarForecastPeriods(Number(e.target.value))}
+            helperText="Number of days to forecast (21 = monthly, 63 = quarterly)"
+            sx={{ mb: 2 }}
+            inputProps={{ min: 1, max: 252 }}
+          />
+        )}
 
           {method === 'black_litterman' && (
             <Box sx={{ mb: 2 }}>

@@ -2,6 +2,8 @@ import { apiPost, apiGet } from '../api';
 
 export type OptimizationMethod = 'hrp' | 'ef' | 'max_sharpe' | 'min_volatility' | 'max_quadratic_utility' | 'efficient_risk' | 'efficient_return' | 'black_litterman' | 'cvar' | 'cla';
 
+export type ReturnPredictionMethod = 'historical_mean' | 'bvar';
+
 export type RiskModel = 
   | 'sample_cov'
   | 'semicovariance' 
@@ -43,6 +45,10 @@ export interface OptimizationRequest {
   market_caps?: Record<string, number>;  // Market cap weights for equilibrium portfolio
   views?: Record<string, number>;        // Investor views on expected returns
   view_confidences?: Record<string, number>;  // Confidence in views (lower = more confident)
+  
+  // Return prediction method
+  return_prediction_method?: ReturnPredictionMethod;  // Method for predicting expected returns (default: historical_mean)
+  bvar_forecast_periods?: number;  // Number of periods to forecast for BVAR (only used if return_prediction_method is bvar)
 }
 
 export interface OptimizationResult {
