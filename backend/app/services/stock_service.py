@@ -272,8 +272,23 @@ async def get_stock_timeseries(
                     }
                 
                 elif ind.name == "kalman_zscore":
-                    window = ind.params.get("window", 20)
-                    indicator_data["kalman_zscore"] = kalman_zscore.calculate_kalman_zscore(close_prices, window=window)
+                    # Try to retrieve from feature store; fallback to on-the-fly calc
+                    try:
+                        col_name = f"zscore_kf_{window}"
+                        fs_df = feature_store.get_features(
+                            symbol,
+                            start=df["date"].min(),
+                            end=df["date"].max(),
+                            columns=["date", col_name],
+                        )
+                        if not fs_df.empty and col_name in fs_df.columns:
+                            # Align by date
+                            merged = df[["date"]].merge(fs_df, on="date", how="left")
+                            indicator_data["kalman_zscore"] = convert_nans(merged[col_name].values)
+                        else:
+                            indicator_data["kalman_zscore"] = kalman_zscore.calculate_kalman_zscore(close_prices, window=window)
+                    except Exception:
+                        indicator_data["kalman_zscore"] = kalman_zscore.calculate_kalman_zscore(close_prices, window=window)
                 
                 elif ind.name == "yz_volatility":
                     window = ind.params.get("window", 30)
@@ -296,6 +311,7 @@ async def get_stock_timeseries(
                     df["rs_rating_20_ema"] = df["rs_rating_20"].ewm(span=20).mean().round(2)
                     df["rs_rating_50_ema"] = df["rs_rating_50"].ewm(span=50).mean().round(2)
                     df["rs_rating_252_ema"] = df["rs_rating_252"].ewm(span=252).mean()
+                    print(df["rs_rating_20_ema"].shape)
 
                     indicator_data["rs_rating_20"] = convert_nans(df["rs_rating_20"].values)
                     indicator_data["rs_rating_50"] = convert_nans(df["rs_rating_50"].values)

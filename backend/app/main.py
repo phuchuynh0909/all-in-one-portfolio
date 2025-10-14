@@ -15,6 +15,8 @@ from app.api.v1.routes.report import router as report_router
 from app.api.v1.routes.backtest import router as backtest_router
 from app.api.v1.routes.financial_statements import router as financial_router
 from app.api.v1.routes.data_crawler import router as crawler_router
+from app.api.v1.routes.scanner import router as scanner_router
+from app.api.v1.routes.workflows import router as workflows_router
 
 
 def get_app() -> FastAPI:
@@ -37,6 +39,8 @@ def get_app() -> FastAPI:
     app.include_router(backtest_router, prefix=api_prefix)
     app.include_router(financial_router, prefix=api_prefix)
     app.include_router(crawler_router, prefix=api_prefix)
+    app.include_router(scanner_router, prefix=api_prefix)
+    app.include_router(workflows_router, prefix=api_prefix)
 
     # Create a custom cache decorator that logs hits and misses
     def cache_with_logging(**cache_kwargs):

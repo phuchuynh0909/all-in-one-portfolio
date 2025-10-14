@@ -16,9 +16,10 @@ import { fetchReports } from '../../lib/services/report';
 
 type StockChartProps = {
   symbol: string;
+  onReportClick?: (report: Report) => void;
 };
 
-export default function StockChart({ symbol }: StockChartProps) {
+export default function StockChart({ symbol, onReportClick }: StockChartProps) {
   const [reports, setReports] = useState<Report[]>([]);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);

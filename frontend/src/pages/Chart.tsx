@@ -1,5 +1,6 @@
 import { useState } from 'react';
-import { Box, TextField, Container, Paper, Dialog, DialogTitle, DialogContent, Typography, Link } from '@mui/material';
+import { Box, TextField, Container, Paper, Dialog, DialogTitle, DialogContent, Typography, Link, Button, Snackbar, Alert, Stack } from '@mui/material';
+import { syncStock } from '../lib/services/workflows';
 import type { Report } from '../lib/services/report';
 import StockChart from '../components/chart/StockChart';
 
@@ -8,6 +9,8 @@ export default function ChartPage() {
   const [currentSymbol, setCurrentSymbol] = useState('VNINDEX');
   const [isFocused, setIsFocused] = useState(false);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
+  const [syncing, setSyncing] = useState(false);
+  const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -32,21 +35,40 @@ export default function ChartPage() {
     setSelectedReport(report);
   };
 
+  const handleSync = async () => {
+    try {
+      setSyncing(true);
+      const sym = currentSymbol.trim();
+      if (!sym) return;
+      const res = await syncStock(sym);
+      setSnackbar({ open: true, message: `Submitted sync for ${sym}: ${res.detail}`, severity: 'success' });
+    } catch (e: any) {
+      setSnackbar({ open: true, message: e?.message || 'Failed to submit sync', severity: 'error' });
+    } finally {
+      setSyncing(false);
+    }
+  };
+
   return (
     <Container maxWidth="xl">
       <Box sx={{ my: 4 }}>
         <Paper sx={{ p: 2, mb: 2 }}>
-          <TextField
-            label="Symbol"
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-            onKeyDown={handleKeyDown}
-            onFocus={handleFocus}
-            onBlur={handleBlur}
-            variant="outlined"
-            size="small"
-            placeholder={isFocused ? "Enter symbol" : "Press Enter to update chart"}
-          />
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} alignItems="center">
+            <TextField
+              label="Symbol"
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              onKeyDown={handleKeyDown}
+              onFocus={handleFocus}
+              onBlur={handleBlur}
+              variant="outlined"
+              size="small"
+              placeholder={isFocused ? "Enter symbol" : "Press Enter to update chart"}
+            />
+            <Button variant="outlined" onClick={handleSync} disabled={syncing}>
+              {syncing ? 'Submitting…' : `Sync ${currentSymbol}`}
+            </Button>
+          </Stack>
         </Paper>
         
         <Paper sx={{ p: 2 }}>
@@ -92,6 +114,12 @@ export default function ChartPage() {
           </>
         )}
       </Dialog>
+
+      <Snackbar open={snackbar.open} autoHideDuration={4000} onClose={() => setSnackbar({ ...snackbar, open: false })}>
+        <Alert onClose={() => setSnackbar({ ...snackbar, open: false })} severity={snackbar.severity} sx={{ width: '100%' }}>
+          {snackbar.message}
+        </Alert>
+      </Snackbar>
     </Container>
   );
 }
