@@ -218,32 +218,44 @@ def ch_fetch_prev_day_bins(symbol: str | None, day, session_start: dtime, sessio
         end_dt = datetime.combine(day, session_end)
         start_str = start_dt.strftime("%Y-%m-%d %H:%M:%S")
         end_str = end_dt.strftime("%Y-%m-%d %H:%M:%S")
+        sess_start_min = session_start.hour * 60 + session_start.minute
+        sess_end_min = session_end.hour * 60 + session_end.minute
 
-        # Fetch raw ticks (timestamp, volume)
+        # Aggregate volumes into session bins via SQL; return zero-filled vector of length bin_count
         sql = f"""
-            SELECT {ISP_CH_TS_COL}, {ISP_CH_VOLUME_COL}
-            FROM {CLICKHOUSE_DB}.{ISP_CH_TABLE}
-            WHERE {ISP_CH_TS_COL} >= toDateTime('{start_str}')
-              AND {ISP_CH_TS_COL} < toDateTime('{end_str}')
-              AND {ISP_CH_SYMBOL_COL} = '{symbol.replace("'", "''")}'
+            WITH
+              toDateTime('{start_str}') AS start_dt,
+              toDateTime('{end_str}')   AS end_dt,
+              {sess_start_min} AS sess_start_min,
+              {sess_end_min}   AS sess_end_min
+            SELECT bin_idx, vol
+            FROM (
+              SELECT
+                intDiv(
+                  (toRelativeMinuteNum({ISP_CH_TS_COL}) - toRelativeMinuteNum(toStartOfDay({ISP_CH_TS_COL}))) - sess_start_min,
+                  {bin_minutes}
+                ) AS bin_idx,
+                sum({ISP_CH_VOLUME_COL}) AS vol
+              FROM {CLICKHOUSE_DB}.{ISP_CH_TABLE}
+              WHERE {ISP_CH_TS_COL} >= start_dt
+                AND {ISP_CH_TS_COL} <  end_dt
+                AND {ISP_CH_SYMBOL_COL} = '{symbol.replace("'", "''")}'
+                AND (toRelativeMinuteNum({ISP_CH_TS_COL}) - toRelativeMinuteNum(toStartOfDay({ISP_CH_TS_COL}))) >= sess_start_min
+                AND (toRelativeMinuteNum({ISP_CH_TS_COL}) - toRelativeMinuteNum(toStartOfDay({ISP_CH_TS_COL}))) <  sess_end_min
+              GROUP BY bin_idx
+            )
+            ORDER BY bin_idx
         """
         result = client.query(sql)
         rows = result.result_rows
 
-        if not rows:
-            return [0.0] * bin_count
-
-        # Compute bin indices using numpy
-        sess_start_min = session_start.hour * 60 + session_start.minute
-        tod_minutes = np.fromiter(((r[0].hour * 60 + r[0].minute) for r in rows), dtype=np.int32)
-        vols = np.fromiter((float(r[1]) for r in rows), dtype=np.float64)
-        offsets = tod_minutes - sess_start_min
-        bin_idx = offsets // bin_minutes
-        mask = (bin_idx >= 0) & (bin_idx < bin_count)
-        if not np.any(mask):
-            return [0.0] * bin_count
-        binned = np.bincount(bin_idx[mask], weights=vols[mask], minlength=bin_count)
-        return [float(x) for x in binned[:bin_count]]
+        # Build zero-filled bins
+        bins = [0.0] * bin_count
+        for r in rows:
+            idx, vol = r[0], r[1]
+            if 0 <= idx < bin_count:
+                bins[idx] = float(vol)
+        return bins
     except Exception:
         return None
 
@@ -252,40 +264,47 @@ def ch_fetch_hist_bins(symbol: str | None, end_day, session_start: dtime, sessio
     if not symbol:
         return None
     try:
-        # Aggregate over [end_day - lookback_days, end_day) per bin
+        # Aggregate over [end_day - lookback_days, end_day] per bin across all days
         start_day_dt = datetime.combine(end_day, dtime(0, 0)) - timedelta(days=lookback_days)
         end_day_dt = datetime.combine(end_day, dtime(23, 59, 59))
         client = _get_ch_client()
         start_str = start_day_dt.strftime('%Y-%m-%d %H:%M:%S')
         end_str = end_day_dt.strftime('%Y-%m-%d %H:%M:%S')
+        sess_start_min = session_start.hour * 60 + session_start.minute
+        sess_end_min = session_end.hour * 60 + session_end.minute
         sql = f"""
-            SELECT {ISP_CH_TS_COL}, {ISP_CH_VOLUME_COL}
-            FROM {CLICKHOUSE_DB}.{ISP_CH_TABLE}
-            WHERE {ISP_CH_TS_COL} >= toDateTime('{start_str}')
-              AND {ISP_CH_TS_COL} <= toDateTime('{end_str}')
-              AND {ISP_CH_SYMBOL_COL} = '{symbol.replace("'", "''")}'
+            WITH
+              toDateTime('{start_str}') AS start_dt,
+              toDateTime('{end_str}')   AS end_dt,
+              {sess_start_min} AS sess_start_min,
+              {sess_end_min}   AS sess_end_min
+            SELECT bin_idx, vol
+            FROM (
+              SELECT
+                intDiv(
+                  (toRelativeMinuteNum({ISP_CH_TS_COL}) - toRelativeMinuteNum(toStartOfDay({ISP_CH_TS_COL}))) - sess_start_min,
+                  {bin_minutes}
+                ) AS bin_idx,
+                sum({ISP_CH_VOLUME_COL}) AS vol
+              FROM {CLICKHOUSE_DB}.{ISP_CH_TABLE}
+              WHERE {ISP_CH_TS_COL} >= start_dt
+                AND {ISP_CH_TS_COL} <= end_dt
+                AND {ISP_CH_SYMBOL_COL} = '{symbol.replace("'", "''")}'
+                AND (toRelativeMinuteNum({ISP_CH_TS_COL}) - toRelativeMinuteNum(toStartOfDay({ISP_CH_TS_COL}))) >= sess_start_min
+                AND (toRelativeMinuteNum({ISP_CH_TS_COL}) - toRelativeMinuteNum(toStartOfDay({ISP_CH_TS_COL}))) <  sess_end_min
+              GROUP BY bin_idx
+            )
+            ORDER BY bin_idx
         """
         result = client.query(sql)
         rows = result.result_rows
 
-        if not rows:
-            return [0.0] * bin_count
-
-        # Compute bin indices across all days using time-of-day minutes
-        sess_start_min = session_start.hour * 60 + session_start.minute
-        sess_end_min = session_end.hour * 60 + session_end.minute
-        tod_minutes = np.fromiter(((r[0].hour * 60 + r[0].minute) for r in rows), dtype=np.int32)
-        vols = np.fromiter((float(r[1]) for r in rows), dtype=np.float64)
-        within = (tod_minutes >= sess_start_min) & (tod_minutes < sess_end_min)
-        if not np.any(within):
-            return [0.0] * bin_count
-        offsets = tod_minutes[within] - sess_start_min
-        bin_idx = offsets // bin_minutes
-        mask = (bin_idx >= 0) & (bin_idx < bin_count)
-        if not np.any(mask):
-            return [0.0] * bin_count
-        binned = np.bincount(bin_idx[mask], weights=vols[within][mask], minlength=bin_count)
-        return [float(x) for x in binned[:bin_count]]
+        bins = [0.0] * bin_count
+        for r in rows:
+            idx, vol = r[0], r[1]
+            if 0 <= idx < bin_count:
+                bins[idx] = float(vol)
+        return bins
     except Exception:
         return None
 

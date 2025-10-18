@@ -3,6 +3,7 @@ import os
 import math
 import pandas as pd
 from prefect import flow, task
+from prefect.task_runners import ConcurrentTaskRunner
 
 from clickhouse_driver import Client  # type: ignore
 from metastock2pd import metastock_read, metastock_read_master, metastock_emaster, metastock_xmaster, metastock_master
@@ -182,7 +183,17 @@ def convert_metastock_to_df(symbol: str, metadata_df: pd.DataFrame) -> pd.DataFr
     tick_df = tick_df[['ts', 'price', 'volume']]
     return tick_df
 
-@flow(log_prints=True)
+@task
+def process_symbol(symbol: str, metadata_df: pd.DataFrame) -> int:
+    try:
+        df = convert_metastock_to_df(symbol=symbol, metadata_df=metadata_df)
+        count = write_ohlc1m_to_clickhouse(df, symbol=symbol)
+        return int(count)
+    except Exception as e:
+        print(f"Error processing {symbol}: {e}")
+        return 0
+
+@flow(log_prints=True, task_runner=ConcurrentTaskRunner(max_workers=8))
 def sync_ohlc1m_df_to_clickhouse() -> int:
     print("Aggregating to 1-minute OHLC and syncing to ClickHouse...")
     
@@ -196,16 +207,12 @@ def sync_ohlc1m_df_to_clickhouse() -> int:
         reader = csv.reader(f)
         watchlist = list(chain.from_iterable(reader))
     
-    for symbol in watchlist:
-        print(f"Processing {symbol} ...")
-        try:
-            df = convert_metastock_to_df(symbol=symbol, metadata_df=metadata_df)
-            count = write_ohlc1m_to_clickhouse(df, symbol=symbol)
-            print(f"Inserted {count} OHLC rows into ClickHouse for {symbol}")
-        except Exception as e:
-            print(e)
-            print(f"Error processing {symbol}: {e}")
-            continue
+    # Submit tasks concurrently per symbol
+    futures = [process_symbol.submit(symbol=s, metadata_df=metadata_df) for s in watchlist]
+    results = [f.result() for f in futures]
+    total = int(sum(results))
+    print(f"Inserted total {total} OHLC rows into ClickHouse for {len(watchlist)} symbols")
+    return total
 
 # Run the flow
 from pathlib import Path
