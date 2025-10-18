@@ -114,7 +114,7 @@ def _ensure_ohlc_table_exists(client: Client, database: str, table: str) -> None
         """
     )
 
-@task
+@task(log_prints=True)
 def write_ohlc1m_to_clickhouse(df: pd.DataFrame, symbol: str | None = None) -> int:
     database = _get_env("CLICKHOUSE_DB", "default")
     table = _get_env("CLICKHOUSE_OHLC_TABLE", "ohlc_1m")
@@ -166,7 +166,7 @@ def collect_metastock_metadata(dir_path: str) -> pd.DataFrame:
     emaster_df = get_df_emaster(dir_path)
     return emaster_df
 
-@task
+@task(log_prints=True)
 def convert_metastock_to_df(symbol: str, metadata_df: pd.DataFrame) -> pd.DataFrame:
     print(f"Converting MetaStock file for {symbol} ...")
     df = metadata_df[metadata_df['symbol'] == symbol]
@@ -189,7 +189,7 @@ def convert_metastock_to_df(symbol: str, metadata_df: pd.DataFrame) -> pd.DataFr
     tick_df = tick_df[['ts', 'price', 'volume']]
     return tick_df
 
-@task
+@task(log_prints=True)
 def process_symbol(symbol: str, metadata_df: pd.DataFrame) -> int:
     try:
         # Check if today's data already exists for this symbol in ClickHouse
