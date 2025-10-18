@@ -173,7 +173,7 @@ def convert_metastock_to_df(symbol: str, metadata_df: pd.DataFrame) -> pd.DataFr
 
     tick_df = metastock_read(file_name, fields=4)
     tick_df['ts'] = pd.to_datetime(
-        tick_df['date'].dt.strftime('%Y-%m-%d') + ' ' + tick_df['time'].astype(str),
+        tick_df['date'].astype(str) + ' ' + tick_df['time'].astype(str),
         errors='coerce'
     )
     # tick_df['ts'] = tick_df['ts'].dt.tz_localize('Asia/Ho_Chi_Minh')
@@ -198,9 +198,14 @@ def sync_ohlc1m_df_to_clickhouse() -> int:
     
     for symbol in watchlist:
         print(f"Processing {symbol} ...")
-        df = convert_metastock_to_df(symbol=symbol, metadata_df=metadata_df)
-        count = write_ohlc1m_to_clickhouse(df, symbol=symbol)
-        print(f"Inserted {count} OHLC rows into ClickHouse for {symbol}")
+        try:
+            df = convert_metastock_to_df(symbol=symbol, metadata_df=metadata_df)
+            count = write_ohlc1m_to_clickhouse(df, symbol=symbol)
+            print(f"Inserted {count} OHLC rows into ClickHouse for {symbol}")
+        except Exception as e:
+            print(e)
+            print(f"Error processing {symbol}: {e}")
+            continue
 
 # Run the flow
 from pathlib import Path
