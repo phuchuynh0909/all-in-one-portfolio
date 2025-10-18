@@ -29,3 +29,6 @@ loguru>=0.7.0
 # Optional: for development and testing
 # pytest>=7.0.0
 # pytest-postgresql>=4.0.0
+
+clickhouse-connect>=0.7.10
+clickhouse-driver>=0.2.9
