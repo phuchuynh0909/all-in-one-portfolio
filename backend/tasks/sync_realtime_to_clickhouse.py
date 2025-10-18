@@ -180,12 +180,34 @@ def convert_metastock_to_df(symbol: str, metadata_df: pd.DataFrame) -> pd.DataFr
     # tick_df['ts'] = tick_df['ts'].dt.tz_localize('Asia/Ho_Chi_Minh')
     tick_df = tick_df.sort_values(['ts'])
 
+    # Keep only data within the last 1 days relative to the latest timestamp
+    latest_ts = tick_df['ts'].max()
+    if pd.notnull(latest_ts):
+        cutoff_ts = latest_ts - pd.Timedelta(days=1)
+        tick_df = tick_df[tick_df['ts'] >= cutoff_ts]
+
     tick_df = tick_df[['ts', 'price', 'volume']]
     return tick_df
 
 @task
 def process_symbol(symbol: str, metadata_df: pd.DataFrame) -> int:
     try:
+        # Check if today's data already exists for this symbol in ClickHouse
+        database = _get_env("CLICKHOUSE_DB", "default")
+        table = _get_env("CLICKHOUSE_OHLC_TABLE", "ohlc_1m")
+        client = _get_ch_client()
+        try:
+            exists_rows = client.execute(
+                f"SELECT 1 FROM {database}.{table} WHERE symbol = %(sym)s AND toDate(ts) = today() LIMIT 1",
+                {"sym": symbol},
+            )
+            if exists_rows:
+                print(f"Skip {symbol}: today's OHLC rows already present")
+                return 0
+        except Exception:
+            # If table doesn't exist yet or any error occurs, proceed to process
+            pass
+
         df = convert_metastock_to_df(symbol=symbol, metadata_df=metadata_df)
         count = write_ohlc1m_to_clickhouse(df, symbol=symbol)
         return int(count)
