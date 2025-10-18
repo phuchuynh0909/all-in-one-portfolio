@@ -246,4 +246,5 @@ if __name__ == "__main__":
     ).deploy(
         name="sync-ohlc1m-df-to-clickhouse",
         work_pool_name="my-worker",
+        cron="0 8 * * 1-5",
     )
