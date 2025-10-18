@@ -15,10 +15,10 @@ def _get_env(name: str, default: str) -> str:
 
 def _get_ch_client():
     host = _get_env("CLICKHOUSE_HOST", "localhost")
-    port = int(_get_env("CLICKHOUSE_PORT", "9000"))  # native port for driver
-    username = _get_env("CLICKHOUSE_USER", "myuser")
-    password = _get_env("CLICKHOUSE_PASSWORD", "mypassword")
-    database = _get_env("CLICKHOUSE_DB", "mydb")
+    port = int(_get_env("CLICKHOUSE_PORT", "9010"))  # native port for driver
+    username = _get_env("CLICKHOUSE_USER", "kyostyle1")
+    password = _get_env("CLICKHOUSE_PASSWORD", "kyostyle1")
+    database = _get_env("CLICKHOUSE_DB", "default")
     return Client(host=host, port=port, user=username, password=password, database=database)
 
 
@@ -107,15 +107,15 @@ def _ensure_ohlc_table_exists(client: Client, database: str, table: str) -> None
             volume Float64,
             ver DateTime64(3) DEFAULT now64(3)
         )
-        PARTITION BY symbol
         ENGINE = ReplacingMergeTree(ver)
+        PARTITION BY symbol
         ORDER BY (ts)
         """
     )
 
 @task
 def write_ohlc1m_to_clickhouse(df: pd.DataFrame, symbol: str | None = None) -> int:
-    database = _get_env("CLICKHOUSE_DB", "mydb")
+    database = _get_env("CLICKHOUSE_DB", "default")
     table = _get_env("CLICKHOUSE_OHLC_TABLE", "ohlc_1m")
 
     client = _get_ch_client()
@@ -176,14 +176,14 @@ def convert_metastock_to_df(symbol: str, metadata_df: pd.DataFrame) -> pd.DataFr
         tick_df['date'].dt.strftime('%Y-%m-%d') + ' ' + tick_df['time'].astype(str),
         errors='coerce'
     )
-    tict_df['ts'] = ticket_df['ts'].dt.tz_localize('Asia/Ho_Chi_Minh')
+    # tick_df['ts'] = tick_df['ts'].dt.tz_localize('Asia/Ho_Chi_Minh')
     tick_df = tick_df.sort_values(['ts'])
 
-    tick_df = tick_df[['ts', 'symbol', 'price', 'volume']]
+    tick_df = tick_df[['ts', 'price', 'volume']]
     return tick_df
 
 @flow(log_prints=True)
-def sync_ohlc1m_df_to_clickhouse(df: pd.DataFrame, symbol: str | None = None) -> int:
+def sync_ohlc1m_df_to_clickhouse() -> int:
     print("Aggregating to 1-minute OHLC and syncing to ClickHouse...")
     
     DNSE_STOCK_DIR = "D:\\dnse\\intraday\\stock"
@@ -191,6 +191,8 @@ def sync_ohlc1m_df_to_clickhouse(df: pd.DataFrame, symbol: str | None = None) ->
 
     watchlist = []
     with open(f"watchlist.csv", "r") as f:
+        import csv
+        from itertools import chain
         reader = csv.reader(f)
         watchlist = list(chain.from_iterable(reader))
     
@@ -201,10 +203,12 @@ def sync_ohlc1m_df_to_clickhouse(df: pd.DataFrame, symbol: str | None = None) ->
         print(f"Inserted {count} OHLC rows into ClickHouse for {symbol}")
 
 # Run the flow
+from pathlib import Path
+
 if __name__ == "__main__":
     sync_ohlc1m_df_to_clickhouse.from_source(
         source=str(Path(__file__).parent),  # code stored in local directory
-        entrypoint="sync_ohlc1m_df_to_clickhouse.py:sync_ohlc1m_df_to_clickhouse",
+        entrypoint="sync_realtime_to_clickhouse.py:sync_ohlc1m_df_to_clickhouse",
     ).deploy(
         name="sync-ohlc1m-df-to-clickhouse",
         work_pool_name="my-worker",
