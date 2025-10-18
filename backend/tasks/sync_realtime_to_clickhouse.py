@@ -125,7 +125,7 @@ def write_ohlc1m_to_clickhouse(df: pd.DataFrame, symbol: str | None = None) -> i
 
     rows: list[tuple] = [
         (
-            pd.to_datetime(r.ts).strftime("%Y-%m-%d %H:%M:%S"),
+            pd.to_datetime(r.ts).to_pydatetime(),
             str(r.symbol),
             round(float(r.open), 2),
             round(float(r.high), 2),
