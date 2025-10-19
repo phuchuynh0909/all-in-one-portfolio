@@ -40,6 +40,26 @@ services:
       - appnet
     restart: unless-stopped
 
+  worker:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    command: ["python", "-m", "bytewax.run", "isp"]
+    volumes:
+      - worker_state:/app/state_dir
+    env_file:
+      - prod.env
+    environment:
+      # ClickHouse Configuration
+      - CLICKHOUSE_HOST=clickhouse
+      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-myuser}
+      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-mypassword}
+      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-default}
+    networks:
+      - appnet
+    restart: unless-stopped
+
 networks:
   appnet:
     driver: bridge
@@ -47,3 +67,4 @@ networks:
 volumes:
   npm_data:
   npm_letsencrypt:
+  worker_state:

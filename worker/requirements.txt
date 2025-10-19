@@ -1,0 +1,25 @@
+# Common
+requests>=2.31.0
+
+# Bytewax streaming framework
+bytewax>=0.19.0
+bytewax-clickhouse>=0.0.1
+
+# Data processing
+pyarrow>=14.0.0
+numpy>=1.24.0
+orjson>=3.9.0
+
+# ClickHouse connectivity
+clickhouse-connect>=0.6.0
+
+# Configuration
+python-dotenv>=1.0.0
+
+# MQTT for real-time data ingestion
+paho-mqtt>=1.6.0
+
+# Optional: Development and testing
+# pytest>=7.4.0
+# pytest-asyncio>=0.21.0
+

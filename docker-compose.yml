@@ -38,27 +38,22 @@ services:
       - backend
     networks:
       - appnet
-  clickhouse:
-    image: clickhouse/clickhouse-server:latest
-    ports:
-      - "8123:8123" # HTTP interface
-      - "9002:9000" # Native client interface
+  
+  worker:
+    build: ./worker
+    command: ["python", "-m", "bytewax.run", "isp"]
     volumes:
-      - clickhouse_data:/var/lib/clickhouse
-      - clickhouse_log:/var/log/clickhouse-server
-    environment:
-      CLICKHOUSE_USER: myuser
-      CLICKHOUSE_PASSWORD: mypassword
-      CLICKHOUSE_DB: mydb
-    ulimits:
-      nofile:
-        soft: 262144
-        hard: 262144
+      - ./worker:/app
+      - worker_state:/app/state_dir
+    env_file:
+      - ./worker/.env
+    networks:
+      - appnet
+    restart: unless-stopped
 networks:
   appnet:
     driver: bridge
 
 volumes:
   frontend_node_modules:
-  clickhouse_data:
-  clickhouse_log:
+  worker_state:

@@ -3,3 +3,7 @@
 .env
 backend/portfolio.db
 .vscode/
+prod.env
+*/__pycache__/*
+__pycache__/
+*.pyc

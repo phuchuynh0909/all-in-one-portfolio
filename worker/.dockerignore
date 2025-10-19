@@ -1,0 +1,56 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Documentation
+*.md
+!requirements.txt
+
+# Git
+.git/
+.gitignore
+
+# Environment files
+.env
+.env.*
+*.env
+
+# Bytewax state
+state_dir/
+
+# Backup files
+backup/
+*.bak
+
+# Mac
+.DS_Store
+
+# Logs
+*.log
+
+# Test data
+mock_ticks.ndjson
+
