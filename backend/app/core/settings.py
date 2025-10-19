@@ -16,6 +16,13 @@ class Settings(BaseSettings):
         os.getenv("DATABASE_URL", "sqlite:///app/portfolio.db")
     )
 
+    # ClickHouse
+    clickhouse_host: str = os.getenv("CLICKHOUSE_HOST", "localhost")
+    clickhouse_port: int = int(os.getenv("CLICKHOUSE_PORT", "9010"))
+    clickhouse_user: str = os.getenv("CLICKHOUSE_USER", "myuser")
+    clickhouse_password: str = os.getenv("CLICKHOUSE_PASSWORD", "mypassword")
+    clickhouse_db: str = os.getenv("CLICKHOUSE_DB", "default")
+
     # CORS
     backend_cors_origins: List[AnyHttpUrl | str] = [
         "http://localhost:5173",
