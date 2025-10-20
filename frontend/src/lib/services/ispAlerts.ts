@@ -8,10 +8,24 @@ import { apiGet } from '../api';
 export interface ISPAlert {
   symbol: string;
   ts: number; // Unix timestamp in milliseconds
+  ofi_5s: number; // Order Flow Imbalance: -1 (sell) to +1 (buy)
   abnormality_ratio_5m: number;
   abnormality_ratio_15m: number;
   abnormality_ratio_30m: number;
   abnormality_ratio_60m: number;
+  z_score_5m: number;
+  z_score_15m: number;
+  z_score_30m: number;
+  z_score_60m: number;
+  rvol_5m: number;
+  rvol_15m: number;
+  rvol_30m: number;
+  rvol_60m: number;
+  realized_volume_5s: number;
+  expected_volume_5s: number;
+  surge_ratio_5s: number;
+  z_score_5s: number;
+  tick_count_5s: number;
 }
 
 export interface ISPAlertsResponse {
