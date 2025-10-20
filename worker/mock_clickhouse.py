@@ -4,6 +4,7 @@ from bytewax.inputs import StatelessSourcePartition, DynamicSource
 from datetime import datetime
 import orjson
 from typing import Tuple
+import random
 
 class _ClickHouseReplayPartition(StatelessSourcePartition):
     def __init__(
@@ -66,7 +67,7 @@ class _ClickHouseReplayPartition(StatelessSourcePartition):
                 "matchQtty": float(vol or 0.0),
                 "totalVolumeTraded": float(new_cum),
                 "grossTradeAmount": float((close or 0.0) * (vol or 0.0)),
-                "side": 0,
+                "side": random.choice([1, 2]),
             }
             yield (topic, orjson.dumps(payload))
 

@@ -104,6 +104,7 @@ class MockConfig:
             s.strip() for s in os.getenv("ISP_MOCK_SYMBOLS", "ANV").split(",") 
             if s.strip()
         ]
+        print(symbols)
         start_time = os.getenv("ISP_MOCK_START", "2025-10-17 09:00:00")
         end_time = os.getenv("ISP_MOCK_END", "2025-10-17 14:45:00")
         speed = float(os.getenv("ISP_MOCK_SPEED", "1.0"))

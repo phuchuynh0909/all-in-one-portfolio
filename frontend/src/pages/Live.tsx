@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, Fragment } from 'react';
 import {
   Box,
   Typography,
@@ -18,11 +18,14 @@ import {
   TextField,
   IconButton,
   Collapse,
+  Switch,
+  FormControlLabel,
 } from '@mui/material';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import { getLatestAlerts } from '../lib/services/ispAlerts';
 import type { ISPAlert } from '../lib/services/ispAlerts';
+import { useAlertWorker } from '../hooks/useAlertWorker';
 
 interface GroupedAlert {
   symbol: string;
@@ -36,10 +39,11 @@ const Live = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
-  const [refreshInterval, setRefreshInterval] = useState(1000); // milliseconds
+  const [refreshInterval, setRefreshInterval] = useState(10000); // milliseconds
   const [filterSymbol, setFilterSymbol] = useState('');
   const [isInitialLoad, setIsInitialLoad] = useState(true);
   const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set());
+  const [useWorker, setUseWorker] = useState(true); // Toggle between worker and regular polling
 
   // Get the maximum timestamp from current alerts (in milliseconds)
   const getMaxTimestamp = useCallback((): number | null => {
@@ -104,31 +108,62 @@ const Live = () => {
     fetchAlerts();
   }, []); // Only run once on mount
 
-  // Auto-refresh for incremental updates
+  // Web Worker for background polling
+  const { isPolling } = useAlertWorker({
+    enabled: useWorker && !isInitialLoad,
+    interval: refreshInterval,
+    onAlertsReceived: useCallback((newAlerts: ISPAlert[]) => {
+      if (newAlerts && newAlerts.length > 0) {
+        // Filter out duplicates and append new alerts
+        setAlerts(prev => {
+          const existingTimestamps = new Set(prev.map(a => a.ts));
+          const filtered = newAlerts.filter(alert => !existingTimestamps.has(alert.ts));
+          
+          if (filtered.length > 0) {
+            return [...filtered, ...prev].slice(0, 5000); // Keep max 5000 alerts
+          }
+          return prev;
+        });
+        setLastUpdate(new Date());
+        setError(null);
+      }
+    }, []),
+    onError: useCallback((errorMsg: string) => {
+      setError(errorMsg);
+    }, []),
+  });
+
+  // Regular polling fallback (when worker is disabled)
   useEffect(() => {
-    if (isInitialLoad) return; // Don't start interval until initial load is done
+    if (useWorker || isInitialLoad) return;
     
     const interval = setInterval(() => {
       fetchAlerts();
     }, refreshInterval);
 
     return () => clearInterval(interval);
-  }, [refreshInterval, isInitialLoad]); // Removed fetchAlerts from deps to avoid recreation
+  }, [refreshInterval, isInitialLoad, useWorker]);
 
-  // Separate effect for periodic fetching
+  // Separate effect for periodic fetching (non-worker mode)
   useEffect(() => {
-    if (!isInitialLoad) {
+    if (!isInitialLoad && !useWorker) {
       fetchAlerts();
     }
-  }, [isInitialLoad]);
+  }, [isInitialLoad, useWorker]);
 
-  const getMaxAbnormality = (alert: ISPAlert): number => {
-    return Math.max(
-      alert.abnormality_ratio_5m,
-      alert.abnormality_ratio_15m,
-      alert.abnormality_ratio_30m,
-      alert.abnormality_ratio_60m
-    );
+  const getOFIColor = (ofi: number): string => {
+    // OFI ranges from -1 (100% sell) to +1 (100% buy)
+    if (ofi > 0.3) return '#4caf50'; // Green for buy pressure
+    if (ofi < -0.3) return '#f44336'; // Red for sell pressure
+    return '#9e9e9e'; // Gray for neutral
+  };
+
+  const getOFILabel = (ofi: number): string => {
+    if (ofi > 0.7) return '🟢 Strong Buy';
+    if (ofi > 0.3) return '🟢 Buy';
+    if (ofi < -0.7) return '🔴 Strong Sell';
+    if (ofi < -0.3) return '🔴 Sell';
+    return '⚪ Neutral';
   };
 
   const getSeverity = (ratio: number): { label: string; color: 'default' | 'info' | 'warning' | 'error' } => {
@@ -150,7 +185,10 @@ const Live = () => {
     });
   };
 
-  const formatRatio = (ratio: number): string => {
+  const formatRatio = (ratio: number | undefined): string => {
+    if (ratio === undefined || ratio === null || isNaN(ratio)) {
+      return 'N/A';
+    }
     return ratio.toFixed(2);
   };
 
@@ -169,17 +207,21 @@ const Live = () => {
     // Create grouped alerts with latest first
     const result: GroupedAlert[] = [];
     grouped.forEach((symbolAlerts, symbol) => {
-      // Sort by timestamp descending
-      const sorted = symbolAlerts.sort((a, b) => b.ts - a.ts);
+      // Sort by timestamp descending (latest first) - ensure we get the highest timestamp
+      const sorted = [...symbolAlerts].sort((a, b) => {
+        // Sort by timestamp descending (b.ts - a.ts means larger timestamps come first)
+        return b.ts - a.ts;
+      });
+      
       result.push({
         symbol,
-        latest: sorted[0],
+        latest: sorted[0], // First element after sorting is the one with largest timestamp
         history: sorted.slice(1),
         count: sorted.length,
       });
     });
     
-    // Sort by latest timestamp
+    // Sort result by latest timestamp (most recent symbols first)
     return result.sort((a, b) => b.latest.ts - a.latest.ts);
   }, [alerts]);
 
@@ -266,10 +308,26 @@ const Live = () => {
               sx={{ minWidth: 150 }}
             />
 
+            {/* Web Worker Toggle */}
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={useWorker}
+                  onChange={(e) => setUseWorker(e.target.checked)}
+                  size="small"
+                />
+              }
+              label={
+                <Typography variant="caption" color="text.secondary">
+                  Use Web Worker {isPolling && '(Running)'}
+                </Typography>
+              }
+            />
+
             {/* Info */}
             <Box sx={{ ml: 'auto' }}>
               <Typography variant="caption" color="text.secondary">
-                Showing alerts from today (incremental updates)
+                Showing alerts from today
               </Typography>
             </Box>
           </Stack>
@@ -290,11 +348,14 @@ const Live = () => {
                 <TableCell width={50} />
                 <TableCell><strong>Time</strong></TableCell>
                 <TableCell><strong>Symbol</strong></TableCell>
+                <TableCell align="center"><strong>OFI</strong></TableCell>
                 <TableCell align="right"><strong>5m</strong></TableCell>
                 <TableCell align="right"><strong>15m</strong></TableCell>
                 <TableCell align="right"><strong>30m</strong></TableCell>
                 <TableCell align="right"><strong>60m</strong></TableCell>
-                <TableCell align="right"><strong>Max</strong></TableCell>
+                <TableCell align="right"><strong>Surge 5s</strong></TableCell>
+                <TableCell align="right"><strong>Z-Score 5s</strong></TableCell>
+                <TableCell align="right"><strong>Ticks 5s</strong></TableCell>
                 <TableCell><strong>Severity (60m)</strong></TableCell>
                 <TableCell align="center"><strong>History</strong></TableCell>
               </TableRow>
@@ -302,7 +363,7 @@ const Live = () => {
             <TableBody>
               {filteredGroupedAlerts.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={10} align="center">
+                  <TableCell colSpan={13} align="center">
                     <Typography variant="body2" color="text.secondary" sx={{ py: 4 }}>
                       {filterSymbol 
                         ? `No alerts found for "${filterSymbol}"`
@@ -312,15 +373,13 @@ const Live = () => {
                 </TableRow>
               ) : (
                 filteredGroupedAlerts.map((group, index) => {
-                  const maxRatio = getMaxAbnormality(group.latest);
                   const severity = getSeverity(group.latest.abnormality_ratio_60m);
                   const isExpanded = expandedRows.has(group.symbol);
                   
                   return (
-                    <>
+                    <Fragment key={`${group.symbol}-${group.latest.ts}`}>
                       {/* Main Row - Latest Alert */}
                       <TableRow
-                        key={group.symbol}
                         hover
                         sx={{
                           '&:nth-of-type(odd)': { backgroundColor: 'action.hover' },
@@ -346,6 +405,17 @@ const Live = () => {
                           <Typography variant="body2" fontWeight="bold">
                             {group.symbol}
                           </Typography>
+                        </TableCell>
+                        <TableCell align="center">
+                          <Chip
+                            label={getOFILabel(group.latest.ofi_5s)}
+                            size="small"
+                            sx={{
+                              backgroundColor: getOFIColor(group.latest.ofi_5s),
+                              color: 'white',
+                              fontWeight: 'bold',
+                            }}
+                          />
                         </TableCell>
                         <TableCell align="right">
                           <Typography
@@ -380,8 +450,24 @@ const Live = () => {
                           </Typography>
                         </TableCell>
                         <TableCell align="right">
-                          <Typography variant="body2" fontWeight="bold">
-                            {formatRatio(maxRatio)}
+                          <Typography
+                            variant="body2"
+                            color={group.latest.surge_ratio_5s >= 2 ? 'error' : 'text.primary'}
+                          >
+                            {formatRatio(group.latest.surge_ratio_5s)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography
+                            variant="body2"
+                            color={group.latest.z_score_5s >= 3 ? 'error' : 'text.primary'}
+                          >
+                            {formatRatio(group.latest.z_score_5s)}
+                          </Typography>
+                        </TableCell>
+                        <TableCell align="right">
+                          <Typography variant="body2">
+                            {group.latest.tick_count_5s}
                           </Typography>
                         </TableCell>
                         <TableCell>
@@ -403,7 +489,7 @@ const Live = () => {
                       {/* Expanded History Rows */}
                       {group.history.length > 0 && (
                         <TableRow>
-                          <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={10}>
+                          <TableCell style={{ paddingBottom: 0, paddingTop: 0 }} colSpan={13}>
                             <Collapse in={isExpanded} timeout="auto" unmountOnExit>
                               <Box sx={{ margin: 1, backgroundColor: 'background.default', borderRadius: 1, p: 2 }}>
                                 <Typography variant="subtitle2" gutterBottom component="div" color="text.secondary">
@@ -413,22 +499,35 @@ const Live = () => {
                                   <TableHead>
                                     <TableRow>
                                       <TableCell><strong>Time</strong></TableCell>
+                                      <TableCell align="center"><strong>OFI</strong></TableCell>
                                       <TableCell align="right"><strong>5m</strong></TableCell>
                                       <TableCell align="right"><strong>15m</strong></TableCell>
                                       <TableCell align="right"><strong>30m</strong></TableCell>
                                       <TableCell align="right"><strong>60m</strong></TableCell>
-                                      <TableCell align="right"><strong>Max</strong></TableCell>
+                                      <TableCell align="right"><strong>Surge 5s</strong></TableCell>
+                                      <TableCell align="right"><strong>Z-Score 5s</strong></TableCell>
+                                      <TableCell align="right"><strong>Ticks 5s</strong></TableCell>
                                       <TableCell><strong>Severity</strong></TableCell>
                                     </TableRow>
                                   </TableHead>
                                   <TableBody>
-                                    {group.history.map((histAlert, histIndex) => {
-                                      const histMaxRatio = getMaxAbnormality(histAlert);
+                                    {group.history.map((histAlert) => {
                                       const histSeverity = getSeverity(histAlert.abnormality_ratio_60m);
                                       
                                       return (
-                                        <TableRow key={`${group.symbol}-history-${histIndex}`}>
+                                        <TableRow key={`${group.symbol}-${histAlert.ts}`}>
                                           <TableCell>{formatTimestamp(histAlert.ts)}</TableCell>
+                                          <TableCell align="center">
+                                            <Chip
+                                              label={getOFILabel(histAlert.ofi_5s)}
+                                              size="small"
+                                              variant="outlined"
+                                              sx={{
+                                                borderColor: getOFIColor(histAlert.ofi_5s),
+                                                color: getOFIColor(histAlert.ofi_5s),
+                                              }}
+                                            />
+                                          </TableCell>
                                           <TableCell align="right">
                                             <Typography variant="body2" color={histAlert.abnormality_ratio_5m >= 3 ? 'error' : 'text.secondary'}>
                                               {formatRatio(histAlert.abnormality_ratio_5m)}
@@ -450,8 +549,18 @@ const Live = () => {
                                             </Typography>
                                           </TableCell>
                                           <TableCell align="right">
-                                            <Typography variant="body2" fontWeight="medium">
-                                              {formatRatio(histMaxRatio)}
+                                            <Typography variant="body2" color={histAlert.surge_ratio_5s >= 2 ? 'error' : 'text.secondary'}>
+                                              {formatRatio(histAlert.surge_ratio_5s)}
+                                            </Typography>
+                                          </TableCell>
+                                          <TableCell align="right">
+                                            <Typography variant="body2" color={histAlert.z_score_5s >= 3 ? 'error' : 'text.secondary'}>
+                                              {formatRatio(histAlert.z_score_5s)}
+                                            </Typography>
+                                          </TableCell>
+                                          <TableCell align="right">
+                                            <Typography variant="body2">
+                                              {histAlert.tick_count_5s}
                                             </Typography>
                                           </TableCell>
                                           <TableCell>
@@ -472,7 +581,7 @@ const Live = () => {
                           </TableCell>
                         </TableRow>
                       )}
-                    </>
+                    </Fragment>
                   );
                 })
               )}

@@ -9,10 +9,24 @@ class ISPAlert(BaseModel):
     """ISP Alert model."""
     symbol: str
     ts: int  # Unix timestamp in milliseconds
+    ofi_5s: float  # Order Flow Imbalance: -1 (sell) to +1 (buy)
     abnormality_ratio_5m: float
     abnormality_ratio_15m: float
     abnormality_ratio_30m: float
     abnormality_ratio_60m: float
+    z_score_5m: float
+    z_score_15m: float
+    z_score_30m: float
+    z_score_60m: float
+    rvol_5m: float
+    rvol_15m: float
+    rvol_30m: float
+    rvol_60m: float
+    realized_volume_5s: float
+    expected_volume_5s: float
+    surge_ratio_5s: float
+    z_score_5s: float
+    tick_count_5s: int
 
 
 class ISPAlertsService:
@@ -83,10 +97,24 @@ class ISPAlertsService:
         return ISPAlert(
             symbol=row[0],
             ts=ts_ms,
-            abnormality_ratio_5m=row[2],
-            abnormality_ratio_15m=row[3],
-            abnormality_ratio_30m=row[4],
-            abnormality_ratio_60m=row[5],
+            ofi_5s=row[2],
+            abnormality_ratio_5m=row[3],
+            abnormality_ratio_15m=row[4],
+            abnormality_ratio_30m=row[5],
+            abnormality_ratio_60m=row[6],
+            z_score_5m=row[7],
+            z_score_15m=row[8],
+            z_score_30m=row[9],
+            z_score_60m=row[10],
+            rvol_5m=row[11],
+            rvol_15m=row[12],
+            rvol_30m=row[13],
+            rvol_60m=row[14],
+            realized_volume_5s=row[15],
+            expected_volume_5s=row[16],
+            surge_ratio_5s=row[17],
+            z_score_5s=row[18],
+            tick_count_5s=row[19],
         )
     
     def get_alerts(
@@ -121,10 +149,24 @@ class ISPAlertsService:
             SELECT 
                 symbol,
                 ts,
+                ofi_5s,
                 abnormality_ratio_5m,
                 abnormality_ratio_15m,
                 abnormality_ratio_30m,
-                abnormality_ratio_60m
+                abnormality_ratio_60m,
+                z_score_5m,
+                z_score_15m,
+                z_score_30m,
+                z_score_60m,
+                rvol_5m,
+                rvol_15m,
+                rvol_30m,
+                rvol_60m,
+                realized_volume_5s,
+                expected_volume_5s,
+                surge_ratio_5s,
+                z_score_5s,
+                tick_count_5s
             FROM isp_alerts
             WHERE {where_clause}
             ORDER BY ts DESC
@@ -167,10 +209,24 @@ class ISPAlertsService:
             SELECT 
                 symbol,
                 ts,
+                ofi_5s,
                 abnormality_ratio_5m,
                 abnormality_ratio_15m,
                 abnormality_ratio_30m,
-                abnormality_ratio_60m
+                abnormality_ratio_60m,
+                z_score_5m,
+                z_score_15m,
+                z_score_30m,
+                z_score_60m,
+                rvol_5m,
+                rvol_15m,
+                rvol_30m,
+                rvol_60m,
+                realized_volume_5s,
+                expected_volume_5s,
+                surge_ratio_5s,
+                z_score_5s,
+                tick_count_5s
             FROM isp_alerts
             WHERE {where_clause}
             ORDER BY ts DESC
