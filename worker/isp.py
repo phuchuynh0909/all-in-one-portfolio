@@ -24,12 +24,44 @@ BUY = 1
 SELL = 2
 
 @dataclass
+class WelfordState:
+    """Welford's algorithm for online mean/variance calculation"""
+    count: int = 0
+    mean: float = 0.0
+    m2: float = 0.0  # Sum of squared differences from mean
+    
+    def update(self, value: float):
+        """Update running statistics with new value"""
+        self.count += 1
+        delta = value - self.mean
+        self.mean += delta / self.count
+        delta2 = value - self.mean
+        self.m2 += delta * delta2
+    
+    def variance(self) -> float:
+        """Return variance (population variance)"""
+        return self.m2 / self.count if self.count > 1 else 0.0
+    
+    def std_dev(self) -> float:
+        """Return standard deviation"""
+        return math.sqrt(self.variance())
+    
+    def z_score(self, value: float) -> float:
+        """Calculate z-score for a given value"""
+        std = self.std_dev()
+        if std < EPS or self.count < 2:
+            return 0.0
+        return (value - self.mean) / std
+
+@dataclass
 class WindowState:
     bin_minutes: int
     bin_count: int = 0
     isp: list[float] = field(default_factory=list)
     vol_today: list[float] = field(default_factory=list)
     cum_vol: float = 0.0
+    # Welford statistics for abnormality ratio
+    welford: WelfordState = field(default_factory=WelfordState)
 
 @dataclass
 class ISPState:
@@ -146,11 +178,20 @@ def isp_mapper(state: ISPState | None, tick: dict):
         expected_bin_w = ws.isp[bin_idx_w] * Vhat_day_w
         actual_bin_vol = ws.vol_today[bin_idx_w]  # Volume accumulated in this bin today
         abnormality_w = actual_bin_vol / max(expected_bin_w, EPS)
+        
+        # Update Welford statistics with the new abnormality ratio
+        ws.welford.update(abnormality_w)
+        z_score = ws.welford.z_score(abnormality_w)
+        
         by_window[w] = {
             "bin_index": int(bin_idx_w),
-            "expected_volume": float(expected_bin_w), ## model’s expected volume for the current bin.
+            "expected_volume": float(expected_bin_w), ## model's expected volume for the current bin.
             "actual_bin_volume": float(actual_bin_vol), ## actual volume observed in the current bin.
             "abnormality_ratio": float(abnormality_w), ## how surprising the current-bin volume is relative to expectation.
+            "z_score": float(z_score), ## z-score of abnormality ratio (standard deviations from mean)
+            "welford_mean": float(ws.welford.mean), ## running mean of abnormality ratios
+            "welford_std": float(ws.welford.std_dev()), ## running standard deviation
+            "welford_count": int(ws.welford.count), ## number of samples in Welford statistics
             "cum_volume_so_far": float(ws.cum_vol), ## cumulative traded volume observed up to and including the current bin (in the current window)
             "S_k": float(S_k_w), ##  the cumulative ISP share up to the current bin k.
             "Vhat_day": float(Vhat_day_w), ## Estimated total day volume implied by volume so far and the ISP curve.
@@ -169,9 +210,26 @@ def isp_mapper(state: ISPState | None, tick: dict):
 
 # ---------- Filter metrics ----------
 def filter_metrics(item):
+    """Filter based on z-scores to reduce noise.
+    Only alert if:
+    1. Z-score > 2.0 (more than 2 standard deviations from mean)
+    2. Welford has enough samples (>= 30 for statistical significance)
+    3. Abnormality ratio > 1.5 (at least 50% above expected)
+    """
     symbol, data = item
-    for _, data in data.get("isp_by_window", {}).items():
-        if float(data.get("abnormality_ratio", 0.0)) > 3:
+    Z_SCORE_THRESHOLD = 2.0  # Standard deviations from mean
+    MIN_SAMPLES = 30  # Minimum samples for statistical significance
+    MIN_ABNORMALITY = 1.5  # Minimum abnormality ratio
+    
+    for _, window_data in data.get("isp_by_window", {}).items():
+        z_score = float(window_data.get("z_score", 0.0))
+        welford_count = int(window_data.get("welford_count", 0))
+        abnormality = float(window_data.get("abnormality_ratio", 0.0))
+        
+        # Alert if statistically significant AND abnormal
+        if (z_score > Z_SCORE_THRESHOLD and 
+            welford_count >= MIN_SAMPLES and 
+            abnormality > MIN_ABNORMALITY):
             return True
     return False
 
@@ -185,20 +243,30 @@ def transform_out_func(item):
     ts = data.get("ts")
     ## Convert from isoformat (string) to timestamp in microseconds
     ts_us = datetime.fromisoformat(ts).timestamp() * 1000000
-    # Initialize ratios with defaults
+    
+    # Initialize ratios and z-scores with defaults
     ratios = {
         "abnormality_ratio_5m": float(0.0),
         "abnormality_ratio_15m": float(0.0),
         "abnormality_ratio_30m": float(0.0),
         "abnormality_ratio_60m": float(0.0),
     }
+    z_scores = {
+        "z_score_5m": float(0.0),
+        "z_score_15m": float(0.0),
+        "z_score_30m": float(0.0),
+        "z_score_60m": float(0.0),
+    }
     
-    # Add abnormality_ratio for each window from actual data
+    # Extract metrics for each window from actual data
     for window, window_data in data.get("isp_by_window", {}).items():
-        field_name = f"abnormality_ratio_{window}m"
-        if field_name in ratios: 
-            ratio = window_data.get("abnormality_ratio", 0.0)
-            ratios[field_name] = float(ratio)
+        ratio_field = f"abnormality_ratio_{window}m"
+        z_score_field = f"z_score_{window}m"
+        
+        if ratio_field in ratios: 
+            ratios[ratio_field] = float(window_data.get("abnormality_ratio", 0.0))
+        if z_score_field in z_scores:
+            z_scores[z_score_field] = float(window_data.get("z_score", 0.0))
     
     output_tuple = (
         str(symbol_str),
@@ -207,6 +275,10 @@ def transform_out_func(item):
         float(ratios["abnormality_ratio_15m"]),
         float(ratios["abnormality_ratio_30m"]),
         float(ratios["abnormality_ratio_60m"]),
+        float(z_scores["z_score_5m"]),
+        float(z_scores["z_score_15m"]),
+        float(z_scores["z_score_30m"]),
+        float(z_scores["z_score_60m"]),
     )
     
     # Return as (key, tuple_of_values) for ClickHouse operator
