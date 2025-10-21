@@ -332,16 +332,21 @@ def filter_metrics(item):
     """
     symbol, data = item
     
+    surge_ratio_5s = float(data.get("surge_ratio_5s", 0.0))
+    z_score_5s = float(data.get("z_score_5s", 0.0))
+
+    # Ignore 0 or too small values of expected volume in the 5s window
+    expected_volume_5s = float(data.get("expected_volume_5s", 0.0))
+    if expected_volume_5s <= 0:
+        return False
+
+
     # === Check for 5s volume surge (dual baseline confirmation) ===
-    # surge_ratio_5s = realized_5s / expected_5m_bin
     # Normal uniform: 5s / 300s = 1/60 = 0.0167 (1.67%)
     # 6x normal rate = 0.1 (10% of 5m bin in 5s)
     # 12x normal rate = 0.2 (20% of 5m bin in 5s)
     SURGE_RATIO_THRESHOLD = 1  ## (100% of 5m bin in 5s)
     Z_SCORE_5S_THRESHOLD = 3.0    # 2 std deviations (statistical baseline)
-    
-    surge_ratio_5s = float(data.get("surge_ratio_5s", 0.0))
-    z_score_5s = float(data.get("z_score_5s", 0.0))
     ## Alert if surge_ratio_5s > SURGE_RATIO_THRESHOLD or z_score_5s > Z_SCORE_5S_THRESHOLD
     ## The total volume in the 5s window is greater than the expected volume in the 5m bin (ISP baseline)
     ## The z-score of the 5s volume is greater than 2 standard deviations from the mean of the Welford statistics
