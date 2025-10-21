@@ -336,8 +336,8 @@ def filter_metrics(item):
     z_score_5s = float(data.get("z_score_5s", 0.0))
 
     # Ignore 0 or too small values of expected volume in the 5s window
-    expected_volume_5s = float(data.get("expected_volume_5s", 0.0))
-    if expected_volume_5s <= 0:
+    expected_bin_5m = float(data.get("expected_bin_5m", 0.0))
+    if expected_bin_5m <= 0:
         return False
 
 
@@ -350,6 +350,7 @@ def filter_metrics(item):
     ## Alert if surge_ratio_5s > SURGE_RATIO_THRESHOLD or z_score_5s > Z_SCORE_5S_THRESHOLD
     ## The total volume in the 5s window is greater than the expected volume in the 5m bin (ISP baseline)
     ## The z-score of the 5s volume is greater than 2 standard deviations from the mean of the Welford statistics
+    print(f"surge_ratio_5s: {surge_ratio_5s}, z_score_5s: {z_score_5s}")
     if surge_ratio_5s > SURGE_RATIO_THRESHOLD or z_score_5s > Z_SCORE_5S_THRESHOLD:
         return True
     return False
