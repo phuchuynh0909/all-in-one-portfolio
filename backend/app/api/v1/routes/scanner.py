@@ -57,8 +57,17 @@ def _load_feature_store(
 
 
 def _latest_trading_date(today: date | None = None) -> date:
-    """Return today's date if weekday; otherwise the previous Friday."""
+    """Return today's date if weekday; otherwise the previous Friday.
+    If currently in trading session, return the previous trading day."""
     d = today or date.today()
+    
+    # Check if we're currently in a trading session (9:00 AM - 3:00 PM)
+    # If so, use previous day since today's data is not yet complete
+    if today is None:  # Only check time if using current date
+        now = datetime.now()
+        if 9 <= now.hour < 15:  # Trading hours: 9:00 AM - 3:00 PM
+            d = d - timedelta(days=1)
+    
     # Monday=0 ... Sunday=6
     if d.weekday() == 5:  # Saturday
         return d - timedelta(days=1)
