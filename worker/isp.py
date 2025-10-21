@@ -332,6 +332,11 @@ def filter_metrics(item):
     """
     symbol, data = item
     
+    ## only alert buyside
+    ofi_5s = float(data.get("ofi_5s", 0.0))
+    if ofi_5s <= 0:
+        return False
+
     surge_ratio_5s = float(data.get("surge_ratio_5s", 0.0))
     z_score_5s = float(data.get("z_score_5s", 0.0))
 
