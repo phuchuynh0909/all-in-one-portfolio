@@ -43,7 +43,103 @@ export interface TimeseriesRequest {
   indicators?: IndicatorParams[];
 }
 
+// ============================================================================
+// Cache configuration and utilities
+// ============================================================================
+const CACHE_PREFIX = 'timeseries_cache_';
+const CACHE_DURATION_MS = 60 * 60 * 1000; // 1 hour in milliseconds
+
+interface CachedData<T> {
+  data: T;
+  timestamp: number;
+}
+
+/**
+ * Generate a cache key from symbol and request params
+ */
+const getCacheKey = (symbol: string, params: TimeseriesRequest): string => {
+  const paramsStr = JSON.stringify(params);
+  return `${CACHE_PREFIX}${symbol}_${btoa(paramsStr).slice(0, 32)}`;
+};
+
+/**
+ * Get cached data if valid (not expired)
+ */
+const getFromCache = <T>(key: string): T | null => {
+  try {
+    const cached = localStorage.getItem(key);
+    if (!cached) return null;
+    
+    const { data, timestamp }: CachedData<T> = JSON.parse(cached);
+    const age = Date.now() - timestamp;
+    
+    if (age > CACHE_DURATION_MS) {
+      // Cache expired, remove it
+      localStorage.removeItem(key);
+      return null;
+    }
+    
+    return data;
+  } catch {
+    return null;
+  }
+};
+
+/**
+ * Save data to cache with timestamp
+ */
+const saveToCache = <T>(key: string, data: T): void => {
+  try {
+    const cached: CachedData<T> = {
+      data,
+      timestamp: Date.now(),
+    };
+    localStorage.setItem(key, JSON.stringify(cached));
+  } catch (e) {
+    // Handle localStorage quota exceeded
+    console.warn('Failed to cache timeseries data:', e);
+    clearOldCache();
+  }
+};
+
+/**
+ * Clear old cache entries when storage is full
+ */
+const clearOldCache = (): void => {
+  const keys = Object.keys(localStorage).filter(k => k.startsWith(CACHE_PREFIX));
+  const now = Date.now();
+  
+  for (const key of keys) {
+    try {
+      const cached = localStorage.getItem(key);
+      if (cached) {
+        const { timestamp } = JSON.parse(cached);
+        if (now - timestamp > CACHE_DURATION_MS) {
+          localStorage.removeItem(key);
+        }
+      }
+    } catch {
+      localStorage.removeItem(key);
+    }
+  }
+};
+
+// ============================================================================
+// API Functions with caching
+// ============================================================================
+
 export const fetchTimeseries = async (symbol: string, params: TimeseriesRequest): Promise<TimeseriesResponse> => {
+  const cacheKey = getCacheKey(symbol, params);
+  
+  // Check cache first
+  const cached = getFromCache<TimeseriesResponse>(cacheKey);
+  if (cached) {
+    console.debug(`[Cache HIT] Timeseries for ${symbol}`);
+    return cached;
+  }
+  
+  console.debug(`[Cache MISS] Fetching timeseries for ${symbol}`);
+  
   const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/${symbol}`, {
     method: 'POST',
     headers: {
@@ -56,7 +152,21 @@ export const fetchTimeseries = async (symbol: string, params: TimeseriesRequest)
     throw new Error(`Error ${response.status}: ${await response.text()}`);
   }
 
-  return response.json();
+  const data = await response.json();
+  
+  // Save to cache
+  saveToCache(cacheKey, data);
+  
+  return data;
+};
+
+/**
+ * Clear all timeseries cache (useful for manual refresh)
+ */
+export const clearTimeseriesCache = (): void => {
+  const keys = Object.keys(localStorage).filter(k => k.startsWith(CACHE_PREFIX));
+  keys.forEach(key => localStorage.removeItem(key));
+  console.debug(`[Cache] Cleared ${keys.length} cached entries`);
 };
 
 // Helper function to format indicator data
@@ -91,8 +201,35 @@ export const getDateRange = (days: number = 365) => ({
 export const timestampToDate = (timestamp: string): UTCTimestamp => 
   (new Date(timestamp).getTime() / 1000) as UTCTimestamp;
 
-export const formatChartTime = (timestamp: string): UTCTimestamp => 
-  (new Date(timestamp).getTime() / 1000) as UTCTimestamp;
+// Vietnam timezone offset in hours (GMT+7)
+const VIETNAM_TZ_OFFSET_HOURS = 7;
+
+/**
+ * Format timestamp for daily chart alignment.
+ * Normalizes to UTC midnight to ensure markers align with daily OHLC bars.
+ * 
+ * Uses fixed Vietnam timezone (GMT+7) for consistent date interpretation
+ * regardless of the user's browser timezone.
+ */
+export const formatChartTime = (timestamp: string): UTCTimestamp => {
+  // Parse the timestamp
+  const date = new Date(timestamp);
+  
+  // Get UTC time and add Vietnam offset to get Vietnam local time
+  const utcTime = date.getTime();
+  const vietnamTime = utcTime + (VIETNAM_TZ_OFFSET_HOURS * 60 * 60 * 1000);
+  const vietnamDate = new Date(vietnamTime);
+  
+  // Extract date components in Vietnam timezone
+  const year = vietnamDate.getUTCFullYear();
+  const month = vietnamDate.getUTCMonth();
+  const day = vietnamDate.getUTCDate();
+  
+  // Create UTC midnight timestamp for this Vietnam date
+  const utcMidnight = Date.UTC(year, month, day, 0, 0, 0, 0);
+  
+  return (utcMidnight / 1000) as UTCTimestamp;
+};
 
 export interface SectorData {
   id: number;

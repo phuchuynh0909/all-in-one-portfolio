@@ -20,6 +20,7 @@ import Chart from './pages/Chart';
 import Sector from './pages/Sector';
 import Report from './pages/Report';
 import Backtest from './pages/Backtest';
+import BacktestVisualization from './pages/BacktestVisualization';
 import { FinancialStatements } from './pages/FinancialStatements';
 import Scanner from './pages/Scanner';
 import Live from './pages/Live';
@@ -51,6 +52,7 @@ const navItems = [
   { path: '/sector', label: 'Sector' },
   { path: '/report', label: 'Report' },
   { path: '/backtest', label: 'Backtest' },
+  { path: '/backtest-viz', label: '📊 BT Visual' },
   { path: '/financial', label: 'Financial Statements' },
   { path: '/scanner', label: 'Scanner' },
   { path: '/live', label: '🔴 Live' },
@@ -115,6 +117,7 @@ export default function App() {
               <Route path="/sector" element={<Sector />} />
               <Route path="/report" element={<Report />} />
               <Route path="/backtest" element={<Backtest />} />
+              <Route path="/backtest-viz" element={<BacktestVisualization />} />
               <Route path="/financial" element={<FinancialStatements />} />
               <Route path="/scanner" element={<Scanner />} />
               <Route path="/live" element={<Live />} />
