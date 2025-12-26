@@ -23,7 +23,7 @@ import type {
 import { useBacktest, type Trade } from '../lib/services/backtest';
 import { format } from 'date-fns';
 
-const STRATEGIES = ["Breakout TTM Version 2", "Squeeze Breakout"] as const;
+const STRATEGIES = ["Breakout TTM Version 2", "Squeeze Breakout", "Dual RSI"] as const;
 
 const formatMetadata = (metadata: Record<string, any>) => {
   return Object.entries(metadata)
@@ -114,7 +114,13 @@ export default function BacktestPage() {
     refetch
   } = useBacktest({
     strategy,
-    start_date: "2024-01-01"
+    start_date: (() => {
+      const now = new Date();
+      const lastYear = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
+      // Use date-fns for formatting
+      // import { format } from 'date-fns' must be present at top-level of file
+      return format(lastYear, 'yyyy-MM-dd');
+    })()
   });
 
   const handleStrategyChange = (newStrategy: typeof STRATEGIES[number]) => {

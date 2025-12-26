@@ -1,4 +1,4 @@
-from typing import Dict, List, Optional, Union
+from typing import Dict, List, Optional, Union, Any
 from datetime import date, datetime
 from pydantic import BaseModel, Field
 
@@ -34,3 +34,65 @@ class BacktestResponse(BaseModel):
     open_trades: List[Trade]
     closed_trades: List[Trade]
     execution_time: ExecutionTime
+
+
+# ============================================================================
+# H5 Backtest Results Schemas (for pre-computed backtest from notebook)
+# ============================================================================
+
+class H5Trade(BaseModel):
+    """Trade record from H5 backtest results"""
+    id: int
+    symbol: str
+    size: float
+    entry_timestamp: datetime
+    avg_entry_price: float
+    entry_fees: float
+    exit_timestamp: datetime
+    avg_exit_price: float
+    exit_fees: float
+    pnl: float
+    return_pct: float  # renamed from 'return' which is a Python keyword
+    direction: str
+    status: str
+
+
+class H5Stats(BaseModel):
+    """Stats for a symbol from H5 backtest results"""
+    symbol: str
+    start: Optional[str] = None
+    end: Optional[str] = None
+    period: Optional[str] = None
+    start_value: Optional[float] = None
+    end_value: Optional[float] = None
+    total_return_pct: Optional[float] = None
+    benchmark_return_pct: Optional[float] = None
+    max_gross_exposure_pct: Optional[float] = None
+    total_fees_paid: Optional[float] = None
+    max_drawdown_pct: Optional[float] = None
+    max_drawdown_duration: Optional[str] = None
+    total_trades: Optional[int] = None
+    total_closed_trades: Optional[int] = None
+    total_open_trades: Optional[int] = None
+    open_trade_pnl: Optional[float] = None
+    win_rate_pct: Optional[float] = None
+    best_trade_pct: Optional[float] = None
+    worst_trade_pct: Optional[float] = None
+    avg_winning_trade_pct: Optional[float] = None
+    avg_losing_trade_pct: Optional[float] = None
+    avg_winning_trade_duration: Optional[str] = None
+    avg_losing_trade_duration: Optional[str] = None
+    sharpe_ratio: Optional[float] = None
+    sortino_ratio: Optional[float] = None
+    calmar_ratio: Optional[float] = None
+    omega_ratio: Optional[float] = None
+    profit_factor: Optional[float] = None
+    expectancy: Optional[float] = None
+
+
+class H5BacktestResultsResponse(BaseModel):
+    """Response containing backtest results from H5 file for a single symbol"""
+    symbol: str
+    trades: List[H5Trade]
+    stats: Optional[H5Stats] = None
+    total_trades: int

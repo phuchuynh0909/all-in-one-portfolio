@@ -44,7 +44,13 @@ def get_strategy_params(strategy_name: str) -> Tuple[List[tuple], type, List[str
         param_names = ['bb_window', 'bb_multiplier', 'kc_window', 'kc_multiplier', 
                     'atr_window', 'momentum_window', 'donichan_window', 'entry_version']
         return strategy_params, BreakoutTTMVersion2, param_names
-    
+    elif strategy_name == "Dual RSI":
+        from app.services.strategies.dual_rsi import DualRSI
+        strategy_params = [
+            (14, 5, 200, 0.05),
+        ]
+        param_names = ['rsi_window_high', 'rsi_window_low', 'vwap_window', 'sl_stop']
+        return strategy_params, DualRSI, param_names
     else:
         raise ValueError(f"Unknown strategy: {strategy_name}")
 
