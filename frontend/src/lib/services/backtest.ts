@@ -39,6 +39,7 @@ export interface BacktestRequest {
   strategy: string;
   start_date: string;
   symbols?: string[];
+  apply_ml?: boolean;
 }
 
 export const fetchBacktest = async (params: BacktestRequest): Promise<BacktestResponse> => {

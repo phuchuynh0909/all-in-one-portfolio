@@ -3,10 +3,12 @@ import {
   Box,
   Container,
   FormControl,
+  FormControlLabel,
   InputLabel,
   MenuItem,
   Paper,
   Select,
+  Switch,
   Typography,
   CircularProgress,
   Alert,
@@ -94,6 +96,7 @@ const columns: GridColDef[] = [
 
 export default function BacktestPage() {
   const [strategy, setStrategy] = useState<typeof STRATEGIES[number]>(STRATEGIES[0]);
+  const [applyML, setApplyML] = useState(false);
   
   interface BacktestData {
     execution_time: {
@@ -116,11 +119,10 @@ export default function BacktestPage() {
     strategy,
     start_date: (() => {
       const now = new Date();
-      const lastYear = new Date(now.getFullYear() - 1, now.getMonth(), now.getDate());
-      // Use date-fns for formatting
-      // import { format } from 'date-fns' must be present at top-level of file
-      return format(lastYear, 'yyyy-MM-dd');
-    })()
+      const last2Year = new Date(now.getFullYear() - 2, now.getMonth(), now.getDate());
+      return format(last2Year, 'yyyy-MM-dd');
+    })(),
+    apply_ml: applyML
   });
 
   const handleStrategyChange = (newStrategy: typeof STRATEGIES[number]) => {
@@ -149,19 +151,32 @@ export default function BacktestPage() {
         </Typography>
 
         <Paper sx={{ p: 2, mb: 3 }}>
-          <FormControl fullWidth>
-            <InputLabel>Strategy</InputLabel>
-            <Select
-              value={strategy}
-              label="Strategy"
-              onChange={(e) => handleStrategyChange(e.target.value as typeof STRATEGIES[number])}
-              disabled={loading}
-            >
-              {STRATEGIES.map((s) => (
-                <MenuItem key={s} value={s}>{s}</MenuItem>
-              ))}
-            </Select>
-          </FormControl>
+          <Stack direction="row" spacing={3} alignItems="center">
+            <FormControl sx={{ minWidth: 300 }}>
+              <InputLabel>Strategy</InputLabel>
+              <Select
+                value={strategy}
+                label="Strategy"
+                onChange={(e) => handleStrategyChange(e.target.value as typeof STRATEGIES[number])}
+                disabled={loading}
+              >
+                {STRATEGIES.map((s) => (
+                  <MenuItem key={s} value={s}>{s}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={applyML}
+                  onChange={(e) => setApplyML(e.target.checked)}
+                  disabled={loading}
+                  color="primary"
+                />
+              }
+              label="Apply ML Predictions"
+            />
+          </Stack>
         </Paper>
 
         {loading && (
