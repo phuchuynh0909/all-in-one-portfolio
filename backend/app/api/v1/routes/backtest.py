@@ -42,6 +42,7 @@ def backtest_key_builder(
             "strategy": backtest_request.strategy,
             "start_date": backtest_request.start_date,
             "symbols": sorted(backtest_request.symbols) if backtest_request.symbols else None,
+            "apply_ml": backtest_request.apply_ml,
         }
         body_hash = hashlib.md5(json.dumps(key_data, sort_keys=True).encode()).hexdigest()
     else:
@@ -203,7 +204,8 @@ async def backtest_strategy(request: BacktestRequest) -> BacktestResponse:
     result = await run_backtest(
         strategy_name=request.strategy,
         start_date=request.start_date,
-        symbols=request.symbols
+        symbols=request.symbols,
+        apply_ml=request.apply_ml
     )
     
     return BacktestResponse(**result)

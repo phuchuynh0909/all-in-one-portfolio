@@ -67,16 +67,25 @@ def build_features(total_trades: pd.DataFrame) -> pd.DataFrame:
         end=max(unique_dates),
     )
 
-    # Calculate additional features
-    feature_store['kf_distance'] = np.log(1 + (feature_store['close'] - feature_store['kf']) / feature_store['kf'])
-    feature_store['vwap_distance_lowest'] = np.log(1 + (feature_store['close'] - feature_store['vwap_lowest']) / feature_store['vwap_lowest'])
-    feature_store['vwap_distance_highest'] = np.log(1 + (feature_store['close'] - feature_store['vwap_highest']) / feature_store['vwap_highest'])
-    feature_store['volume_threshold_ma_10'] = np.log(1 + (feature_store['volume'] - feature_store['volume_ma_10']) / feature_store['volume_ma_10'])
-    feature_store['volume_threshold_ma_20'] = np.log(1 + (feature_store['volume'] - feature_store['volume_ma_20']) / feature_store['volume_ma_20'])
-    feature_store['ema_10_distance'] = np.log(1 + (feature_store['close'] - feature_store['ema_10']) / feature_store['ema_10'])
-    feature_store['ema_20_distance'] = np.log(1 + (feature_store['close'] - feature_store['ema_20']) / feature_store['ema_20'])
-    feature_store['ema_50_distance'] = np.log(1 + (feature_store['close'] - feature_store['ema_50']) / feature_store['ema_50'])
-    feature_store['ema_200_distance'] = np.log(1 + (feature_store['close'] - feature_store['ema_200']) / feature_store['ema_200'])
+    # Calculate additional features using safe log (avoid divide by zero)
+    eps = 1e-10  # Small epsilon to prevent division by zero and log(0)
+    
+    def safe_log_ratio(numerator, denominator):
+        """Calculate log(1 + (num - denom) / denom) safely, handling zeros."""
+        ratio = (numerator - denominator) / denominator.replace(0, np.nan)
+        # Clip to avoid log of values <= -1
+        clipped = np.clip(ratio, -1 + eps, None)
+        return np.log1p(clipped)
+    
+    feature_store['kf_distance'] = safe_log_ratio(feature_store['close'], feature_store['kf'])
+    feature_store['vwap_distance_lowest'] = safe_log_ratio(feature_store['close'], feature_store['vwap_lowest'])
+    feature_store['vwap_distance_highest'] = safe_log_ratio(feature_store['close'], feature_store['vwap_highest'])
+    feature_store['volume_threshold_ma_10'] = safe_log_ratio(feature_store['volume'], feature_store['volume_ma_10'])
+    feature_store['volume_threshold_ma_20'] = safe_log_ratio(feature_store['volume'], feature_store['volume_ma_20'])
+    feature_store['ema_10_distance'] = safe_log_ratio(feature_store['close'], feature_store['ema_10'])
+    feature_store['ema_20_distance'] = safe_log_ratio(feature_store['close'], feature_store['ema_20'])
+    feature_store['ema_50_distance'] = safe_log_ratio(feature_store['close'], feature_store['ema_50'])
+    feature_store['ema_200_distance'] = safe_log_ratio(feature_store['close'], feature_store['ema_200'])
 
     # Merge with trades
     training_feature_df = pd.merge(total_trades, feature_store, on=['date', 'symbol'], how='inner')
@@ -105,7 +114,7 @@ def predict_features(feature_df: pd.DataFrame) -> pd.DataFrame:
 
     return feature_df
 
-async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] | None = None) -> Dict:
+async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] | None = None, apply_ml: bool = True) -> Dict:
     """Run backtest for given strategy and parameters."""
     total_start_time = time.time()
     
@@ -167,31 +176,41 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     # Keep a copy of original trades before feature building
     original_trades_df = all_trades_df.copy()
     
-    # Build features and make predictions
     logger.info(f"Strategy execution took {time.time() - strategy_start_time:.2f} seconds")
     
+    # Build features and make predictions (conditional on apply_ml)
     feature_start_time = time.time()
-    feature_df = build_features(all_trades_df)
-    logger.info(f"Feature building took {time.time() - feature_start_time:.2f} seconds")
-    
     prediction_start_time = time.time()
-    feature_df = predict_features(feature_df)
-    logger.info(f"ML predictions took {time.time() - prediction_start_time:.2f} seconds")
+    
+    if apply_ml:
+        feature_df = build_features(all_trades_df)
+        logger.info(f"Feature building took {time.time() - feature_start_time:.2f} seconds")
+        
+        prediction_start_time = time.time()
+        feature_df = predict_features(feature_df)
+        logger.info(f"ML predictions took {time.time() - prediction_start_time:.2f} seconds")
 
-    # Merge original trades with feature/prediction results
-    # Create merge keys for both dataframes
-    merge_cols = ['col', 'entry_idx', 'type']
-    
-    # Merge predictions back to original trades (left join to keep all original trades)
-    prediction_cols = ['y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost'] + \
-                     [col for col in feature_df.columns if col.startswith('msr_rank')]
-    
-    complete_trades_df = pd.merge(
-        original_trades_df, 
-        feature_df[merge_cols + prediction_cols],
-        on=merge_cols, 
-        how='left'
-    )
+        # Merge original trades with feature/prediction results
+        merge_cols = ['col', 'entry_idx', 'type']
+        
+        # Merge predictions back to original trades (left join to keep all original trades)
+        prediction_cols = ['y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost'] + \
+                         [col for col in feature_df.columns if col.startswith('msr_rank')]
+        
+        complete_trades_df = pd.merge(
+            original_trades_df, 
+            feature_df[merge_cols + prediction_cols],
+            on=merge_cols, 
+            how='left'
+        )
+    else:
+        logger.info("Skipping ML predictions (apply_ml=False)")
+        complete_trades_df = original_trades_df.copy()
+        # Add empty prediction columns
+        complete_trades_df['y_pred_xgb'] = None
+        complete_trades_df['y_pred_lgbm'] = None
+        complete_trades_df['y_pred_catboost'] = None
+        complete_trades_df['msr_rank_10'] = None
     
     # # Fill missing prediction values with defaults for trades without features
     # complete_trades_df['y_pred_xgb'] = complete_trades_df['y_pred_xgb'].fillna(0.5)
