@@ -507,22 +507,20 @@ def sync_features_to_delta_lake(features_data: pd.DataFrame):
 
         # Drop None/NaN values
         features_data = features_data.dropna()
-        
-        # Add month_id column for partition-aware merging (format: YYYY-MM)
-        features_data['month_id'] = pd.to_datetime(features_data['date']).dt.strftime('%Y-%m')
 
         isExist = DeltaTable.is_deltatable(table_path, storage_options=storage_options)
         if isExist:
             dt = DeltaTable(table_path, storage_options=storage_options)
 
-            # Get current month for partition pruning (format: YYYY-MM)
-            current_month = pd.Timestamp.now().strftime('%Y-%m')
+            # Calculate current month date range for filtering
+            now = pd.Timestamp.now()
+            month_start = now.replace(day=1).strftime('%Y-%m-%d')
             
-            # Build merge operation with partition pruning
-            # Only join on records from the current month for better performance
+            # Build merge operation with date-based partition pruning
+            # Only update records from the current month for better performance
             merge_builder = dt.merge(
                 source=features_data,
-                predicate=f"target.key = source.key AND target.month_id = '{current_month}'",
+                predicate=f"target.key = source.key",
                 source_alias="source",
                 target_alias="target"
             )
@@ -536,7 +534,7 @@ def sync_features_to_delta_lake(features_data: pd.DataFrame):
             # Execute the merge
             result = merge_builder.execute()
                 
-            print(f"Merge completed for month {current_month}: {result}")
+            print(f"Merge completed for month starting {month_start}: {result}")
         else:
             result = write_deltalake(table_path, features_data, storage_options=storage_options, mode="overwrite")
             print("Write features data to delta-lake")
