@@ -520,7 +520,7 @@ def sync_features_to_delta_lake(features_data: pd.DataFrame):
             # Only update records from the current month for better performance
             merge_builder = dt.merge(
                 source=features_data,
-                predicate=f"target.key = source.key",
+                predicate=f"target.key = source.key AND target.date >= '{month_start}'",
                 source_alias="source",
                 target_alias="target"
             )
