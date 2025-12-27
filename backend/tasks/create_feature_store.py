@@ -442,6 +442,7 @@ def load_stock_data() -> pd.DataFrame:
         
         # Convert to the same format as H5 store
         df = df.set_index(["date", "symbol"])
+        df = df[~df.index.duplicated(keep='first')]  # Drop duplicate index entries
         stocks = df.unstack(level=1).bfill().ffill()
         
         print("Successfully loaded data from delta lake")
@@ -554,6 +555,7 @@ def create_feature_store():
 
 if __name__ == "__main__":
     # Comment to run locally
+    # create_feature_store()
     # create_feature_store()
 
     # # Comment to deploy

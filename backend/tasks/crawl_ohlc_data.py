@@ -106,7 +106,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
             fileName = row["filename"].iloc[0]
         try:
             tickDf = metastock_read(fileName, extra_buffer=50)
-            tickDf = tickDf.sort_index().tail(10).reset_index(names='date')
+            tickDf = tickDf.sort_index().tail(50).reset_index(names='date')
             tickDf['symbol'] = row['symbol']
             all_symbol_ticker_df = pd.concat([all_symbol_ticker_df, tickDf])
         except Exception as e:
@@ -120,7 +120,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
         try:
             print("Processing " , row["symbol"], " ...")
             tickDf = metastock_read(row["filename"], extra_buffer=50)
-            tickDf = tickDf.sort_index().tail(10).reset_index(names='date')
+            tickDf = tickDf.sort_index().tail(50).reset_index(names='date')
             tickDf['symbol'] = row['symbol']
             all_symbol_ticker_df = pd.concat([all_symbol_ticker_df, tickDf])
         except Exception as e:
@@ -137,7 +137,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
                 continue
             print("Processing " , row["symbol"], " ...")
             tickDf = metastock_read(row["filename"], extra_buffer=50)
-            tickDf = tickDf.sort_index().tail(10).reset_index(names='date')
+            tickDf = tickDf.sort_index().tail(50).reset_index(names='date')
             tickDf['symbol'] = row['symbol']
             all_symbol_ticker_df = pd.concat([all_symbol_ticker_df, tickDf])
         except Exception as e:

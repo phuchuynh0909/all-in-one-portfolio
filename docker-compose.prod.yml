@@ -24,6 +24,7 @@ services:
       - DATABASE_URL=sqlite:///app/portfolio.db
     networks:
       - appnet
+      - shared_network
     restart: unless-stopped
 
   frontend:
@@ -52,17 +53,22 @@ services:
     environment:
       # ClickHouse Configuration
       - CLICKHOUSE_HOST=clickhouse
-      - CLICKHOUSE_PORT=9000
+      - CLICKHOUSE_PORT=8123
       - CLICKHOUSE_USER=${CLICKHOUSE_USER:-myuser}
       - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-mypassword}
       - CLICKHOUSE_DB=${CLICKHOUSE_DB:-default}
     networks:
       - appnet
+      - shared_network
     restart: unless-stopped
 
 networks:
   appnet:
     driver: bridge
+
+  shared_network:
+    name: my-common-network
+    external: true
 
 volumes:
   npm_data:

@@ -7,4 +7,5 @@ Requires-Dist: sqlalchemy>=2.0.28
 Requires-Dist: alembic>=1.13.1
 Requires-Dist: pandas>=2.2.1
 Requires-Dist: deltalake>=0.15.3
+Requires-Dist: pycryptodome>=3.19.0
 Dynamic: requires-dist

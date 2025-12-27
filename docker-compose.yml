@@ -21,6 +21,7 @@ services:
       - .env
     networks:
       - appnet
+      - shared_network
   frontend:
     build: ./frontend
     command: ["npm", "run", "dev", "--", "--host"]
@@ -54,11 +55,16 @@ services:
       - ./worker/.env
     networks:
       - appnet
+      - shared_network
     restart: unless-stopped
 networks:
   appnet:
     driver: bridge
-
+  
+  shared_network:
+    name: my-common-network
+    external: true
+    
 volumes:
   frontend_node_modules:
   worker_state:
