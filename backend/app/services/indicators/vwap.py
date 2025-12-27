@@ -5,33 +5,41 @@ import numba as nb
 def avwap(close: np.array, high: np.array, low: np.array, volume: np.array, is_highest: bool = True, window: int = 200) -> np.array:
     n_rows = len(close)
     avwap_arr = np.full(n_rows, np.nan)
-    anchor_indices = np.full(n_rows, False)
+    
+    prev_anchor_index = -1
+    cum_tp_vol = 0.0  # Cumulative (typical_price * volume)
+    cum_vol = 0.0     # Cumulative volume
 
     for i in range(window - 1, n_rows):
-        window_slice = slice(i - window + 1, i + 1)
-        price_window = close[window_slice]
+        # Find extreme price in window
+        window_start = i - window + 1
+        close_window = close[window_start:i + 1]
         if is_highest:
-            highest_price_index = np.argmax(price_window)
+            extreme_idx = np.argmax(close_window)
         else:
-            highest_price_index = np.argmin(price_window)
-
-        anchor_index = i - window + 1 + highest_price_index
-        anchor_indices[anchor_index] = True
-
-        if anchor_indices[i] or not np.all(np.isnan(avwap_arr[:i])):
-            typical_price = (close[anchor_index:] + high[anchor_index:] + low[anchor_index:]) / 3
-            cum_vol = np.cumsum(volume[anchor_index:])
-            cum_vol_price = np.cumsum(typical_price * volume[anchor_index:])
-            avwap_values = cum_vol_price / cum_vol
-            avwap_arr[anchor_index:anchor_index + len(avwap_values)] = avwap_values
-
-    # Forward fill for each asset
-    last_valid_index = 0
-    for i in range(n_rows):
-        if not np.isnan(avwap_arr[i]):
-            avwap_arr[last_valid_index:i + 1] = avwap_arr[i]
-            last_valid_index = i + 1
-    avwap_arr[last_valid_index:] = avwap_arr[last_valid_index - 1]
+            extreme_idx = np.argmin(close_window)
+        
+        anchor_index = window_start + extreme_idx
+        
+        # If anchor changed, reset cumulative sums from new anchor
+        if anchor_index != prev_anchor_index:
+            prev_anchor_index = anchor_index
+            cum_tp_vol = 0.0
+            cum_vol = 0.0
+            # Recalculate from anchor to current bar
+            for k in range(anchor_index, i + 1):
+                tp = (close[k] + high[k] + low[k]) / 3
+                cum_tp_vol += tp * volume[k]
+                cum_vol += volume[k]
+        else:
+            # Anchor unchanged, just add current bar
+            tp = (close[i] + high[i] + low[i]) / 3
+            cum_tp_vol += tp * volume[i]
+            cum_vol += volume[i]
+        
+        # Calculate AVWAP for current bar
+        if cum_vol > 0:
+            avwap_arr[i] = cum_tp_vol / cum_vol
 
     return avwap_arr
 
@@ -45,31 +53,40 @@ def avwap_func_nb(close_arr, high_arr, low_arr, volume_arr, is_highest: bool = T
         high = high_arr[:, col]
         low = low_arr[:, col]
         volume = volume_arr[:, col]
-        anchor_indices = np.full(n_rows, False)
+        
+        prev_anchor_index = -1
+        cum_tp_vol = 0.0  # Cumulative (typical_price * volume)
+        cum_vol = 0.0     # Cumulative volume
 
         for i in range(window - 1, n_rows):
-            window_slice = slice(i - window + 1, i + 1)
-            close_window = close[window_slice]
+            # Find extreme price in window
+            window_start = i - window + 1
+            close_window = close[window_start:i + 1]
             if is_highest:
-                highest_price_index = np.argmax(close_window)
+                extreme_idx = np.argmax(close_window)
             else:
-                highest_price_index = np.argmin(close_window)
-            anchor_index = i - window + 1 + highest_price_index
-            anchor_indices[anchor_index] = True
+                extreme_idx = np.argmin(close_window)
             
-            if anchor_indices[i] or not np.all(np.isnan(avwap_arr[:i, col])):
-                typical_price = (close[anchor_index:] + high[anchor_index:] + low[anchor_index:]) / 3
-                cum_vol = np.cumsum(volume[anchor_index:])
-                cum_vol_price = np.cumsum(typical_price * volume[anchor_index:])
-                avwap_values = cum_vol_price / cum_vol
-                avwap_arr[anchor_index:anchor_index + len(avwap_values), col] = avwap_values
-
-        # Forward fill for each asset
-        last_valid_index = 0
-        for i in range(n_rows):
-            if not np.isnan(avwap_arr[i, col]):
-                avwap_arr[last_valid_index:i + 1, col] = avwap_arr[i, col]
-                last_valid_index = i + 1
-        avwap_arr[last_valid_index:, col] = avwap_arr[last_valid_index - 1, col]
+            anchor_index = window_start + extreme_idx
+            
+            # If anchor changed, reset cumulative sums from new anchor
+            if anchor_index != prev_anchor_index:
+                prev_anchor_index = anchor_index
+                cum_tp_vol = 0.0
+                cum_vol = 0.0
+                # Recalculate from anchor to current bar
+                for k in range(anchor_index, i + 1):
+                    tp = (close[k] + high[k] + low[k]) / 3
+                    cum_tp_vol += tp * volume[k]
+                    cum_vol += volume[k]
+            else:
+                # Anchor unchanged, just add current bar
+                tp = (close[i] + high[i] + low[i]) / 3
+                cum_tp_vol += tp * volume[i]
+                cum_vol += volume[i]
+            
+            # Calculate AVWAP for current bar
+            if cum_vol > 0:
+                avwap_arr[i, col] = cum_tp_vol / cum_vol
 
     return avwap_arr

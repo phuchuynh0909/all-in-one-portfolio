@@ -13,4 +13,5 @@ class FeatureStore:
             df = df[df["date"] >= start]
         if end:
             df = df[df["date"] <= end]
-        return df
+        
+        return df.sort_values("date").reset_index(drop=True)
