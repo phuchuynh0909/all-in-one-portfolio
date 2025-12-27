@@ -275,7 +275,6 @@ async def get_stock_timeseries(
                     # Try to retrieve from feature store; fallback to on-the-fly calc
                     try:
                         col_name = f"zscore_kf_{window}"
-                        print("max_date", df["date"].max())
                         fs_df = feature_store.get_features(
                             symbol,
                             start=df["date"].min(),
@@ -306,6 +305,10 @@ async def get_stock_timeseries(
                     
                 elif ind.name == "rs_rating":
                     rs_rating = feature_store.get_features(symbol, start=df["date"].min(), end=df["date"].max(), columns=["date", "rs_rating_20", 'rs_rating_50', 'rs_rating_252'])
+                    
+                    print(df.shape)
+                    print(rs_rating.shape)
+                    # print(rs_rating.tail(50))
                     # left join with df
                     df = df.merge(rs_rating, on="date", how="left")
 

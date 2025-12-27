@@ -512,16 +512,31 @@ def sync_features_to_delta_lake(features_data: pd.DataFrame):
         if isExist:
             dt = DeltaTable(table_path, storage_options=storage_options)
 
-            now = pd.Timestamp.now()
-            three_days_ago = now - pd.DateOffset(days=30)
-            result = dt.merge(
+            # Calculate cutoff date for updates (only update recent data)
+            cutoff_days = 30
+            cutoff_date = (pd.Timestamp.now() - pd.DateOffset(days=cutoff_days)).date()
+            
+            # Build merge operation
+            merge_builder = dt.merge(
                 source=features_data,
                 predicate="target.key = source.key",
                 source_alias="source",
                 target_alias="target"
-            ).when_not_matched_insert_all().\
-                when_matched_update_all(predicate=f"target.date >= '{three_days_ago.strftime('%Y-%m-%d')}'").execute()
-            print("Merge features data to delta-lake")
+            )
+            
+            # Insert new records that don't exist in target
+            merge_builder = merge_builder.when_not_matched_insert_all()
+            
+            # Update matched records only if they're recent (within cutoff_days)
+            # Use date() for proper date comparison
+            merge_builder = merge_builder.when_matched_update_all(
+                predicate=f"source.date >= date('{cutoff_date}')"
+            )
+            
+            # Execute the merge
+            result = merge_builder.execute()
+                
+            print(f"Merge completed: {result}")
         else:
             result = write_deltalake(table_path, features_data, storage_options=storage_options, mode="overwrite")
             print("Write features data to delta-lake")
