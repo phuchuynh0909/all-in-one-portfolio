@@ -50,39 +50,40 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
   const toolTipWidth = 200;
   const legendWidth = 450;
 
-  // Panel height configuration - 70% main chart, 30% indicators
-  // 
-  // Current distribution:
-  // ┌─────────────────────────────┐
-  // │ Panel 0: Main Chart (70%)   │ ← 840px (candlesticks, volume, VWAP, ATR)
-  // │         (840px)             │
-  // ├─────────────────────────────┤
-  // │ Panel 1: RSI (7.5%)         │ ← 90px (RSI 5, RSI 14, bounds)
-  // ├─────────────────────────────┤
-  // │ Panel 2: BVC (7.5%)         │ ← 90px (BVC + zero line)
-  // ├─────────────────────────────┤
-  // │ Panel 3: Volatility (7.5%)  │ ← 90px (Yang-Zhang + Kalman)
-  // ├─────────────────────────────┤
-  // │ Panel 4: RS Rating (7.5%)   │ ← 90px (RS Rating 20/50/252 + EMAs)
-  // └─────────────────────────────┘
-  // Total: 1200px (100%)
-  //
-  // To adjust: Modify the panelRatios values below (must sum to 1.0)
-  // 
-  // Example alternative configurations:
-  // - More focus on RS Rating: { main: 0.65, rsi: 0.07, bvc: 0.07, volatility: 0.07, rsRating: 0.14 }
-  // - Minimal indicators: { main: 0.80, rsi: 0.05, bvc: 0.05, volatility: 0.05, rsRating: 0.05 }
-  // - Equal indicators: { main: 0.70, rsi: 0.075, bvc: 0.075, volatility: 0.075, rsRating: 0.075 }
+  // Chart configuration with pane stretch factors (relative ratios)
+  // Using setStretchFactor instead of setHeight due to v5 bug
   const chartConfig = {
-    totalHeight: 1200, // Total chart height in pixels
-    panelRatios: {
-      main: 0.70,        // 70% - Main price chart (840px)
-      rsi: 0.075,        // 7.5% - RSI indicators (90px)
-      bvc: 0.075,        // 7.5% - BVC indicator (90px)
-      volatility: 0.075, // 7.5% - Volatility indicators (90px)
-      rsRating: 0.075,   // 7.5% - RS Rating indicators (90px)
-    },
+    totalHeight: 1000, // Total chart height in pixels
+    paneStretchFactors: [
+      7,   // Panel 0: Main price chart (largest)
+      1,   // Panel 1: RSI indicators
+      1,   // Panel 2: BVC indicator
+      1,   // Panel 3: Volatility indicators
+      1,   // Panel 4: RS Rating indicators
+    ],
     globalScaleMargins: { top: 0.02, bottom: 0.02 },
+  };
+
+  // Helper function to apply pane stretch factors
+  const applyPaneHeights = () => {
+    if (!chartRef.current) return;
+    try {
+      const panes = chartRef.current.panes();
+      console.log(`Applying stretch factors to ${panes.length} panes:`, chartConfig.paneStretchFactors);
+      panes.forEach((pane: any, index: number) => {
+        if (index < chartConfig.paneStretchFactors.length) {
+          // Use setStretchFactor for relative sizing (workaround for setHeight bug)
+          if (typeof pane.setStretchFactor === 'function') {
+            pane.setStretchFactor(chartConfig.paneStretchFactors[index]);
+            console.log(`Set pane ${index} stretch factor to ${chartConfig.paneStretchFactors[index]}`);
+          } else {
+            console.warn(`pane.setStretchFactor is not a function for pane ${index}`);
+          }
+        }
+      });
+    } catch (e) {
+      console.warn('Could not set pane stretch factors:', e);
+    }
   };
 
   // Helper function to calculate percentage change from previous close
@@ -113,19 +114,33 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     const chart = createChart(chartContainerRef.current, {
       leftPriceScale: {
         visible: true,
+        borderColor: 'rgba(99, 102, 241, 0.2)',
       },
       height: chartConfig.totalHeight,
       width: chartContainerRef.current.clientWidth,
       layout: {
-        background: { color: '#0f0f0f' },
-        textColor: '#b8b8b8',
+        background: { color: '#0a0a0f' },
+        textColor: '#9ca3af',
+        fontFamily: "'SF Mono', 'Fira Code', 'Monaco', monospace",
       },
       grid: {
-        vertLines: { color: '#0f0f0f' },
-        horzLines: { color: '#0f0f0f' },
+        vertLines: { color: 'rgba(99, 102, 241, 0.05)' },
+        horzLines: { color: 'rgba(99, 102, 241, 0.05)' },
       },
       crosshair: {
         mode: 0,
+        vertLine: {
+          color: 'rgba(99, 102, 241, 0.4)',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#6366f1',
+        },
+        horzLine: {
+          color: 'rgba(99, 102, 241, 0.4)',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#6366f1',
+        },
       },
       localization: {
         locale: 'en-US',
@@ -143,11 +158,11 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
         pinch: true,
       },
       rightPriceScale: {
-        borderColor: '#2B2B43',
+        borderColor: 'rgba(99, 102, 241, 0.2)',
         scaleMargins: chartConfig.globalScaleMargins,
       },
       timeScale: {
-        borderColor: '#2B2B43',
+        borderColor: 'rgba(99, 102, 241, 0.2)',
         timeVisible: true,
         secondsVisible: false,
       },
@@ -155,16 +170,16 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create the candlestick series
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#4CAF50',
-      downColor: '#F44336',
+      upColor: '#22c55e',
+      downColor: '#ef4444',
       borderVisible: false,
-      wickUpColor: '#4CAF50',
-      wickDownColor: '#F44336',
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
     });
 
     // Create the volume series
     const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: '#26a69a',
+      color: '#6366f1',
       priceFormat: {
         type: 'volume',
       },
@@ -181,18 +196,19 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create ATR Trailing Stop series
     const atrTrailing = chart.addSeries(LineSeries, {
-      color: '#4caf50',
+      color: '#22c55e',
       lineWidth: 2,
       lineStyle: 2,
       title: 'Trailing Stop',
       priceFormat: {
         type: 'price',
       },
+      priceLineVisible: false,
     });
 
     // Create VWAP series
     const vwapHighest = chart.addSeries(LineSeries, {
-      color: '#2196F3',  // Blue
+      color: '#3b82f6',  // Blue
       lineWidth: 2,
       title: 'VWAP High',
       priceFormat: {
@@ -202,7 +218,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     });
 
     const vwapLowest = chart.addSeries(LineSeries, {
-      color: '#FF5722',  // Deep Orange
+      color: '#f97316',  // Orange
       lineWidth: 2,
       title: 'VWAP Low',
       priceFormat: {
@@ -213,7 +229,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create RSI series in a separate pane
     const rsiSeries = chart.addSeries(LineSeries, {
-      color: '#2962FF',
+      color: '#6366f1',
       lineWidth: 2,
       priceFormat: {
         type: 'custom',
@@ -225,7 +241,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create RSI 5 series in a separate pane
     const rsi5Series = chart.addSeries(LineSeries, {
-      color: '#FF9800',
+      color: '#f59e0b',
       lineWidth: 2,
       priceFormat: {
         type: 'custom',
@@ -237,14 +253,14 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Add horizontal lines for overbought/oversold levels
     const overboughtLine = chart.addSeries(LineSeries, {
-      color: '#FF9800',
+      color: 'rgba(239, 68, 68, 0.5)',
       lineWidth: 1,
       title: 'Overbought (70)',
       priceScaleId: 'right',
     }, 1);
 
     const oversoldLine = chart.addSeries(LineSeries, {
-      color: '#FF9800',
+      color: 'rgba(34, 197, 94, 0.5)',
       lineWidth: 1,
       title: 'Oversold (30)',
       priceScaleId: 'right',
@@ -253,7 +269,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create BVC series in a separate pane
     const bvcSeries = chart.addSeries(LineSeries, {
-      color: '#9C27B0',  // Purple
+      color: '#a855f7',  // Purple
       lineWidth: 2,
       priceFormat: {
         type: 'custom',
@@ -264,7 +280,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     }, 2);
     bvcSeries.moveToPane(2);
     const zeroLine = chart.addSeries(LineSeries, {
-      color: '#FF9800',
+      color: 'rgba(156, 163, 175, 0.4)',
       lineWidth: 1,
       title: '0',
       priceScaleId: 'right',
@@ -272,7 +288,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create Yang-Zhang Volatility series
     const yzVolatilitySeries = chart.addSeries(LineSeries, {
-      color: '#E91E63',  // Pink
+      color: '#ec4899',  // Pink
       lineWidth: 2,
       priceFormat: {
         type: 'custom',
@@ -285,7 +301,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create Kalman Z-Score series in a separate pane
     const kalmanZscoreSeries = chart.addSeries(LineSeries, {
-      color: '#00BCD4',  // Cyan
+      color: '#06b6d4',  // Cyan
       lineWidth: 2,
       priceFormat: {
         type: 'custom',
@@ -298,14 +314,14 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Add horizontal lines for upper/lower bounds
     const kalmanZscoreUpper = chart.addSeries(LineSeries, {
-      color: '#FF9800',
+      color: 'rgba(239, 68, 68, 0.4)',
       lineWidth: 1,
       title: 'Upper Bound (2)',
       priceScaleId: 'right',
     }, 3);
 
     const kalmanZscoreLower = chart.addSeries(LineSeries, {
-      color: '#FF9800',
+      color: 'rgba(34, 197, 94, 0.4)',
       lineWidth: 1,
       title: 'Lower Bound (-2)',
       priceScaleId: 'right',
@@ -313,7 +329,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create RS Rating series in a separate pane (Panel 4)
     const rsRating20Series = chart.addSeries(LineSeries, {
-      color: '#FF6B35',  // Orange-red
+      color: '#f97316',  // Orange
       lineWidth: 2,
       priceFormat: {
         type: 'custom',
@@ -326,7 +342,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create RS Rating EMA series in the same pane
     const rsRating20EmaSeries = chart.addSeries(LineSeries, {
-      color: '#7B68EE',  // Medium Slate Blue
+      color: '#8b5cf6',  // Violet
       lineWidth: 2,
       priceFormat: {
         type: 'custom',
@@ -339,7 +355,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create RS Rating 50 series in the same pane
     const rsRating50Series = chart.addSeries(LineSeries, {
-      color: '#00CED1',  // Dark Turquoise
+      color: '#14b8a6',  // Teal
       lineWidth: 2,
       priceFormat: {
         type: 'custom',
@@ -352,7 +368,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     // Create RS Rating 252 series in the same pane
     const rsRating252Series = chart.addSeries(LineSeries, {
-      color: '#32CD32',  // Lime Green
+      color: '#22c55e',  // Green
       lineWidth: 2,
       priceFormat: {
         type: 'custom',
@@ -374,8 +390,15 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
       },
     });
 
-    // Store references
+    // Store reference first so applyPaneHeights can access it
     chartRef.current = chart;
+    
+    // Apply pane heights using v5 API (with delay to ensure panes are ready)
+    setTimeout(() => {
+      applyPaneHeights();
+    }, 100);
+
+    // Store remaining references (chartRef already stored above)
     candlestickSeriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
     rsiSeriesRef.current = rsiSeries;
@@ -442,23 +465,25 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
       left: 12px;
       top: 12px;
       z-index: 2;
-      font-size: 14px;
-      font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
-      line-height: 18px;
-      font-weight: 300;
+      font-size: 13px;
+      font-family: 'SF Mono', 'Fira Code', 'Monaco', monospace;
+      line-height: 20px;
+      font-weight: 400;
       width: ${legendWidth}px;
-      padding: 8px 12px;
-      background: rgba(18, 18, 18, 0.8);
-      color: #fff;
-      border-radius: 4px;
-      box-shadow: 0 2px 5px 0 rgba(117, 134, 150, 0.45);
+      padding: 12px 16px;
+      background: linear-gradient(135deg, rgba(30, 30, 46, 0.95) 0%, rgba(24, 24, 36, 0.98) 100%);
+      color: #e2e8f0;
+      border-radius: 8px;
+      border: 1px solid rgba(99, 102, 241, 0.25);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(99, 102, 241, 0.1);
+      backdrop-filter: blur(12px);
     `;
 
     toolTipElement.style.cssText = `
       width: ${toolTipWidth}px;
       position: absolute;
       display: none;
-      padding: 8px;
+      padding: 12px 16px;
       box-sizing: border-box;
       font-size: 12px;
       text-align: left;
@@ -466,29 +491,31 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
       top: 12px;
       left: 12px;
       pointer-events: none;
-      border-radius: 4px;
-      border-bottom: none;
-      box-shadow: 0 2px 5px 0 rgba(117, 134, 150, 0.45);
-      font-family: -apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, sans-serif;
+      border-radius: 8px;
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+      font-family: 'SF Mono', 'Fira Code', 'Monaco', monospace;
       -webkit-font-smoothing: antialiased;
       -moz-osx-font-smoothing: grayscale;
-      background: rgba(255, 255, 255, 0.25);
-      color: black;
-      border-color: rgba(239, 83, 80, 1);
+      background: linear-gradient(135deg, rgba(30, 30, 46, 0.98) 0%, rgba(24, 24, 36, 0.98) 100%);
+      color: #e2e8f0;
+      border: 1px solid rgba(99, 102, 241, 0.3);
+      backdrop-filter: blur(12px);
     `;
 
     // Set initial legend content
     legendElement.innerHTML = `
-      <div style="font-size: 16px; margin-bottom: 4px;">${symbol}</div>
-      <div style="font-size: 12px; margin-bottom: 8px; opacity: 0.8;">Loading...</div>
-      <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px;">
-        <div>
-          O: <span>--</span>
-          H: <span>--</span>
-          L: <span>--</span>
-          C: <span>--</span>
+      <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+        <span style="font-size: 18px; font-weight: 600; background: linear-gradient(135deg, #6366f1, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">${symbol}</span>
+        <span style="font-size: 11px; color: #6b7280; padding: 2px 8px; background: rgba(99, 102, 241, 0.15); border-radius: 4px;">Loading...</span>
+      </div>
+      <div style="display: flex; gap: 16px; flex-wrap: wrap;">
+        <div style="display: flex; gap: 12px;">
+          <span style="color: #6b7280;">O</span> <span style="color: #9ca3af;">--</span>
+          <span style="color: #6b7280;">H</span> <span style="color: #9ca3af;">--</span>
+          <span style="color: #6b7280;">L</span> <span style="color: #9ca3af;">--</span>
+          <span style="color: #6b7280;">C</span> <span style="color: #9ca3af;">--</span>
         </div>
-        <div>Change: <span>--</span></div>
+        <div style="color: #6b7280;">Chg <span style="color: #9ca3af;">--</span></div>
       </div>
     `;
 
@@ -509,19 +536,23 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
         const prevClose = currentIndex > 0 ? dataPoints[currentIndex - 1].close : open;
         
         const percentChange = calculatePercentageChange(prevClose, close);
-        const color = close >= prevClose ? '#4CAF50' : '#F44336';
+        const isPositive = close >= prevClose;
+        const color = isPositive ? '#22c55e' : '#ef4444';
+        const arrow = isPositive ? '▲' : '▼';
         
         legendElement.innerHTML = `
-          <div style="font-size: 16px; margin-bottom: 4px;">${symbol}</div>
-          <div style="font-size: 12px; margin-bottom: 8px; opacity: 0.8;">${formatDate(time)}</div>
-          <div style="display: grid; grid-template-columns: auto 1fr; gap: 8px;">
-            <div>
-              O: <span style="color: ${color}">${formatPrice(open)}</span>
-              H: <span style="color: ${color}">${formatPrice(high)}</span>
-              L: <span style="color: ${color}">${formatPrice(low)}</span>
-              C: <span style="color: ${color}">${formatPrice(close)}</span>
+          <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 10px;">
+            <span style="font-size: 18px; font-weight: 600; background: linear-gradient(135deg, #6366f1, #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">${symbol}</span>
+            <span style="font-size: 11px; color: #9ca3af; padding: 2px 8px; background: rgba(99, 102, 241, 0.1); border-radius: 4px;">${formatDate(time)}</span>
+          </div>
+          <div style="display: flex; gap: 16px; align-items: center;">
+            <div><span style="color: #6b7280; font-size: 11px;">O</span> <span style="color: ${color}; font-weight: 500;">${formatPrice(open)}</span></div>
+            <div><span style="color: #6b7280; font-size: 11px;">H</span> <span style="color: ${color}; font-weight: 500;">${formatPrice(high)}</span></div>
+            <div><span style="color: #6b7280; font-size: 11px;">L</span> <span style="color: ${color}; font-weight: 500;">${formatPrice(low)}</span></div>
+            <div><span style="color: #6b7280; font-size: 11px;">C</span> <span style="color: ${color}; font-weight: 600; font-size: 14px;">${formatPrice(close)}</span></div>
+            <div style="padding: 3px 8px; background: ${isPositive ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)'}; border-radius: 4px; border: 1px solid ${isPositive ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'};">
+              <span style="color: ${color}; font-weight: 600; font-size: 12px;">${arrow} ${percentChange}</span>
             </div>
-            <div>Change: <span style="color: ${color}">${percentChange}</span></div>
           </div>
         `;
       }
@@ -547,12 +578,16 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
         if (hoveredReport) {
           toolTipElement.style.display = 'block';
           toolTipElement.innerHTML = `
-            <div style="color: rgba(239, 83, 80, 1)">📄 Research Report</div>
-            <div style="font-size: 14px; margin: 4px 0px; color: black">
+            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+              <span style="font-size: 16px;">📄</span>
+              <span style="color: #a855f7; font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Research Report</span>
+            </div>
+            <div style="font-size: 13px; margin-bottom: 8px; color: #e2e8f0; font-weight: 500; line-height: 1.4;">
               ${hoveredReport.tenbaocao}
             </div>
-            <div style="color: black">
-              ${hoveredReport.nguon} - ${new Date(hoveredReport.ngaykn || '').toLocaleDateString()}
+            <div style="display: flex; gap: 8px; align-items: center;">
+              <span style="color: #6366f1; font-size: 11px; padding: 2px 6px; background: rgba(99, 102, 241, 0.15); border-radius: 4px;">${hoveredReport.nguon}</span>
+              <span style="color: #6b7280; font-size: 11px;">${new Date(hoveredReport.ngaykn || '').toLocaleDateString()}</span>
             </div>
           `;
 
@@ -638,7 +673,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
         const volumeData = result.timestamps.map((timestamp: string, i: number) => ({
           time: formatChartTime(timestamp),
           value: result.timeseries.volume[i],
-          color: result.timeseries.close[i] >= result.timeseries.open[i] ? '#4CAF50' : '#F44336'
+          color: result.timeseries.close[i] >= result.timeseries.open[i] ? 'rgba(34, 197, 94, 0.5)' : 'rgba(239, 68, 68, 0.5)'
         }));
 
         // Update the series
@@ -709,16 +744,14 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
           rsRating50SeriesRef.current?.setData(rsRating50Data);
           rsRating252SeriesRef.current?.setData(rsRating252Data);
 
-          // Set visible range
+          // Fit content to show all data and auto-scale price
           const timeScale = chartRef.current?.timeScale();
           if (timeScale) {
-            const endTime = Math.floor(Date.now() / 1000);
-            const startTime = endTime - 365 * 24 * 60 * 60;
-            timeScale.setVisibleRange({
-              from: startTime as UTCTimestamp,
-              to: endTime as UTCTimestamp,
-            });
+            timeScale.fitContent();
           }
+          
+          // Re-apply pane heights after data is loaded
+          setTimeout(() => applyPaneHeights(), 50);
         } else {
           setIsChartReady(true);
         }
@@ -733,10 +766,6 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
     fetchData();
   }, [symbol, isChartReady]);
-
-
-
-
 
   // Handle resize
   useEffect(() => {
@@ -758,7 +787,9 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
         width: '100%', 
         height: chartConfig.totalHeight,
         position: 'relative',
-        bgcolor: '#121212'
+        bgcolor: '#0a0a0f',
+        borderRadius: 2,
+        overflow: 'hidden',
       }}
     >
       <div
@@ -776,11 +807,34 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
           top: '50%', 
           left: '50%', 
           transform: 'translate(-50%, -50%)',
-          bgcolor: 'rgba(18, 18, 18, 0.8)',
-          p: 2,
-          borderRadius: 1
+          background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.95) 0%, rgba(24, 24, 36, 0.95) 100%)',
+          p: 3,
+          borderRadius: 2,
+          border: '1px solid rgba(99, 102, 241, 0.3)',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: 2,
         }}>
-          <CircularProgress />
+          <CircularProgress 
+            size={40}
+            sx={{ 
+              color: '#6366f1',
+              '& .MuiCircularProgress-circle': {
+                strokeLinecap: 'round',
+              }
+            }} 
+          />
+          <Typography 
+            variant="body2" 
+            sx={{ 
+              color: '#9ca3af',
+              fontFamily: "'SF Mono', monospace",
+            }}
+          >
+            Loading chart data...
+          </Typography>
         </Box>
       )}
       {error && (
@@ -789,11 +843,23 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
           top: '50%', 
           left: '50%', 
           transform: 'translate(-50%, -50%)',
-          bgcolor: 'rgba(18, 18, 18, 0.8)',
-          p: 2,
-          borderRadius: 1
+          background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.95) 0%, rgba(24, 24, 36, 0.95) 100%)',
+          p: 3,
+          borderRadius: 2,
+          border: '1px solid rgba(239, 68, 68, 0.3)',
+          boxShadow: '0 8px 32px rgba(0, 0, 0, 0.4)',
+          maxWidth: 400,
+          textAlign: 'center',
         }}>
-          <Typography color="error">{error}</Typography>
+          <Typography 
+            sx={{ 
+              color: '#ef4444',
+              fontFamily: "'SF Mono', monospace",
+              fontSize: '0.875rem',
+            }}
+          >
+            ⚠️ {error}
+          </Typography>
         </Box>
       )}
     </Box>

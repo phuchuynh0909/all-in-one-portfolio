@@ -707,16 +707,16 @@ export default function BacktestChart({
           }}
         >
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap' }}>
-            <Typography
-              sx={{
-                fontSize: 18,
-                fontWeight: 600,
-                color: '#fff',
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-            >
-              {symbol}
-            </Typography>
+          <Typography
+            sx={{
+              fontSize: 18,
+              fontWeight: 600,
+              color: '#fff',
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            {symbol}
+          </Typography>
             
             {/* OHLC Data Display */}
             {crosshairData && (

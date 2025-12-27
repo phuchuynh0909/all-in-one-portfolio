@@ -225,7 +225,7 @@ async def get_stock_timeseries(
                     indicator_data["atr_trailing"] = convert_nans(trailing_sl(close_prices, atr))
                 
                 elif ind.name == "vwap":
-                    window = ind.params.get("window", 200)
+                    window = ind.params.get("window", 100)
                     indicator_data["vwap_highest"] = convert_nans(avwap(
                         close_prices,
                         high_prices,
@@ -305,10 +305,6 @@ async def get_stock_timeseries(
                     
                 elif ind.name == "rs_rating":
                     rs_rating = feature_store.get_features(symbol, start=df["date"].min(), end=df["date"].max(), columns=["date", "rs_rating_20", 'rs_rating_50', 'rs_rating_252'])
-                    
-                    print(df.shape)
-                    print(rs_rating.shape)
-                    # print(rs_rating.tail(50))
                     # left join with df
                     df = df.merge(rs_rating, on="date", how="left")
 

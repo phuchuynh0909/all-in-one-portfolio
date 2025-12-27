@@ -257,8 +257,8 @@ export default function BacktestVisualization() {
                       <Typography variant="caption" sx={{ color: '#6b7280', display: 'block', fontSize: '0.65rem', textTransform: 'uppercase' }}>Expectancy</Typography>
                       <Typography variant="body1" sx={{ fontFamily: 'monospace', fontWeight: 700 }}>{summaryStats.expectancy.toFixed(2)}</Typography>
                     </Box>
-                  )}
-                </Stack>
+                )}
+              </Stack>
               )}
             </Stack>
           </Paper>
