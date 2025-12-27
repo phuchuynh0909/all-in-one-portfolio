@@ -512,7 +512,7 @@ def sync_features_to_delta_lake(features_data: pd.DataFrame):
             dt = DeltaTable(table_path, storage_options=storage_options)
 
             now = pd.Timestamp.now()
-            three_days_ago = now - pd.DateOffset(days=3)
+            three_days_ago = now - pd.DateOffset(days=30)
             result = dt.merge(
                 source=features_data,
                 predicate="target.key = source.key",
@@ -554,15 +554,15 @@ def create_feature_store():
 
 if __name__ == "__main__":
     # Comment to run locally
-    create_feature_store()
+    # create_feature_store()
 
     # # Comment to deploy
-    # create_feature_store.from_source(
-    #     source=str(Path(__file__).parent),  # code stored in local directory
-    #     entrypoint="create_feature_store.py:create_feature_store",
-    # ).deploy(
-    #     name="create_feature_store",
-    #     work_pool_name="my-worker",
-    #     # Run at 3:00 AM from Monday to Friday
-    #     cron="0 8 * * 1-5", ## UTC+0
-    # )
+    create_feature_store.from_source(
+        source=str(Path(__file__).parent),  # code stored in local directory
+        entrypoint="create_feature_store.py:create_feature_store",
+    ).deploy(
+        name="create_feature_store",
+        work_pool_name="my-worker",
+        # Run at 3:00 AM from Monday to Friday
+        cron="0 8 * * 1-5", ## UTC+0
+    )

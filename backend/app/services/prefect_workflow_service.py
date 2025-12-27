@@ -12,7 +12,7 @@ def run_sync_stock_workflow(symbol: str):
         FlowRun: The completed flow run object
     """
     flow_run = run_deployment(
-        name="f71c5783-46e2-47e3-939b-da025d338fde",  # deployment ID
+        name="1eb96644-fe2a-478e-a43a-a01a75687b6b",  # deployment ID
         parameters={"symbol": symbol},
         timeout=None,  # Wait indefinitely for completion
     )

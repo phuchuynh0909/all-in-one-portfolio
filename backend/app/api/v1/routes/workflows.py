@@ -19,6 +19,8 @@ async def trigger_feature_store(symbol: str) -> TriggerResponse:
     """
     # background_tasks.add_task(_run_feature_store_flow)
     flow_run = await run_sync_stock_workflow(symbol)
-    return TriggerResponse(started=True, detail=flow_run.state)
+    # Convert State object to string for response
+    state_str = str(flow_run.state) if flow_run.state else "Unknown"
+    return TriggerResponse(started=True, detail=state_str)
 
 

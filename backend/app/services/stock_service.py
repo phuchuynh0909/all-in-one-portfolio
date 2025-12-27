@@ -275,6 +275,7 @@ async def get_stock_timeseries(
                     # Try to retrieve from feature store; fallback to on-the-fly calc
                     try:
                         col_name = f"zscore_kf_{window}"
+                        print("max_date", df["date"].max())
                         fs_df = feature_store.get_features(
                             symbol,
                             start=df["date"].min(),
@@ -288,6 +289,7 @@ async def get_stock_timeseries(
                         else:
                             indicator_data["kalman_zscore"] = kalman_zscore.calculate_kalman_zscore(close_prices, window=window)
                     except Exception:
+                        print("Error calculating kalman zscore on-the-fly")
                         indicator_data["kalman_zscore"] = kalman_zscore.calculate_kalman_zscore(close_prices, window=window)
                 
                 elif ind.name == "yz_volatility":
@@ -307,11 +309,12 @@ async def get_stock_timeseries(
                     # left join with df
                     df = df.merge(rs_rating, on="date", how="left")
 
-                    # calculate exponential moving average of rs_rating_20, rs_rating_50, rs_rating_252
-                    df["rs_rating_20_ema"] = df["rs_rating_20"].ewm(span=20).mean().round(2)
-                    df["rs_rating_50_ema"] = df["rs_rating_50"].ewm(span=50).mean().round(2)
-                    df["rs_rating_252_ema"] = df["rs_rating_252"].ewm(span=252).mean()
-                    print(df["rs_rating_20_ema"].shape)
+                    # Apply EMA smoothing with a fixed short span (10 days) to reduce noise
+                    # Using the same smoothing period for all ratings for consistency
+                    ema_span = 10
+                    df["rs_rating_20_ema"] = df["rs_rating_20"].ewm(span=ema_span, adjust=False).mean().round(2)
+                    df["rs_rating_50_ema"] = df["rs_rating_50"].ewm(span=ema_span, adjust=False).mean().round(2)
+                    df["rs_rating_252_ema"] = df["rs_rating_252"].ewm(span=ema_span, adjust=False).mean().round(2)
 
                     indicator_data["rs_rating_20"] = convert_nans(df["rs_rating_20"].values)
                     indicator_data["rs_rating_50"] = convert_nans(df["rs_rating_50"].values)
