@@ -512,15 +512,17 @@ def sync_features_to_delta_lake(features_data: pd.DataFrame):
         if isExist:
             dt = DeltaTable(table_path, storage_options=storage_options)
 
-            # Calculate current month date range for filtering
+            # Filter source data to last 30 days only
             now = pd.Timestamp.now()
-            month_start = now.replace(day=1).strftime('%Y-%m-%d')
+            cutoff_date = now - pd.Timedelta(days=30)
+            recent_data = features_data[features_data['date'] >= cutoff_date]
             
-            # Build merge operation with date-based partition pruning
-            # Only update records from the current month for better performance
+            print(f"Merging {len(recent_data)} records from last 30 days (since {cutoff_date.strftime('%Y-%m-%d')})")
+            
+            # Build merge operation
             merge_builder = dt.merge(
-                source=features_data,
-                predicate=f"target.key = source.key AND target.date >= '{month_start}'",
+                source=recent_data,
+                predicate="target.key = source.key",
                 source_alias="source",
                 target_alias="target"
             )
@@ -528,13 +530,13 @@ def sync_features_to_delta_lake(features_data: pd.DataFrame):
             # Insert new records that don't exist in target
             merge_builder = merge_builder.when_not_matched_insert_all()
             
-            # Update matched records (already filtered to current month by predicate)
+            # Update matched records
             merge_builder = merge_builder.when_matched_update_all()
             
             # Execute the merge
             result = merge_builder.execute()
                 
-            print(f"Merge completed for month starting {month_start}: {result}")
+            print(f"Merge completed: {result}")
         else:
             result = write_deltalake(table_path, features_data, storage_options=storage_options, mode="overwrite")
             print("Write features data to delta-lake")
