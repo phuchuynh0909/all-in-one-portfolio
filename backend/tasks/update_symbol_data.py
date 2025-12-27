@@ -58,8 +58,7 @@ def update_symbol_data(symbol: str):
             target_alias="target"
     ) \
         .when_not_matched_insert_all() \
-        .when_matched_update_all(predicate="target.key == source.key " \
-            "AND target.volume != source.volume AND target.close != source.close")\
+        .when_matched_update_all(predicate="target.key == source.key")\
         .execute()
     print(result)
 
