@@ -34,49 +34,22 @@ def lowest_at_entry(low, entry):
     return lowest_low
 
 
+EPS = 1e-10
+
 @njit
 def relative_strength_nb(close, benmark_close, window):
-    n_rows = close.shape[0]
-    n_cols = close.shape[1]
-    
-    rs = np.full((n_rows, n_cols), np.nan, dtype=np.float64)
-    mrs = np.full((n_rows, n_cols), np.nan, dtype=np.float64)
-    rs_ratio = np.full((n_rows, n_cols), np.nan, dtype=np.float64)
-    mean_rs_ratio = np.full((n_rows, n_cols), np.nan, dtype=np.float64)
-    
-    # Calculate rs_ratio with safe division
-    for col in range(n_cols):
-        for i in range(n_rows):
-            bench_val = benmark_close[i]
-            if bench_val != 0.0 and not np.isnan(bench_val):
-                rs_ratio[i, col] = close[i, col] / bench_val
+    rs = np.full(close.shape, np.nan, dtype=np.float64)
+    mrs = np.full(close.shape, np.nan, dtype=np.float64)
+    rs_ratio = close / (benmark_close + EPS)
 
-    # Calculate rolling mean of rs_ratio
-    for col in range(n_cols):
-        for i in range(window, n_rows):
-            valid_count = 0
-            total = 0.0
-            for j in range(i - window, i):
-                val = rs_ratio[j, col]
-                if not np.isnan(val):
-                    total += val
-                    valid_count += 1
-            if valid_count > 0:
-                mean_rs_ratio[i, col] = total / valid_count
+    mean_rs_ratio = np.full(close.shape, np.nan, dtype=np.float64)
+    for col in range(close.shape[1]):
+        for i in range(window, close.shape[0]):
+            mean_rs_ratio[i, col] = np.mean(rs_ratio[i-window:i, col])
 
-    # Calculate RS and MRS with safe division
-    for col in range(n_cols):
-        for i in range(window, n_rows):
-            curr_ratio = rs_ratio[i, col]
-            prev_ratio = rs_ratio[i - window, col]
-            mean_ratio = mean_rs_ratio[i, col]
-            
-            # RS calculation
-            if not np.isnan(curr_ratio) and not np.isnan(prev_ratio) and prev_ratio != 0.0:
-                rs[i, col] = (curr_ratio / prev_ratio) * 100.0 - 100.0
-            
-            # MRS calculation
-            if not np.isnan(curr_ratio) and not np.isnan(mean_ratio) and mean_ratio != 0.0:
-                mrs[i, col] = ((curr_ratio / mean_ratio) - 1.0) * 100.0
+    for col in range(close.shape[1]):
+        for i in range(window, close.shape[0]):
+            rs[i, col] = (rs_ratio[i, col] / (rs_ratio[i-window, col] + EPS)) * 100 - 100 
+            mrs[i, col] = ((rs_ratio[i, col] / (mean_rs_ratio[i, col] + EPS)) - 1) * 100
             
     return rs, mrs
