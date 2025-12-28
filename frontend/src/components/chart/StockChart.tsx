@@ -1,13 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
 import { Box, CircularProgress, Typography } from '@mui/material';
 import { createChart, CandlestickSeries, HistogramSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
-import type { SeriesMarker, UTCTimestamp } from 'lightweight-charts';
 import { 
   fetchTimeseries, 
   formatIndicatorData, 
   createConstantLine,
   getDateRange,
-  formatChartTime
+  formatChartTime,
+  formatReportDateForChart
 } from '../../lib/services/timeseries';
 import { differenceInDays } from 'date-fns';
 
@@ -42,6 +42,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
   const rsRating20EmaSeriesRef = useRef<any>(null);
   const rsRating50SeriesRef = useRef<any>(null);
   const rsRating252SeriesRef = useRef<any>(null);
+  const markerSeriesRef = useRef<any>(null);
   const markersRef = useRef<any>(null);
 
   const [loading, setLoading] = useState(true);
@@ -53,13 +54,13 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
   // Chart configuration with pane stretch factors (relative ratios)
   // Using setStretchFactor instead of setHeight due to v5 bug
   const chartConfig = {
-    totalHeight: 1000, // Total chart height in pixels
+    totalHeight: 700, // Total chart height in pixels
     paneStretchFactors: [
-      7,   // Panel 0: Main price chart (largest)
+      5,   // Panel 0: Main price chart (largest)
       1,   // Panel 1: RSI indicators
       1,   // Panel 2: BVC indicator
       1,   // Panel 3: Volatility indicators
-      1,   // Panel 4: RS Rating indicators
+      2,   // Panel 4: RS Rating indicators
     ],
     globalScaleMargins: { top: 0.02, bottom: 0.02 },
   };
@@ -128,7 +129,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
         horzLines: { color: 'rgba(99, 102, 241, 0.05)' },
       },
       crosshair: {
-        mode: 0,
+        mode: 3, // Magnet mode
         vertLine: {
           color: 'rgba(99, 102, 241, 0.4)',
           width: 1,
@@ -194,6 +195,26 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
       },
     });
 
+    // Create hidden marker series at the bottom of panel 0 for report markers
+    const markerSeries = chart.addSeries(LineSeries, {
+      color: 'transparent',
+      lineWidth: 1,
+      lineVisible: false,
+      priceScaleId: 'markers',
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    });
+
+    // Position marker scale at the absolute bottom of the chart
+    chart.priceScale('markers').applyOptions({
+      scaleMargins: {
+        top: 0.85,
+        bottom: 0,
+      },
+      visible: false,
+    });
+
     // Create ATR Trailing Stop series
     const atrTrailing = chart.addSeries(LineSeries, {
       color: '#22c55e',
@@ -251,19 +272,25 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
       priceScaleId: 'right',
     }, 1);
 
+    // Shared config for helper/reference lines (hidden from legend, no crosshair interaction)
+    const defaultFixedLineConfig = {
+      priceScaleId: 'right',
+      priceLineVisible: true,
+      lastValueVisible: false,
+      crosshairMarkerVisible: false,
+    } as const;
+
     // Add horizontal lines for overbought/oversold levels
     const overboughtLine = chart.addSeries(LineSeries, {
       color: 'rgba(239, 68, 68, 0.5)',
       lineWidth: 1,
-      title: 'Overbought (70)',
-      priceScaleId: 'right',
+      ...defaultFixedLineConfig,
     }, 1);
 
     const oversoldLine = chart.addSeries(LineSeries, {
       color: 'rgba(34, 197, 94, 0.5)',
       lineWidth: 1,
-      title: 'Oversold (30)',
-      priceScaleId: 'right',
+      ...defaultFixedLineConfig,
     }, 1);
 
 
@@ -279,11 +306,11 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
       priceScaleId: 'right',
     }, 2);
     bvcSeries.moveToPane(2);
+    
     const zeroLine = chart.addSeries(LineSeries, {
       color: 'rgba(156, 163, 175, 0.4)',
       lineWidth: 1,
-      title: '0',
-      priceScaleId: 'right',
+      ...defaultFixedLineConfig,
     }, 2);
 
     // Create Yang-Zhang Volatility series
@@ -316,15 +343,13 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     const kalmanZscoreUpper = chart.addSeries(LineSeries, {
       color: 'rgba(239, 68, 68, 0.4)',
       lineWidth: 1,
-      title: 'Upper Bound (2)',
-      priceScaleId: 'right',
+      ...defaultFixedLineConfig,
     }, 3);
 
     const kalmanZscoreLower = chart.addSeries(LineSeries, {
       color: 'rgba(34, 197, 94, 0.4)',
       lineWidth: 1,
-      title: 'Lower Bound (-2)',
-      priceScaleId: 'right',
+      ...defaultFixedLineConfig,
     }, 3);
 
     // Create RS Rating series in a separate pane (Panel 4)
@@ -401,6 +426,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     // Store remaining references (chartRef already stored above)
     candlestickSeriesRef.current = candlestickSeries;
     volumeSeriesRef.current = volumeSeries;
+    markerSeriesRef.current = markerSeries;
     rsiSeriesRef.current = rsiSeries;
     rsi5SeriesRef.current = rsi5Series;
     overboughtLineRef.current = overboughtLine;
@@ -430,6 +456,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
       }
       candlestickSeriesRef.current = null;
       volumeSeriesRef.current = null;
+      markerSeriesRef.current = null;
       rsiSeriesRef.current = null;
       rsi5SeriesRef.current = null;
       overboughtLineRef.current = null;
@@ -587,7 +614,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
             </div>
             <div style="display: flex; gap: 8px; align-items: center;">
               <span style="color: #6366f1; font-size: 11px; padding: 2px 6px; background: rgba(99, 102, 241, 0.15); border-radius: 4px;">${hoveredReport.nguon}</span>
-              <span style="color: #6b7280; font-size: 11px;">${new Date(hoveredReport.ngaykn || '').toLocaleDateString()}</span>
+              <span style="color: #6b7280; font-size: 11px;">${new Date(hoveredReport.ngaykn || '').toLocaleDateString('en-GB', { timeZone: 'Asia/Ho_Chi_Minh' })}</span>
             </div>
           `;
 
@@ -640,9 +667,8 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
           markersRef.current = markersRef.current.setMarkers([]);
         }
 
-        // Fetch both data and reports in parallel
-        const [result, reportsData] = await Promise.all([
-          fetchTimeseries(symbol, {
+        // Fetch timeseries data first
+        const result = await fetchTimeseries(symbol, {
           interval: "1d",
           ...getDateRange(360 * 5),
           indicators: [
@@ -654,11 +680,10 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
             { name: "yz_volatility", params: { window: 30, periods: 252 } },
             { name: "rs_rating" }
           ]
-        }),
-          fetchReports(symbol)
-        ]);
+        });
 
-        // Update reports state
+        // Fetch reports after timeseries succeeds
+        const reportsData = await fetchReports(symbol);
         setReports(reportsData);
 
         // Format data for the chart
@@ -682,21 +707,28 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
         // Only update additional indicators if chart is ready
         if (isChartReady) {
-          // Create markers for reports
-          const markers: SeriesMarker<UTCTimestamp>[] = reports
+          // Set data for marker series (invisible line at bottom for marker positioning)
+          const markerSeriesData = result.timestamps.map((timestamp: string) => ({
+            time: formatChartTime(timestamp),
+            value: 0,
+          }));
+          markerSeriesRef.current?.setData(markerSeriesData);
+
+          // Create markers for reports at the bottom of panel 0 (UTC+7 timezone)
+          const markers = reports
             .filter(report => report.ngaykn)
             .map(report => ({
-              time: formatChartTime(report.ngaykn || '') as UTCTimestamp,
-              position: 'aboveBar',
+              time: formatReportDateForChart(report.ngaykn || ''),
+              position: 'inBar' as const,
               color: '#2196F3',
               text: '📄',
-              shape: 'circle',
-              size: 2,
-              title: `${report.tenbaocao}\n${report.nguon}\n${new Date(report.ngaykn || '').toLocaleDateString()}`,
+              shape: '' as const,
+              size: 1,
+              title: `${report.tenbaocao}\n${report.nguon}\n${new Date(report.ngaykn || '').toLocaleDateString('en-GB', { timeZone: 'Asia/Ho_Chi_Minh' })}`,
             }));
 
-          if (markers.length > 0) {
-            markersRef.current = createSeriesMarkers(candlestickSeriesRef.current, markers);
+          if (markers.length > 0 && markerSeriesRef.current) {
+            markersRef.current = createSeriesMarkers(markerSeriesRef.current, markers as any);
           }
           
           // Format and update all indicators

@@ -231,6 +231,43 @@ export const formatChartTime = (timestamp: string): UTCTimestamp => {
   return (utcMidnight / 1000) as UTCTimestamp;
 };
 
+/**
+ * Format a date string for chart markers (reports, events, etc.)
+ * Handles various date formats and interprets them as Vietnam local dates.
+ * 
+ * This function extracts just the date portion without applying timezone offset,
+ * since report dates are typically already in Vietnam local date format.
+ */
+export const formatReportDateForChart = (dateStr: string): UTCTimestamp => {
+  const date = new Date(dateStr);
+  
+  // If the date string is date-only (like "2024-01-15"), new Date() interprets it as UTC
+  // If it has time/timezone, we need to convert to Vietnam time first
+  const hasTime = dateStr.includes('T') || dateStr.includes(' ');
+  
+  let year: number, month: number, day: number;
+  
+  if (hasTime) {
+    // Has time component - convert to Vietnam timezone
+    const utcTime = date.getTime();
+    const vietnamTime = utcTime + (VIETNAM_TZ_OFFSET_HOURS * 60 * 60 * 1000);
+    const vietnamDate = new Date(vietnamTime);
+    year = vietnamDate.getUTCFullYear();
+    month = vietnamDate.getUTCMonth();
+    day = vietnamDate.getUTCDate();
+  } else {
+    // Date-only string - use components directly (already interpreted as UTC midnight)
+    year = date.getUTCFullYear();
+    month = date.getUTCMonth();
+    day = date.getUTCDate();
+  }
+  
+  // Create UTC midnight timestamp
+  const utcMidnight = Date.UTC(year, month, day, 0, 0, 0, 0);
+  
+  return (utcMidnight / 1000) as UTCTimestamp;
+};
+
 export interface SectorData {
   id: number;
   name: string;
