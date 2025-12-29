@@ -1,4 +1,5 @@
 import React from 'react';
+import { useNavigate } from 'react-router-dom';
 import {
   Table,
   TableBody,
@@ -13,9 +14,11 @@ import {
   IconButton,
   Typography,
   CircularProgress,
+  Tooltip,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
-import { Report } from '../../lib/services/report';
+import EditIcon from '@mui/icons-material/Edit';
+import type { Report } from '../../lib/services/report';
 import { format } from 'date-fns';
 
 interface ReportTableProps {
@@ -26,6 +29,7 @@ interface ReportTableProps {
 
 export const ReportTable: React.FC<ReportTableProps> = ({ reports, isLoading, onSymbolSearch }) => {
   const [searchSymbol, setSearchSymbol] = React.useState('');
+  const navigate = useNavigate();
 
   const handleSearch = () => {
     onSymbolSearch(searchSymbol);
@@ -35,6 +39,10 @@ export const ReportTable: React.FC<ReportTableProps> = ({ reports, isLoading, on
     if (event.key === 'Enter') {
       handleSearch();
     }
+  };
+
+  const handleEdit = (reportId: number) => {
+    navigate(`/report/${reportId}`);
   };
 
   return (
@@ -71,6 +79,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({ reports, isLoading, on
                 <TableCell>Source</TableCell>
                 <TableCell>Date</TableCell>
                 <TableCell>Sector</TableCell>
+                <TableCell align="center">Actions</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -88,6 +97,17 @@ export const ReportTable: React.FC<ReportTableProps> = ({ reports, isLoading, on
                     {report.ngaykn ? format(new Date(report.ngaykn), 'dd/MM/yyyy') : ''}
                   </TableCell>
                   <TableCell>{report.rsnganh}</TableCell>
+                  <TableCell align="center">
+                    <Tooltip title="Edit Summary">
+                      <IconButton 
+                        size="small" 
+                        color="primary"
+                        onClick={() => handleEdit(report.id)}
+                      >
+                        <EditIcon fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>

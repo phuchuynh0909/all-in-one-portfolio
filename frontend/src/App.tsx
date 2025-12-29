@@ -19,6 +19,7 @@ import Portfolio from './pages/Portfolio';
 import Chart from './pages/Chart';
 import Sector from './pages/Sector';
 import Report from './pages/Report';
+import ReportDetail from './pages/ReportDetail';
 import Backtest from './pages/Backtest';
 import BacktestVisualization from './pages/BacktestVisualization';
 import { FinancialStatements } from './pages/FinancialStatements';
@@ -116,6 +117,7 @@ export default function App() {
               <Route path="/chart" element={<Chart />} />
               <Route path="/sector" element={<Sector />} />
               <Route path="/report" element={<Report />} />
+              <Route path="/report/:reportId" element={<ReportDetail />} />
               <Route path="/backtest" element={<Backtest />} />
               <Route path="/backtest-viz" element={<BacktestVisualization />} />
               <Route path="/financial" element={<FinancialStatements />} />

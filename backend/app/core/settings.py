@@ -46,6 +46,7 @@ class Settings(BaseSettings):
     stocks_delta_table: str = os.getenv("STOCKS_DELTA_TABLE", "s3://delta-table-storage/stocks")
     sector_delta_table: str = os.getenv("SECTOR_DELTA_TABLE", "s3://delta-table-storage/wichart_sector")
     wichart_report_delta_table: str = os.getenv("WICHART_REPORT_DELTA_TABLE", "s3://delta-table-storage/raw_wichart_report")
+    wichart_report_detail_delta_table: str = os.getenv("WICHART_REPORT_DETAIL_DELTA_TABLE", "s3://delta-table-storage/wichart_reports")
     stocks_feature_store: str = os.getenv("STOCKS_FEATURE_STORE", "s3://delta-table-storage/stocks_feature_store")
     model_path: str = os.getenv("MODEL_PATH", "models")
     xgb_model_path: str = os.getenv("XGB_MODEL_PATH", "models/xgboost_model_05_19_2025.ubj")
