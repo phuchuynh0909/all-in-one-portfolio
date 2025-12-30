@@ -37,6 +37,7 @@ class Indicators(BaseModel):
     rs_rating_20_ema: Optional[List[Optional[float]]] = None
     rs_rating_50_ema: Optional[List[Optional[float]]] = None
     rs_rating_252_ema: Optional[List[Optional[float]]] = None
+    matrix_series: Optional[Dict[str, List[Optional[float]]]] = None
 
 class Timeseries(BaseModel):
     open: List[float]
@@ -56,5 +57,20 @@ class TimeseriesResponse(BaseModel):
 class TimeseriesRequest(BaseModel):
     interval: str = Field(default="1d", description="Data interval (e.g., 1d, 1h)")
     indicators: List[IndicatorParams] = Field(default_factory=list)
+    start_date: Optional[str] = None
+    end_date: Optional[str] = None
+
+
+class IndicatorsOnlyResponse(BaseModel):
+    """Response schema for indicators-only endpoint (no OHLCV data)."""
+    symbol: str
+    interval: str = Field(default="1d", description="Data interval (e.g., 1d, 1h)")
+    timestamps: List[str]
+    indicators: Indicators
+
+
+class IndicatorsRequest(BaseModel):
+    """Request schema for indicators-only endpoint."""
+    indicators: List[IndicatorParams] = Field(..., min_length=1, description="List of indicators to calculate")
     start_date: Optional[str] = None
     end_date: Optional[str] = None

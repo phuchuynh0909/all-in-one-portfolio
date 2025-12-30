@@ -37,7 +37,7 @@ def getToken():
         'host': 'wichart.vn',
         'accept': 'application/json, text/plain, */*',
         'Content-Type': 'application/json',
-        'cookie': 'deviceToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1bmlxdWVJRCI6ImFlYWRiNGQ0NTI5MDRjYWFmYTkzMjZhYjQ1OTUyYzY4IiwiZXhwaXJlcyI6IjIwMjUtMTItMTVUMDU6MDk6MTAuMTIzWiIsImlhdCI6MTczNDIzOTM1MH0.mp6nwgEg1jIvsLk2rj4y8KwomS8H9oEk5AONNvmc2Pc; wid=zZZ87Fb9f21VeYwiLfMq',
+        'Cookie': 'deviceToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1bmlxdWVJRCI6IjFiNTFhNjA4ODQyZjc2NjJjYmM2MGFkOGZjNDI3ZmFjIiwiZXhwaXJlcyI6IjIwMjYtMTItMzBUMDM6NDY6NTkuODU4WiIsImlhdCI6MTc2NzA2NjQxOX0.Cav-d5UMmAnMnjlFAgmtQk58HRcjZbM1HBanQCqhn9s',
         'Nonce': nonce, 'Origin': 'https://wichart.vn', 'Referer': 'https://wichart.vn/login',
         'sec-ch-ua': '"Google Chrome";v="117", "Not;A=Brand";v="8", "Chromium";v="117"',
         'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"macOS"', 'sec-fetch-dest': 'empty',
@@ -45,7 +45,7 @@ def getToken():
         'Sign': getSign(signData), 'Sign-Token': 'ObBeWhVmYs3tP2Nz$C$FJ@P4AQfTjlPX', 'Stime': str(now),
         'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
         'v': 'v1',
-        'visit-id': "21a93ec7-5b72-44f7-a2d0-26202e37e23f"
+        'visit-id': "089be3fa-3082-4dea-b940-67563d6d6144"
     }
 
     response = requests.request("POST", url, headers=headers, data=json.dumps(payload))

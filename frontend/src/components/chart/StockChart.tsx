@@ -44,6 +44,12 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
   const rsRating252SeriesRef = useRef<any>(null);
   const markerSeriesRef = useRef<any>(null);
   const markersRef = useRef<any>(null);
+  // Matrix Series refs
+  const matrixSeriesCandleRef = useRef<any>(null);
+  const matrixSeriesSupportRef = useRef<any>(null);
+  const matrixSeriesResistanceRef = useRef<any>(null);
+  const matrixSeriesMarkerRef = useRef<any>(null);
+  const matrixSeriesMarkersRef = useRef<any>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -54,13 +60,14 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
   // Chart configuration with pane stretch factors (relative ratios)
   // Using setStretchFactor instead of setHeight due to v5 bug
   const chartConfig = {
-    totalHeight: 700, // Total chart height in pixels
+    totalHeight: 800, // Total chart height in pixels
     paneStretchFactors: [
       5,   // Panel 0: Main price chart (largest)
       1,   // Panel 1: RSI indicators
       1,   // Panel 2: BVC indicator
       1,   // Panel 3: Volatility indicators
       2,   // Panel 4: RS Rating indicators
+      2,   // Panel 5: Matrix Series indicator
     ],
     globalScaleMargins: { top: 0.02, bottom: 0.02 },
   };
@@ -404,6 +411,57 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     }, 4);
     rsRating252Series.moveToPane(4);
 
+    // Create Matrix Series panel (Panel 5) - candlestick-like oscillator
+    const matrixSeriesCandle = chart.addSeries(CandlestickSeries, {
+      upColor: '#22c55e',
+      downColor: '#ef4444',
+      borderVisible: false,
+      wickUpColor: '#22c55e',
+      wickDownColor: '#ef4444',
+      priceScaleId: 'right',
+    }, 5);
+    matrixSeriesCandle.moveToPane(5);
+
+    // Matrix Series Support Line (red)
+    const matrixSeriesSupport = chart.addSeries(LineSeries, {
+      color: '#ef4444',  // Red
+      lineWidth: 2,
+      priceFormat: {
+        type: 'custom',
+        formatter: (price: number) => price.toFixed(1),
+      },
+      title: 'MS Support',
+      priceScaleId: 'right',
+      lastValueVisible: true,
+    }, 5);
+    matrixSeriesSupport.moveToPane(5);
+
+    // Matrix Series Resistance Line (green)
+    const matrixSeriesResistance = chart.addSeries(LineSeries, {
+      color: '#22c55e',  // Green
+      lineWidth: 2,
+      priceFormat: {
+        type: 'custom',
+        formatter: (price: number) => price.toFixed(1),
+      },
+      title: 'MS Resistance',
+      priceScaleId: 'right',
+      lastValueVisible: true,
+    }, 5);
+    matrixSeriesResistance.moveToPane(5);
+
+    // Hidden line series for overbought/oversold markers in Matrix Series panel
+    const matrixSeriesMarker = chart.addSeries(LineSeries, {
+      color: 'transparent',
+      lineWidth: 1,
+      lineVisible: false,
+      priceScaleId: 'right',
+      lastValueVisible: false,
+      priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    }, 5);
+    matrixSeriesMarker.moveToPane(5);
+
     // Configure global chart options after all series are created
     chart.applyOptions({
       overlayPriceScales: {
@@ -444,6 +502,10 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     rsRating20EmaSeriesRef.current = rsRating20EmaSeries;
     rsRating50SeriesRef.current = rsRating50Series;
     rsRating252SeriesRef.current = rsRating252Series;
+    matrixSeriesCandleRef.current = matrixSeriesCandle;
+    matrixSeriesSupportRef.current = matrixSeriesSupport;
+    matrixSeriesResistanceRef.current = matrixSeriesResistance;
+    matrixSeriesMarkerRef.current = matrixSeriesMarker;
     // Cleanup
 
     // Signal that chart is ready
@@ -474,6 +536,11 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
       rsRating20EmaSeriesRef.current = null;
       rsRating50SeriesRef.current = null;
       rsRating252SeriesRef.current = null;
+      matrixSeriesCandleRef.current = null;
+      matrixSeriesSupportRef.current = null;
+      matrixSeriesResistanceRef.current = null;
+      matrixSeriesMarkerRef.current = null;
+      matrixSeriesMarkersRef.current = null;
       markersRef.current = null;
       setIsChartReady(false);
     };
@@ -678,7 +745,8 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
             { name: "bvc", params: { window: 20, kappa: 0.1 } },
             { name: "kalman_zscore", params: { window: 20 } },
             { name: "yz_volatility", params: { window: 30, periods: 252 } },
-            { name: "rs_rating" }
+            { name: "rs_rating" },
+            { name: "matrix_series", params: { price_period: 20, sup_res_period: 50, sup_res_percentage: 100, smoother: 5 } }
           ]
         });
 
@@ -775,6 +843,113 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
           rsRating20EmaSeriesRef.current?.setData(rsRating20EmaData);
           rsRating50SeriesRef.current?.setData(rsRating50Data);
           rsRating252SeriesRef.current?.setData(rsRating252Data);
+
+          // Handle Matrix Series indicator
+          if (result.indicators?.matrix_series) {
+            const msHh = result.indicators.matrix_series.hh ?? [];
+            const msLl = result.indicators.matrix_series.ll ?? [];
+            const msSupportLine = result.indicators.matrix_series.support_line ?? [];
+            const msResistanceLine = result.indicators.matrix_series.resistance_line ?? [];
+
+            // Create candlestick data from hh/ll
+            // hh = min(up, down), ll = max(up, down)
+            // Color: compare current close to previous close
+            const matrixCandleData = result.timestamps.map((timestamp: string, i: number) => {
+              const hh = msHh[i];
+              const ll = msLl[i];
+              if (hh == null || ll == null) return null;
+              
+              // Determine color based on direction (compare to previous)
+              const prevHh = i > 0 ? msHh[i - 1] : hh;
+              const prevLl = i > 0 ? msLl[i - 1] : ll;
+              const currentMid = (hh + ll) / 2;
+              const prevMid = (prevHh! + prevLl!) / 2;
+              const isUp = currentMid >= prevMid;
+              
+              return {
+                time: formatChartTime(timestamp),
+                open: hh,
+                high: Math.max(hh, ll),
+                low: Math.min(hh, ll),
+                close: ll,
+                color: isUp ? '#22c55e' : '#ef4444',
+                borderColor: isUp ? '#22c55e' : '#ef4444',
+                wickColor: isUp ? '#22c55e' : '#ef4444',
+              };
+            }).filter(Boolean);
+
+            matrixSeriesCandleRef.current?.setData(matrixCandleData);
+
+            // Support line
+            const supportData = formatIndicatorData(result.timestamps, msSupportLine);
+            matrixSeriesSupportRef.current?.setData(supportData);
+
+            // Resistance line
+            const resistanceData = formatIndicatorData(result.timestamps, msResistanceLine);
+            matrixSeriesResistanceRef.current?.setData(resistanceData);
+
+            // Set marker series data (use ll values for positioning)
+            const markerSeriesData = result.timestamps.map((timestamp: string, i: number) => ({
+              time: formatChartTime(timestamp),
+              value: msLl[i] ?? 0,
+            })).filter(d => d.value !== 0);
+            matrixSeriesMarkerRef.current?.setData(markerSeriesData);
+
+            // Create overbought/oversold markers
+            // Pine Script logic:
+            // UPshape = up > 200 ? show marker above
+            // DOWNshape = down < -200 ? show marker below
+            // Since ll = max(up, down), if ll > 200, the upper line is overbought
+            // Since hh = min(up, down), if hh < -200, the lower line is oversold
+            const OB_LEVEL = 200;
+            const OS_LEVEL = -200;
+
+            const msMarkers: any[] = [];
+            result.timestamps.forEach((timestamp: string, i: number) => {
+              if (i === 0) return; // Need previous value for direction detection
+              
+              const hh = msHh[i];
+              const ll = msLl[i];
+              const prevHh = msHh[i - 1];
+              const prevLl = msLl[i - 1];
+              
+              if (hh == null || ll == null || prevHh == null || prevLl == null) return;
+
+              // Determine direction (isUp = bullish)
+              const currentMid = (hh + ll) / 2;
+              const prevMid = (prevHh + prevLl) / 2;
+              const isUp = currentMid >= prevMid;
+
+              // Overbought: ll > 200 AND isUp (bullish overbought)
+              if (ll > OB_LEVEL && isUp) {
+                msMarkers.push({
+                  time: formatChartTime(timestamp),
+                  position: 'aboveBar' as const,
+                  color: '#00bcd4',  // Cyan/aqua
+                  shape: 'circle' as const,
+                  text: '',
+                  size: 0.5,
+                });
+              }
+
+              // Oversold: hh < -200 AND !isUp (bearish oversold)
+              if (hh < OS_LEVEL && !isUp) {
+                msMarkers.push({
+                  time: formatChartTime(timestamp),
+                  position: 'belowBar' as const,
+                  color: '#00bcd4',  // Cyan/aqua
+                  shape: 'circle' as const,
+                  text: '',
+                  size: 0.5,
+                });
+              }
+            });
+
+            // Apply markers
+            if (msMarkers.length > 0 && matrixSeriesMarkerRef.current) {
+              matrixSeriesMarkersRef.current = createSeriesMarkers(matrixSeriesMarkerRef.current, msMarkers);
+            }
+          }
 
           // Fit content to show all data and auto-scale price
           const timeScale = chartRef.current?.timeScale();

@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends
 from fastapi_cache.decorator import cache
 from sqlalchemy.orm import Session
-from app.schemas.timeseries import TimeseriesResponse, TimeseriesRequest
+from app.schemas.timeseries import TimeseriesResponse, TimeseriesRequest, IndicatorsOnlyResponse, IndicatorsRequest
 from app.schemas.sector import SectorTimeseries
-from app.services.stock_service import get_stock_timeseries, get_sector_timeseries
+from app.services.stock_service import get_stock_timeseries, get_sector_timeseries, get_stock_indicators
 from app.db.base import get_db
 
 router = APIRouter(prefix="/timeseries", tags=["timeseries"])
@@ -20,6 +20,24 @@ async def get_symbol_timeseries(
     return await get_stock_timeseries(
         symbol=symbol,
         interval=request.interval,
+        indicators=request.indicators,
+        start_date=request.start_date,
+        end_date=request.end_date
+    )
+
+
+@router.post("/{symbol}/indicators", response_model=IndicatorsOnlyResponse)
+@cache(expire=300)  # Cache for 5 minutes
+async def get_symbol_indicators(
+    symbol: str,
+    request: IndicatorsRequest
+) -> IndicatorsOnlyResponse:
+    """
+    Get indicators only for a symbol (without OHLCV data).
+    Lighter response for when only indicator values are needed.
+    """
+    return await get_stock_indicators(
+        symbol=symbol,
         indicators=request.indicators,
         start_date=request.start_date,
         end_date=request.end_date

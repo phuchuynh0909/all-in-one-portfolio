@@ -28,6 +28,12 @@ export interface TimeseriesResponse {
     rs_rating_20_ema?: (number | null)[];
     rs_rating_50_ema?: (number | null)[];
     rs_rating_252_ema?: (number | null)[];
+    matrix_series?: {
+      hh: (number | null)[];
+      ll: (number | null)[];
+      support_line: (number | null)[];
+      resistance_line: (number | null)[];
+    };
   };
 }
 

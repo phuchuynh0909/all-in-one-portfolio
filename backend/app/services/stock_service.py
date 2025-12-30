@@ -9,16 +9,17 @@ import pyarrow as pa
 import numpy as np
 import talib
 from loguru import logger
-from .indicators import trailing_sl, avwap, hawkes_BVC, kalman_zscore, calculate_yz_volatility
+from .indicators import trailing_sl, avwap, hawkes_BVC, kalman_zscore, calculate_yz_volatility, matrix_series
 from .utils import convert_nans
-from app.schemas.timeseries import TimeseriesResponse, Indicators, IndicatorParams
+from app.schemas.timeseries import TimeseriesResponse, Indicators, IndicatorParams, IndicatorsOnlyResponse
 from app.schemas.sector import SectorTimeseries, SectorTimeseriesData
 import pyarrow.dataset as ds
 from app.stores.feature_store import FeatureStore
 from datetime import datetime, date, timedelta
 from fastapi_cache.decorator import cache
 from app.core.settings import settings
-
+import vectorbt as vbt
+import time as time_module
 
 def _delta_storage_options() -> dict:
     return {
@@ -30,6 +31,30 @@ def _delta_storage_options() -> dict:
         "AWS_REGION": "us-east-1",
         "aws_conditional_put": "etag",
     }
+
+# Cached DeltaTable instances with TTL
+_delta_table_cache: dict = {}
+_CACHE_TTL_SECONDS = 300  # 5 minutes
+
+def _get_cached_delta_table(table_path: str) -> DeltaTable:
+    """Get a cached DeltaTable instance, refreshing if expired."""
+    now = time_module.time()
+    cache_entry = _delta_table_cache.get(table_path)
+    
+    if cache_entry is not None:
+        dt, cached_at = cache_entry
+        if now - cached_at < _CACHE_TTL_SECONDS:
+            # Update incremental to pick up new data without full reload
+            try:
+                dt.update_incremental()
+            except Exception:
+                pass  # Ignore update errors, use cached version
+            return dt
+    
+    # Create new instance and cache it
+    dt = DeltaTable(table_path, storage_options=_delta_storage_options())
+    _delta_table_cache[table_path] = (dt, now)
+    return dt
 
 
 def _build_filter(symbols: list | None, start: datetime | None, end: datetime | None):
@@ -57,6 +82,9 @@ def _load_delta_stocks(
     columns: list | None = None,
 ) -> pd.DataFrame:
     """Load OHLCV from Delta table using predicate pushdown via PyArrow filters."""
+    import time
+    total_start = time.perf_counter()
+    
     # Load watchlist if no symbols provided
     if not symbols:
         watchlist_path = os.path.join("models", "watchlist.csv")
@@ -68,22 +96,44 @@ def _load_delta_stocks(
             logger.warning(f"Watchlist not found at {watchlist_path}, using all available symbols")
             symbols = None
 
-    dt = DeltaTable(settings.stocks_delta_table, storage_options=_delta_storage_options())
+    t0 = time.perf_counter()
+    dt = _get_cached_delta_table(settings.stocks_delta_table)
+    logger.debug(f"[PERF] DeltaTable init (cached): {(time.perf_counter() - t0) * 1000:.2f}ms")
+    
+    logger.debug(f"[PERF] Partition columns: {dt.metadata().partition_columns}")
+    
+    t0 = time.perf_counter()
     dataset = dt.to_pyarrow_dataset()
+    logger.debug(f"[PERF] to_pyarrow_dataset: {(time.perf_counter() - t0) * 1000:.2f}ms")
+    
     filt = _build_filter(symbols, start, end)
+    logger.debug(f"[PERF] Filter: {filt}")
+    
+    t0 = time.perf_counter()
     try:
         table = dataset.to_table(filter=filt, columns=columns)
     except Exception:
         table = dataset.to_table(columns=columns)
+    logger.debug(f"[PERF] to_table (query): {(time.perf_counter() - t0) * 1000:.2f}ms, rows={table.num_rows}")
+    
+    t0 = time.perf_counter()
     pdf = table.to_pandas()
+    logger.debug(f"[PERF] to_pandas: {(time.perf_counter() - t0) * 1000:.2f}ms")
+    
     if pdf.empty:
+        logger.debug(f"[PERF] Total: {(time.perf_counter() - total_start) * 1000:.2f}ms (empty)")
         return pdf
+    
+    t0 = time.perf_counter()
     if "date" in pdf.columns:
         pdf["date"] = pd.to_datetime(pdf["date"])
     if "symbol" in pdf.columns and "date" in pdf.columns:
         pdf = pdf.sort_values(["symbol", "date"]).reset_index(drop=True)
     elif "symbol" in pdf.columns:
         pdf = pdf.sort_values(["symbol"]).reset_index(drop=True)
+    logger.debug(f"[PERF] post-processing: {(time.perf_counter() - t0) * 1000:.2f}ms")
+    
+    logger.debug(f"[PERF] Total _load_delta_stocks: {(time.perf_counter() - total_start) * 1000:.2f}ms")
     return pdf
 
 
@@ -92,7 +142,7 @@ def _load_feature_store(
     start: datetime | None = None,
     end: datetime | None = None,
 ) -> pd.DataFrame:
-    dt = DeltaTable(settings.stocks_feature_store, storage_options=_delta_storage_options())
+    dt = _get_cached_delta_table(settings.stocks_feature_store)
     dataset = dt.to_pyarrow_dataset()
     filt = _build_filter(symbols, start, end)
     try:
@@ -112,8 +162,8 @@ async def get_current_price(ticker: str) -> Optional[float]:
         current_date = date(now.year, now.month, now.day)
         start_date = current_date - timedelta(days=3)
         
-        # Use DeltaTable's predicate pushdown for filtering
-        dt = DeltaTable(settings.stocks_delta_table, storage_options=_delta_storage_options())
+        # Use cached DeltaTable with predicate pushdown for filtering
+        dt = _get_cached_delta_table(settings.stocks_delta_table)
         stocks = dt.to_pandas(
             columns=["date", "close"],
             filters=[
@@ -142,24 +192,22 @@ async def get_stock_timeseries(
 ) -> TimeseriesResponse:
     """Get stock timeseries data with optional indicators."""
     try:
-        # Load data from Delta Lake
-        query_filters = [("symbol", "==", symbol)]
-        if start_date:
-            query_filters.append(("date", ">=", datetime.strptime(start_date, "%Y-%m-%d")))
-        if end_date:
-            query_filters.append(("date", "<=", datetime.strptime(end_date, "%Y-%m-%d")))
-
-        dt = DeltaTable(settings.stocks_delta_table, storage_options=_delta_storage_options())
-        df = dt.to_pandas(
-            columns=["date", "open", "high", "low", "close", "volume"],
-            filters=query_filters
+        # Load data from Delta Lake using PyArrow dataset for faster predicate pushdown
+        start = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+        end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
+        
+        df = _load_delta_stocks(
+            symbols=[symbol],
+            start=start,
+            end=end,
+            columns=["date", "open", "high", "low", "close", "volume", "symbol"]
         )
+        
+        # Filter to exact symbol (in case of case sensitivity issues)
+        df = df[df["symbol"] == symbol].drop(columns=["symbol"])
         
         if df.empty:
             raise ValueError(f"No data found for symbol {symbol}")
-
-        # Sort by date
-        df = df.sort_values("date")
         
         # Calculate indicators if requested
         indicator_data = {}
@@ -323,6 +371,31 @@ async def get_stock_timeseries(
                     indicator_data["rs_rating_50_ema"] = convert_nans(df["rs_rating_50_ema"].values)
                     indicator_data["rs_rating_252_ema"] = convert_nans(df["rs_rating_252_ema"].values)
 
+                elif ind.name == "matrix_series":
+                    price_period = ind.params.get("price_period", 16)
+                    sup_res_period = ind.params.get("sup_res_period", 30)
+                    sup_res_percentage = ind.params.get("sup_res_percentage", 100)
+                    smoother = ind.params.get("smoother", 5)
+
+                    close_arr = df["close"].to_numpy().reshape(-1, 1)
+                    high_arr = df["high"].to_numpy().reshape(-1, 1)
+                    low_arr = df["low"].to_numpy().reshape(-1, 1)
+
+                    matrix_series_indicator = vbt.IndicatorFactory(
+                        class_name='MatrixSeries',
+                        short_name='matrix_series',
+                        input_names=['close', 'high', 'low'],
+                        param_names=['price_period', 'sup_res_period', 'sup_res_percentage', 'smoother'],
+                        output_names=['hh', 'll', 'support_line', 'resistance_line']
+                    ).from_apply_func(matrix_series)
+
+                    matrix_series_indicator = matrix_series_indicator.run(close_arr, high_arr, low_arr, price_period=price_period, sup_res_period=sup_res_period, sup_res_percentage=sup_res_percentage, smoother=smoother)
+                    indicator_data["matrix_series"] = {
+                        "hh": convert_nans(matrix_series_indicator.hh.to_numpy().reshape(-1)),
+                        "ll": convert_nans(matrix_series_indicator.ll.to_numpy().reshape(-1)),
+                        "support_line": convert_nans(matrix_series_indicator.support_line.to_numpy().reshape(-1)),
+                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1))
+                    }
             except Exception as e:
                 print(f"Error calculating {ind.name}: {e}")
 
@@ -342,6 +415,76 @@ async def get_stock_timeseries(
     except Exception as e:
         print(f"Error getting timeseries data for {symbol}: {e}")
         raise
+
+async def get_stock_indicators(
+    symbol: str,
+    indicators: List[IndicatorParams],
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> IndicatorsOnlyResponse:
+    """Get stock indicators only (without OHLCV data)."""
+    try:
+        # Load data from Delta Lake using PyArrow dataset for faster predicate pushdown
+        start = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+        end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
+        
+        df = _load_delta_stocks(
+            symbols=[symbol],
+            start=start,
+            end=end,
+            columns=["date", "open", "high", "low", "close", "volume", "symbol"]
+        )
+        
+        # Filter to exact symbol
+        df = df[df["symbol"] == symbol].drop(columns=["symbol"])
+        
+        if df.empty:
+            raise ValueError(f"No data found for symbol {symbol}")
+        
+        # Calculate indicators
+        indicator_data = {}
+                
+        for ind in indicators:
+            try:
+                if ind.name == "matrix_series":
+                    price_period = ind.params.get("price_period", 16)
+                    sup_res_period = ind.params.get("sup_res_period", 30)
+                    sup_res_percentage = ind.params.get("sup_res_percentage", 100)
+                    smoother = ind.params.get("smoother", 5)
+
+                    close_arr = df["close"].to_numpy().reshape(-1, 1)
+                    high_arr = df["high"].to_numpy().reshape(-1, 1)
+                    low_arr = df["low"].to_numpy().reshape(-1, 1)
+
+                    matrix_series_indicator = vbt.IndicatorFactory(
+                        class_name='MatrixSeries',
+                        short_name='matrix_series',
+                        input_names=['close', 'high', 'low'],
+                        param_names=['price_period', 'sup_res_period', 'sup_res_percentage', 'smoother'],
+                        output_names=['hh', 'll', 'support_line', 'resistance_line']
+                    ).from_apply_func(matrix_series)
+
+                    matrix_series_indicator = matrix_series_indicator.run(close_arr, high_arr, low_arr, price_period=price_period, sup_res_period=sup_res_period, sup_res_percentage=sup_res_percentage, smoother=smoother)
+                    indicator_data["matrix_series"] = {
+                        "hh": convert_nans(matrix_series_indicator.hh.to_numpy().reshape(-1)),
+                        "ll": convert_nans(matrix_series_indicator.ll.to_numpy().reshape(-1)),
+                        "support_line": convert_nans(matrix_series_indicator.support_line.to_numpy().reshape(-1)),
+                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1))
+                    }
+
+            except Exception as e:
+                logger.error(f"Error calculating {ind.name}: {e}")
+
+        return IndicatorsOnlyResponse(
+            symbol=symbol,
+            interval="1d",
+            timestamps=df["date"].dt.strftime("%Y-%m-%d").tolist(),
+            indicators=Indicators(**indicator_data)
+        )
+    except Exception as e:
+        logger.error(f"Error getting indicators for {symbol}: {e}")
+        raise
+
 
 def calculate_rsi(prices: np.ndarray, period: int = 14) -> List[float]:
     """Calculate RSI indicator using TA-Lib."""
@@ -384,7 +527,7 @@ def _get_sectors_from_db(db: Session, sector_level: int) -> List:
 def _process_ohlc_data_for_sectors(sectors: List, sector_level: str) -> SectorTimeseries:
     """Process OHLC data for multiple sectors using a single query."""
     try:
-        dt = DeltaTable(settings.stocks_delta_table, storage_options=_delta_storage_options())
+        dt = _get_cached_delta_table(settings.stocks_delta_table)
         
         # Prepare sector data with 4-digit padding transformation
         padded_sectors = [(f"{sector.id:04d}", sector.id, sector.name) for sector in sectors]
@@ -456,7 +599,7 @@ def _build_sector_timeseries_from_dataframe(
 def _get_sector_timeseries_from_delta_table(sector_level: str) -> SectorTimeseries:
     """Get sector timeseries from original delta table approach."""
     try:
-        dt = DeltaTable(settings.sector_delta_table, storage_options=_delta_storage_options())
+        dt = _get_cached_delta_table(settings.sector_delta_table)
         pdf = dt.to_pyarrow_table(filters=[("sector_type", "==", int(sector_level))]).to_pandas()
 
         if pdf.empty:
