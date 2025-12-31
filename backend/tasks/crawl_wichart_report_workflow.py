@@ -2,9 +2,7 @@ import os
 import sys
 from prefect import flow, task
 import pyarrow as pa
-import urllib.parse
 from pathlib import Path
-import requests
 import time
 import json
 import pandas as pd
@@ -19,7 +17,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 # Now import after path is set up
-from app.utils.wichart import getNonce, getHeaders, getSign, decrypt
+from app.utils.wichart import decrypt
 
 import asyncio
 from playwright.async_api import async_playwright
@@ -53,125 +51,84 @@ wichart_report_schema = pa.schema([
     pa.field('url', pa.string(), nullable=True)
 ])
 
-def get_from_storage(key: str, storage_path: str = STORAGE_PATH) -> str | None:
-    try:
-        with open(storage_path, 'r') as f:
-            storage = json.load(f)
-        
-        # Find wtoken in cookies
-        for cookie in storage.get("cookies", []):
-            if cookie.get("name") == key:
-                return cookie.get("value")
-        
-        return None
-    except Exception as e:
-        print(f"Error reading {key} from storage: {e}")
-        return None
 
-async def browser_login():
-    """Login via browser and save storage state."""
+async def crawl_reports_via_browser() -> pd.DataFrame:
+    """Crawl reports by navigating to widata.vn and clicking on tabs."""
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
         page = await context.new_page()
 
-        # Go to login page
-        await page.goto("https://wichart.vn/login", wait_until="networkidle")
+        # Navigate to the page
+        print("Navigating to widata.vn/bao-cao-phan-tich...")
+        await page.goto("https://widata.vn/bao-cao-phan-tich", wait_until="networkidle")
+        
+        # Define tabs to click (using MUI Typography h2 elements)
+        tabs = [
+            {"name": "Ngành", "selector": "h2.MuiTypography-subtitle2:has-text('Ngành')"},
+            {"name": "Vĩ mô", "selector": "h2.MuiTypography-subtitle2:has-text('Vĩ mô')"},
+            {"name": "Báo cáo chiến lược", "selector": "h2.MuiTypography-subtitle2:has-text('chiến lược')"},
+            {"name": "Doanh nghiệp", "selector": "h2.MuiTypography-subtitle2:has-text('Doanh nghiệp')"},
+        ]
 
-        # Fill form
-        await page.fill('input[name="email"]', WICHART_EMAIL)
-        await page.fill('input[name="password"]', WICHART_PASSWORD)
+        result_df = pd.DataFrame()
 
-        # Submit
-        await page.click('button[type="submit"]')
+        for tab in tabs:
+            try:
+                print(f"\nClicking on tab: {tab['name']}")
+                
+                # Wait for the API response when clicking the tab
+                async with page.expect_response(
+                    lambda resp: "wichartapi" in resp.url and "report" in resp.url,
+                    timeout=15000
+                ) as response_info:
+                    await page.click(tab["selector"])
+                
+                response = await response_info.value
+                body = await response.json()
+                enc = body.get('enc')
 
-        # Wait until logged in
-        await page.wait_for_url("**/**", timeout=60_000)
-
-        # Wait for page to fully load before saving state
-        await asyncio.sleep(10)
-
-        # Save storage state
-        await context.storage_state(path=STORAGE_PATH)
-        print("Saved storage to wichart_storage.json")
+                if enc:
+                    decrypted_data = decrypt(enc)
+                    data = json.loads(decrypted_data)
+                    
+                    reports = data.get('result', [])
+                    if reports:
+                        tab_df = pd.DataFrame(reports)
+                        tab_df['tab_source'] = tab['name']
+                        result_df = pd.concat([result_df, tab_df], ignore_index=True)
+                    
+                    print(f"Tab '{tab['name']}' response: {len(reports)} items")
+                else:
+                    print(f"Tab '{tab['name']}': No encrypted data found")
+                
+                # Small delay between tabs
+                await asyncio.sleep(1)
+                
+            except Exception as e:
+                print(f"Error clicking tab '{tab['name']}': {e}")
 
         await browser.close()
+        
+        print(f"\nTotal reports crawled: {len(result_df)}")
+        return result_df
 
 
 @task(log_prints=True)
-def get_token() -> (str, str, str):
-    
-    print("Lgging in via browser...")
-    asyncio.run(browser_login())
-
-    wtoken = get_from_storage(key="wtoken")
-    device_token = get_from_storage(key="deviceToken")
-    wid = get_from_storage(key="wid")
-
-    if wtoken and device_token:
-        print("Successfully obtained device_token and wid after browser login")
-        return wtoken, device_token, wid,
-    
-    print("Failed to obtain device_token and wid")
-    return None
-
-
-@task
-def crawl_wichart_report(token: str, device_token: str, wid: str):
-
-    url = "https://wichart.vn/wichartapi/wichart/company/report?"
-    nonce = getNonce()
-    now = int(time.time() * 1000)
-    keyword_search = ["bao_cao_vi_mo", "bao_cao_nganh", "bao_cao_doanh_nghiep", "bao_cao_chien_luoc"]
-
-    result_df = pd.DataFrame()
-    for search in keyword_search:
-        for i in range(5):
-            payload = {"desc": "true", "page": i + 1, "page_size": 10, "loaibaocao": search}
-            new_url = url + urllib.parse.urlencode(payload)
-            nonce = getNonce()
-            now = int(time.time() * 1000)
-
-            sign = {
-                "desc": "true", "loaibaocao": payload['loaibaocao'], "nonce": nonce,
-                "page": payload['page'], "page_size": payload['page_size'],
-                "sign-token": "ObBeWhVmYs3tP2Nz$C$FJ@P4AQfTjlPX", "stime": now, "v": "v1"
-            }
-            
-            headers = {
-                'authority': 'wichart.vn', 'accept': 'application/json, text/plain, */*',
-                'authorization': 'Bearer ' + token, 'content-type': 'application/json',
-                'cookie': 'deviceToken=' + device_token + '; wid=' + wid + '; wtoken=' + token,
-                'origin': 'https://wichart.vn', 'referer': 'https://wichart.vn/report',
-                'sec-ch-ua': '"Google Chrome";v="143", "Chromium";v="143", "Not A(Brand";v="24"',
-                'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"macOS"',
-                'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-origin',
-                'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-                'v': 'v1', 'nonce': nonce, 'sign': getSign(sign), 'sign-token': "ObBeWhVmYs3tP2Nz$C$FJ@P4AQfTjlPX", 'stime': str(now),
-            }
-
-            try:
-                response = requests.get(new_url, headers=headers)
-                if response.status_code != 200:
-                    print("Cannot call API: ", new_url)
-                    print(response.text)
-                    continue
-                enc = response.json()['enc']
-                key = "ZmRvaWFmaGRpc2ZoaWRzZHNoa2RoaW9zZGZoc2E=".encode()
-
-                decrypted_text = decrypt.decrypt_aes(enc, key)
-                data = json.loads(decrypted_text)
-                if 'result' in data:
-                    report = data['result']
-                    result_df = pd.concat([result_df, pd.DataFrame(report)])
-                
-            except Exception as e:
-                print(e)
-                print("Cannot call API: ", new_url, " with response: ", response.text)
-            
+def crawl_wichart_report() -> pd.DataFrame:
+    """Task: Crawl Wichart reports via browser automation."""
+    print("Starting browser-based report crawling...")
+    result_df = asyncio.run(crawl_reports_via_browser())
     return result_df
 
+
+@task(log_prints=True)
 def save_to_delta_table(df: pd.DataFrame):
+    """Task: Save crawled reports to Delta Lake."""
+    if df.empty:
+        print("No data to save")
+        return
+    
     tablePath = "s3://delta-table-storage/raw_wichart_report"
     storage_options = {
         "AWS_ACCESS_KEY_ID": os.getenv("MINIO_ACCESS_KEY"),
@@ -183,56 +140,83 @@ def save_to_delta_table(df: pd.DataFrame):
         "aws_conditional_put": "etag",
     }
 
-        # Convert date columns to datetime format
+    # Convert date columns to datetime format
     date_columns = ['ngaykn', 'ngay_congbo']
     for col in date_columns:
         if col in df.columns:
-            df[col] = pd.to_datetime(df[col])
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+
+    # Remove tab_source column if exists (not in schema)
+    if 'tab_source' in df.columns:
+        df = df.drop(columns=['tab_source'])
+
+    # Keep only columns that exist in the schema
+    schema_columns = [field.name for field in wichart_report_schema]
+    existing_columns = [col for col in schema_columns if col in df.columns]
+    df = df[existing_columns]
 
     # Convert DataFrame to PyArrow Table using the schema
-    pyarrow_table = pa.Table.from_pandas(df, schema=wichart_report_schema)
-    dt = DeltaTable(tablePath, storage_options=storage_options)
-    if dt.is_deltatable():
-        result = dt.merge(df, 
-                          predicate="target.id = source.id", 
-                          source_alias="source", 
-                          target_alias="target").\
-            when_not_matched_insert_all().execute()
+    try:
+        pyarrow_table = pa.Table.from_pandas(df, schema=wichart_report_schema, preserve_index=False)
+    except Exception as e:
+        print(f"Error converting to PyArrow table with schema: {e}")
+        # Fallback: let PyArrow infer schema
+        pyarrow_table = pa.Table.from_pandas(df, preserve_index=False)
+
+    isExist = DeltaTable.is_deltatable(tablePath, storage_options=storage_options)
+    
+    if isExist:
+        dt = DeltaTable(tablePath, storage_options=storage_options)
+        result = dt.merge(
+            df, 
+            predicate="target.id = source.id", 
+            source_alias="source", 
+            target_alias="target"
+        ).when_matched_update_all().when_not_matched_insert_all().execute()
+        print(f"Merged {len(df)} records to Delta table")
     else:
         result = write_deltalake(tablePath, pyarrow_table, storage_options=storage_options, mode="overwrite")
+        print(f"Created new Delta table with {len(df)} records")
 
-    print(result)
     return
+
 
 @flow(log_prints=True)
 def crawl_wichart_report_workflow():
-    """Flow: ETL for syncing tickers"""
-
-    token, device_token, wid = get_token()
-    if token is None or device_token is None or wid is None:
-        print("Failed to obtain token, device_token and wid")
-        return
+    """Flow: Crawl Wichart reports and save to Delta Lake."""
     
-    # Task 1: Crawling Wichart report
-    df = crawl_wichart_report(token, device_token, wid)
+    # Task 1: Crawl reports via browser
+    df = crawl_wichart_report()
+    
     if df.empty:
-        print("data is empty")
+        print("No data crawled, exiting workflow")
         return
 
     # Task 2: Save to Delta Table
     save_to_delta_table(df)
     
+    print("Workflow completed successfully!")
+
 
 # Run the flow
 if __name__ == "__main__":
-    # crawl_wichart_workflow()
+    import argparse
+    
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--deploy", action="store_true", help="Deploy the flow instead of running it")
+    parser.add_argument("--run", action="store_true", help="Run the flow locally")
+    args = parser.parse_args()
 
-    crawl_wichart_report_workflow.from_source(
-        source=str(Path(__file__).parent),  # code stored in local directory
-        entrypoint="crawl_wichart_report_workflow.py:crawl_wichart_report_workflow",
-    ).deploy(
-        name="crawl_wichart_report_workflow",
-        work_pool_name="my-worker",
-        # Run at 9:00 AM and 3:00 PM from Monday to Friday
-        cron="0 2,8 * * 1-5", ## UTC+0
-    )
+    if args.deploy:
+        crawl_wichart_report_workflow.from_source(
+            source=str(Path(__file__).parent),
+            entrypoint="crawl_wichart_report_workflow.py:crawl_wichart_report_workflow",
+        ).deploy(
+            name="crawl_wichart_report_workflow",
+            work_pool_name="my-worker",
+            # Run at 9:00 AM and 3:00 PM Vietnam time (UTC+7) from Monday to Friday
+            cron="0 2,8 * * 1-5",  # UTC+0
+        )
+    else:
+        # Default: run the workflow
+        crawl_wichart_report_workflow()
