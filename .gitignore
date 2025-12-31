@@ -8,3 +8,4 @@ prod.env
 __pycache__/
 *.pyc
 *.*.pyc
+backend/tasks/wichart_storage.json
