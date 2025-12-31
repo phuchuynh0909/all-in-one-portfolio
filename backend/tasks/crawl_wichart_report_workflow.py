@@ -99,9 +99,9 @@ async def browser_login():
 
 
 @task(log_prints=True)
-def get_token() -> (str, str, str) | None:
+def get_token() -> (str, str, str):
     
-    print("No wtoken found, logging in via browser...")
+    print("Lgging in via browser...")
     asyncio.run(browser_login())
 
     wtoken = get_from_storage(key="wtoken")
@@ -137,9 +137,7 @@ def crawl_wichart_report(token: str, device_token: str, wid: str):
                 "page": payload['page'], "page_size": payload['page_size'],
                 "sign-token": "ObBeWhVmYs3tP2Nz$C$FJ@P4AQfTjlPX", "stime": now, "v": "v1"
             }
-
-            signatureEncode = "".join([str(key) + str(value) for key, value in sign.items()])
-            hashCode = md5(signatureEncode.encode('utf-8')).hexdigest()
+            
             headers = {
                 'authority': 'wichart.vn', 'accept': 'application/json, text/plain, */*',
                 'authorization': 'Bearer ' + token, 'content-type': 'application/json',
@@ -149,7 +147,7 @@ def crawl_wichart_report(token: str, device_token: str, wid: str):
                 'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"macOS"',
                 'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-origin',
                 'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36',
-                'v': 'v1', 'nonce': nonce, 'sign': hashCode, 'sign-token': "ObBeWhVmYs3tP2Nz$C$FJ@P4AQfTjlPX", 'stime': str(now),
+                'v': 'v1', 'nonce': nonce, 'sign': getSign(sign), 'sign-token': "ObBeWhVmYs3tP2Nz$C$FJ@P4AQfTjlPX", 'stime': str(now),
             }
 
             try:
