@@ -33,6 +33,8 @@ export interface TimeseriesResponse {
       ll: (number | null)[];
       support_line: (number | null)[];
       resistance_line: (number | null)[];
+      up_line: (number | null)[];
+      down_line: (number | null)[];
     };
   };
 }

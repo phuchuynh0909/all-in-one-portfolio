@@ -128,7 +128,8 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     )
     stocks = stocks.set_index(["date", "symbol"]).sort_index()
     stocks = stocks.unstack(level=1).bfill().ffill()
-    logger.info(f"Data loading took {time.time() - data_load_start:.2f} seconds")
+    data_loading_duration = time.time() - data_load_start
+    logger.info(f"Data loading took {data_loading_duration:.2f} seconds")
     
     # Get strategy configuration
     strategy_start_time = time.time()
@@ -176,19 +177,23 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     # Keep a copy of original trades before feature building
     original_trades_df = all_trades_df.copy()
     
-    logger.info(f"Strategy execution took {time.time() - strategy_start_time:.2f} seconds")
+    strategy_duration = time.time() - strategy_start_time
+    logger.info(f"Strategy execution took {strategy_duration:.2f} seconds")
     
     # Build features and make predictions (conditional on apply_ml)
     feature_start_time = time.time()
-    prediction_start_time = time.time()
+    feature_building_duration = 0
+    prediction_duration = 0
     
     if apply_ml:
         feature_df = build_features(all_trades_df)
-        logger.info(f"Feature building took {time.time() - feature_start_time:.2f} seconds")
+        feature_building_duration = time.time() - feature_start_time
+        logger.info(f"Feature building took {feature_building_duration:.2f} seconds")
         
         prediction_start_time = time.time()
         feature_df = predict_features(feature_df)
-        logger.info(f"ML predictions took {time.time() - prediction_start_time:.2f} seconds")
+        prediction_duration = time.time() - prediction_start_time
+        logger.info(f"ML predictions took {prediction_duration:.2f} seconds")
 
         # Merge original trades with feature/prediction results
         merge_cols = ['col', 'entry_idx', 'type']
@@ -212,17 +217,9 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
         complete_trades_df['y_pred_catboost'] = None
         complete_trades_df['msr_rank_10'] = None
     
-    # # Fill missing prediction values with defaults for trades without features
-    # complete_trades_df['y_pred_xgb'] = complete_trades_df['y_pred_xgb'].fillna(0.5)
-    # complete_trades_df['y_pred_lgbm'] = complete_trades_df['y_pred_lgbm'].fillna(0.5)
-    # complete_trades_df['y_pred_catboost'] = complete_trades_df['y_pred_catboost'].fillna(0.5)
-    
-    # Fill missing feature columns (like msr_rank_10) with None
-    # for col in complete_trades_df.columns:
-    #     if col.startswith('msr_rank') or col in FEATURES_LIST:
-            # complete_trades_df[col] = complete_trades_df[col].fillna(None)
-    
     # Prepare response with proper copies
+    formatting_start_time = time.time()
+    
     open_trades_df = complete_trades_df[complete_trades_df['type'] == 'open_trades'].copy()
     closed_trades_df = complete_trades_df[complete_trades_df['type'] == 'closed_trades'].copy()
 
@@ -264,6 +261,9 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     
     closed_trades = closed_trades_df[available_closed_cols].to_dict('records')
 
+    formatting_duration = time.time() - formatting_start_time
+    logger.info(f"Trade formatting took {formatting_duration:.2f} seconds")
+
     total_time = time.time() - total_start_time
     logger.info(f"Total backtest execution took {total_time:.2f} seconds")
     
@@ -272,9 +272,10 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
         'closed_trades': closed_trades,
         'execution_time': {
             'total_seconds': round(total_time, 2),
-            'data_loading_seconds': round(time.time() - data_load_start, 2),
-            'strategy_seconds': round(time.time() - strategy_start_time, 2),
-            'feature_building_seconds': round(time.time() - feature_start_time, 2),
-            'prediction_seconds': round(time.time() - prediction_start_time, 2)
+            'data_loading_seconds': round(data_loading_duration, 2),
+            'strategy_seconds': round(strategy_duration, 2),
+            'feature_building_seconds': round(feature_building_duration, 2),
+            'prediction_seconds': round(prediction_duration, 2),
+            'formatting_seconds': round(formatting_duration, 2)
         }
     }

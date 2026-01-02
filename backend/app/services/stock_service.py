@@ -386,7 +386,7 @@ async def get_stock_timeseries(
                         short_name='matrix_series',
                         input_names=['close', 'high', 'low'],
                         param_names=['price_period', 'sup_res_period', 'sup_res_percentage', 'smoother'],
-                        output_names=['hh', 'll', 'support_line', 'resistance_line']
+                        output_names=['hh', 'll', 'support_line', 'resistance_line', 'up_line', 'down_line']
                     ).from_apply_func(matrix_series)
 
                     matrix_series_indicator = matrix_series_indicator.run(close_arr, high_arr, low_arr, price_period=price_period, sup_res_period=sup_res_period, sup_res_percentage=sup_res_percentage, smoother=smoother)
@@ -394,7 +394,9 @@ async def get_stock_timeseries(
                         "hh": convert_nans(matrix_series_indicator.hh.to_numpy().reshape(-1)),
                         "ll": convert_nans(matrix_series_indicator.ll.to_numpy().reshape(-1)),
                         "support_line": convert_nans(matrix_series_indicator.support_line.to_numpy().reshape(-1)),
-                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1))
+                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1)),
+                        "up_line": convert_nans(matrix_series_indicator.up_line.to_numpy().reshape(-1)),
+                        "down_line": convert_nans(matrix_series_indicator.down_line.to_numpy().reshape(-1))
                     }
             except Exception as e:
                 print(f"Error calculating {ind.name}: {e}")
@@ -461,7 +463,7 @@ async def get_stock_indicators(
                         short_name='matrix_series',
                         input_names=['close', 'high', 'low'],
                         param_names=['price_period', 'sup_res_period', 'sup_res_percentage', 'smoother'],
-                        output_names=['hh', 'll', 'support_line', 'resistance_line']
+                        output_names=['hh', 'll', 'support_line', 'resistance_line', 'up_line', 'down_line']
                     ).from_apply_func(matrix_series)
 
                     matrix_series_indicator = matrix_series_indicator.run(close_arr, high_arr, low_arr, price_period=price_period, sup_res_period=sup_res_period, sup_res_percentage=sup_res_percentage, smoother=smoother)
@@ -469,7 +471,9 @@ async def get_stock_indicators(
                         "hh": convert_nans(matrix_series_indicator.hh.to_numpy().reshape(-1)),
                         "ll": convert_nans(matrix_series_indicator.ll.to_numpy().reshape(-1)),
                         "support_line": convert_nans(matrix_series_indicator.support_line.to_numpy().reshape(-1)),
-                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1))
+                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1)),
+                        "up_line": convert_nans(matrix_series_indicator.up_line.to_numpy().reshape(-1)),
+                        "down_line": convert_nans(matrix_series_indicator.down_line.to_numpy().reshape(-1))
                     }
 
             except Exception as e:
