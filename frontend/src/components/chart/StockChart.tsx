@@ -95,6 +95,10 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     return `${day}/${month}/${year}`;
   };
 
+  const formatPrice = (price: number): string => {
+    return price.toFixed(2);
+  };
+
   // Initialize chart
   useEffect(() => {
     if (!chartContainerRef.current || chartRef.current) return; // Prevent re-initialization if chart exists
