@@ -1,0 +1,110 @@
+import { useEffect, useRef } from 'react';
+import { IChartApi, ISeriesApi, LineSeries } from 'lightweight-charts';
+import { formatIndicatorData } from '../../../lib/services/timeseries';
+
+type RsRatingPanelProps = {
+    chart: IChartApi;
+    data: any; // Indicators data
+    timestamps: string[];
+};
+
+export default function RsRatingPanel({ chart, data, timestamps }: RsRatingPanelProps) {
+    const rsRating20SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const rsRating20EmaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const rsRating50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const rsRating252SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
+
+    useEffect(() => {
+        if (!chart) return;
+
+        // Create RS Rating series in a separate pane (Panel 4)
+        const rsRating20Series = chart.addSeries(LineSeries, {
+            color: '#f97316',  // Orange
+            lineWidth: 2,
+            priceFormat: {
+                type: 'custom',
+                formatter: (price: number) => price.toFixed(0),
+            },
+            title: 'RS Rating 20',
+            priceScaleId: 'right',
+        }, 4);
+        rsRating20Series.moveToPane(4);
+        rsRating20SeriesRef.current = rsRating20Series;
+
+        // Create RS Rating EMA series in the same pane
+        const rsRating20EmaSeries = chart.addSeries(LineSeries, {
+            color: '#8b5cf6',  // Violet
+            lineWidth: 2,
+            priceFormat: {
+                type: 'custom',
+                formatter: (price: number) => price.toFixed(0),
+            },
+            title: 'RS Rating 20 EMA',
+            priceScaleId: 'right',
+        }, 4);
+        rsRating20EmaSeries.moveToPane(4);
+        rsRating20EmaSeriesRef.current = rsRating20EmaSeries;
+
+        // Create RS Rating 50 series in the same pane
+        const rsRating50Series = chart.addSeries(LineSeries, {
+            color: '#14b8a6',  // Teal
+            lineWidth: 2,
+            priceFormat: {
+                type: 'custom',
+                formatter: (price: number) => price.toFixed(0),
+            },
+            title: 'RS Rating 50',
+            priceScaleId: 'right',
+        }, 4);
+        rsRating50Series.moveToPane(4);
+        rsRating50SeriesRef.current = rsRating50Series;
+
+        // Create RS Rating 252 series in the same pane
+        const rsRating252Series = chart.addSeries(LineSeries, {
+            color: '#22c55e',  // Green
+            lineWidth: 2,
+            priceFormat: {
+                type: 'custom',
+                formatter: (price: number) => price.toFixed(0),
+            },
+            title: 'RS Rating 252',
+            priceScaleId: 'right',
+        }, 4);
+        rsRating252Series.moveToPane(4);
+        rsRating252SeriesRef.current = rsRating252Series;
+
+        return () => {
+            if (chart) {
+                try {
+                    chart.removeSeries(rsRating20Series);
+                    chart.removeSeries(rsRating20EmaSeries);
+                    chart.removeSeries(rsRating50Series);
+                    chart.removeSeries(rsRating252Series);
+                } catch (e) {
+                    console.warn('Error removing series:', e);
+                }
+            }
+            rsRating20SeriesRef.current = null;
+            rsRating20EmaSeriesRef.current = null;
+            rsRating50SeriesRef.current = null;
+            rsRating252SeriesRef.current = null;
+        };
+    }, [chart]);
+
+    // Update data
+    useEffect(() => {
+        if (!data || !timestamps) return;
+
+        const rsRating20Data = formatIndicatorData(timestamps, data.rs_rating_20 ?? []);
+        const rsRating20EmaData = formatIndicatorData(timestamps, data.rs_rating_20_ema ?? []);
+        const rsRating50Data = formatIndicatorData(timestamps, data.rs_rating_50 ?? []);
+        const rsRating252Data = formatIndicatorData(timestamps, data.rs_rating_252 ?? []);
+
+        rsRating20SeriesRef.current?.setData(rsRating20Data);
+        rsRating20EmaSeriesRef.current?.setData(rsRating20EmaData);
+        rsRating50SeriesRef.current?.setData(rsRating50Data);
+        rsRating252SeriesRef.current?.setData(rsRating252Data);
+    }, [data, timestamps]);
+
+    return null;
+}

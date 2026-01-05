@@ -34,4 +34,4 @@ def matrix_series(close: np.ndarray, high: np.ndarray, low: np.ndarray, price_pe
     Hh = UP_line.where(UP_line < DOWN_line, DOWN_line)      # High = min(up, down)
     Ll = DOWN_line.where(UP_line < DOWN_line, UP_line)      # Low = max(up, down)  
     
-    return Hh, Ll, SupportLine, ResistanceLine
+    return Hh, Ll, SupportLine, ResistanceLine, UP_line, DOWN_line

@@ -90,8 +90,10 @@ def _load_delta_stocks(
         watchlist_path = os.path.join("models", "watchlist.csv")
         if os.path.exists(watchlist_path):
             with open(watchlist_path, 'r') as f:
-                symbols = [line.strip() for line in f if line.strip()]
-            logger.info(f"Loaded {len(symbols)} symbols from watchlist")
+                # Exclude index symbols (VNINDEX, VN30) from stock list
+                exclude_symbols = {"VNINDEX", "VN30"}
+                symbols = [line.strip() for line in f if line.strip() and line.strip() not in exclude_symbols]
+            logger.info(f"Loaded {len(symbols)} symbols from watchlist (excluding indices)")
         else:
             logger.warning(f"Watchlist not found at {watchlist_path}, using all available symbols")
             symbols = None
@@ -386,7 +388,7 @@ async def get_stock_timeseries(
                         short_name='matrix_series',
                         input_names=['close', 'high', 'low'],
                         param_names=['price_period', 'sup_res_period', 'sup_res_percentage', 'smoother'],
-                        output_names=['hh', 'll', 'support_line', 'resistance_line']
+                        output_names=['hh', 'll', 'support_line', 'resistance_line', 'up_line', 'down_line']
                     ).from_apply_func(matrix_series)
 
                     matrix_series_indicator = matrix_series_indicator.run(close_arr, high_arr, low_arr, price_period=price_period, sup_res_period=sup_res_period, sup_res_percentage=sup_res_percentage, smoother=smoother)
@@ -394,7 +396,9 @@ async def get_stock_timeseries(
                         "hh": convert_nans(matrix_series_indicator.hh.to_numpy().reshape(-1)),
                         "ll": convert_nans(matrix_series_indicator.ll.to_numpy().reshape(-1)),
                         "support_line": convert_nans(matrix_series_indicator.support_line.to_numpy().reshape(-1)),
-                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1))
+                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1)),
+                        "up_line": convert_nans(matrix_series_indicator.up_line.to_numpy().reshape(-1)),
+                        "down_line": convert_nans(matrix_series_indicator.down_line.to_numpy().reshape(-1))
                     }
             except Exception as e:
                 print(f"Error calculating {ind.name}: {e}")
@@ -461,7 +465,7 @@ async def get_stock_indicators(
                         short_name='matrix_series',
                         input_names=['close', 'high', 'low'],
                         param_names=['price_period', 'sup_res_period', 'sup_res_percentage', 'smoother'],
-                        output_names=['hh', 'll', 'support_line', 'resistance_line']
+                        output_names=['hh', 'll', 'support_line', 'resistance_line', 'up_line', 'down_line']
                     ).from_apply_func(matrix_series)
 
                     matrix_series_indicator = matrix_series_indicator.run(close_arr, high_arr, low_arr, price_period=price_period, sup_res_period=sup_res_period, sup_res_percentage=sup_res_percentage, smoother=smoother)
@@ -469,7 +473,9 @@ async def get_stock_indicators(
                         "hh": convert_nans(matrix_series_indicator.hh.to_numpy().reshape(-1)),
                         "ll": convert_nans(matrix_series_indicator.ll.to_numpy().reshape(-1)),
                         "support_line": convert_nans(matrix_series_indicator.support_line.to_numpy().reshape(-1)),
-                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1))
+                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1)),
+                        "up_line": convert_nans(matrix_series_indicator.up_line.to_numpy().reshape(-1)),
+                        "down_line": convert_nans(matrix_series_indicator.down_line.to_numpy().reshape(-1))
                     }
 
             except Exception as e:
@@ -665,3 +671,92 @@ async def get_sector_timeseries(
     
     # For other levels, use original delta table approach
     return _get_sector_timeseries_from_delta_table(sector_level)
+
+
+async def get_market_indicators(
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None
+) -> dict:
+    """
+    Calculate market breadth indicators:
+    - A/D Line (Advance-Decline Line): Cumulative sum of (advances - declines)
+    - McClellan Oscillator: 19-day EMA - 39-day EMA of daily advance-decline values
+    - McClellan Summation Index: Cumulative sum of McClellan Oscillator
+    """
+    # Load data from Delta Lake
+    start = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+    end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
+
+    df = _load_delta_stocks(
+        symbols=None,
+        start=start,
+        end=end,
+        columns=["date", "close", "symbol"]
+    )
+
+    if df.empty:
+        return {
+            "timestamps": [],
+            "ad_line": [],
+            "mcclellan_oscillator": [],
+            "mcclellan_summation": [],
+            "advances": [],
+            "declines": [],
+            "unchanged": [],
+        }
+
+    # Sort by symbol and date for proper calculation
+    df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
+
+    # Calculate daily change for each stock
+    df["prev_close"] = df.groupby("symbol")["close"].shift(1)
+    df["change"] = df["close"] - df["prev_close"]
+
+    # Classify each stock-day as advancing, declining, or unchanged
+    df["advancing"] = (df["change"] > 0).astype(int)
+    df["declining"] = (df["change"] < 0).astype(int)
+    df["unchanged"] = (df["change"] == 0).astype(int)
+
+    # Group by date and count advances/declines
+    daily_breadth = df.groupby("date").agg({
+        "advancing": "sum",
+        "declining": "sum",
+        "unchanged": "sum",
+    }).reset_index()
+
+    daily_breadth = daily_breadth.sort_values("date").reset_index(drop=True)
+
+    # Calculate Advance-Decline values
+    daily_breadth["ad_value"] = daily_breadth["advancing"] - daily_breadth["declining"]
+
+    # A/D Line: Cumulative sum of daily advance-decline values
+    daily_breadth["ad_line"] = daily_breadth["ad_value"].cumsum()
+
+    # McClellan Oscillator: 19-day EMA - 39-day EMA of AD values
+    # Using the Ratio-Adjusted formula: (Advances - Declines) / (Advances + Declines) * 1000
+    daily_breadth["ad_ratio"] = (
+        (daily_breadth["advancing"] - daily_breadth["declining"]) /
+        (daily_breadth["advancing"] + daily_breadth["declining"]).replace(0, 1)
+    ) * 1000
+
+    # Calculate EMAs for McClellan Oscillator
+    ema_19 = daily_breadth["ad_ratio"].ewm(span=19, adjust=False).mean()
+    ema_39 = daily_breadth["ad_ratio"].ewm(span=39, adjust=False).mean()
+    daily_breadth["mcclellan_oscillator"] = ema_19 - ema_39
+
+    # McClellan Summation Index: Cumulative sum of McClellan Oscillator
+    daily_breadth["mcclellan_summation"] = daily_breadth["mcclellan_oscillator"].cumsum()
+
+    # Convert to response format
+    timestamps = daily_breadth["date"].dt.strftime("%Y-%m-%d").tolist()
+
+    return {
+        "timestamps": timestamps,
+        "ad_line": convert_nans(daily_breadth["ad_line"].values),
+        "mcclellan_oscillator": convert_nans(daily_breadth["mcclellan_oscillator"].values),
+        "mcclellan_summation": convert_nans(daily_breadth["mcclellan_summation"].values),
+        "advances": daily_breadth["advancing"].values,
+        "declines": daily_breadth["declining"].values,
+        "unchanged": daily_breadth["unchanged"].values,
+    }
+

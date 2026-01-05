@@ -85,22 +85,28 @@ async def crawl_reports_via_browser() -> pd.DataFrame:
                     await page.click(tab["selector"])
                 
                 response = await response_info.value
-                body = await response.json()
-                enc = body.get('enc')
+                
+                try:
+                    body = await response.json()
+                    enc = body.get('enc')
 
-                if enc:
-                    decrypted_data = decrypt(enc)
-                    data = json.loads(decrypted_data)
-                    
-                    reports = data.get('result', [])
-                    if reports:
-                        tab_df = pd.DataFrame(reports)
-                        tab_df['tab_source'] = tab['name']
-                        result_df = pd.concat([result_df, tab_df], ignore_index=True)
-                    
-                    print(f"Tab '{tab['name']}' response: {len(reports)} items")
-                else:
-                    print(f"Tab '{tab['name']}': No encrypted data found")
+                    if enc:
+                        decrypted_data = decrypt(enc)
+                        data = json.loads(decrypted_data)
+                        
+                        reports = data.get('result', [])
+                        if reports:
+                            tab_df = pd.DataFrame(reports)
+                            tab_df['tab_source'] = tab['name']
+                            result_df = pd.concat([result_df, tab_df], ignore_index=True)
+                        
+                        print(f"Tab '{tab['name']}' response: {len(reports)} items")
+                    else:
+                        print(f"Tab '{tab['name']}': No encrypted data found")
+                except json.JSONDecodeError as e:
+                    print(f"Tab '{tab['name']}': Failed to parse JSON response: {e}")
+                except Exception as e:
+                    print(f"Tab '{tab['name']}': Error processing response: {e}")
                 
                 # Small delay between tabs
                 await asyncio.sleep(1)

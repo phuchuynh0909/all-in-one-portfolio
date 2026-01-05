@@ -33,6 +33,8 @@ export interface TimeseriesResponse {
       ll: (number | null)[];
       support_line: (number | null)[];
       resistance_line: (number | null)[];
+      up_line: (number | null)[];
+      down_line: (number | null)[];
     };
   };
 }
@@ -287,6 +289,38 @@ export interface SectorTimeseries {
 
 export const fetchSectorTimeseries = async (level: number, params: TimeseriesRequest): Promise<SectorTimeseries> => {
   const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/sector/${level}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+};
+
+// Market Breadth Types
+export interface MarketBreadthResponse {
+  timestamps: string[];
+  ad_line: (number | null)[];
+  mcclellan_oscillator: (number | null)[];
+  mcclellan_summation: (number | null)[];
+  advances: number[];
+  declines: number[];
+  unchanged: number[];
+}
+
+export interface MarketBreadthRequest {
+  start_date?: string;
+  end_date?: string;
+}
+
+export const fetchMarketBreadth = async (params: MarketBreadthRequest = {}): Promise<MarketBreadthResponse> => {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/market/breadth`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
