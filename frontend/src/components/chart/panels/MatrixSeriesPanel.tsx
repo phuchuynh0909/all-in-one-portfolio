@@ -103,6 +103,11 @@ export default function MatrixSeriesPanel({ chart, data, timestamps }: MatrixSer
 
     // Update data
     useEffect(() => {
+        // Clear existing markers first
+        if (matrixSeriesMarkersRef.current) {
+            matrixSeriesMarkersRef.current = matrixSeriesMarkersRef.current.setMarkers([]);
+        }
+
         if (!data || !timestamps || !data.matrix_series) return;
 
         const msHh = data.matrix_series.hh ?? [];
