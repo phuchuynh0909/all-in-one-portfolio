@@ -74,3 +74,20 @@ class IndicatorsRequest(BaseModel):
     indicators: List[IndicatorParams] = Field(..., min_length=1, description="List of indicators to calculate")
     start_date: Optional[str] = None
     end_date: Optional[str] = None
+
+
+class MarketBreadthResponse(BaseModel):
+    """Response schema for market breadth indicators (A/D Line, McClellan)."""
+    timestamps: List[str]
+    ad_line: List[Optional[float]] = Field(description="Advance-Decline Line (cumulative)")
+    mcclellan_oscillator: List[Optional[float]] = Field(description="McClellan Oscillator (19 EMA - 39 EMA)")
+    mcclellan_summation: List[Optional[float]] = Field(description="McClellan Summation Index")
+    advances: List[int] = Field(description="Daily advancing stocks count")
+    declines: List[int] = Field(description="Daily declining stocks count")
+    unchanged: List[int] = Field(description="Daily unchanged stocks count")
+
+
+class MarketBreadthRequest(BaseModel):
+    """Request schema for market breadth indicators."""
+    start_date: Optional[str] = Field(None, description="Start date (YYYY-MM-DD)")
+    end_date: Optional[str] = Field(None, description="End date (YYYY-MM-DD)")

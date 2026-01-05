@@ -1,9 +1,16 @@
 from fastapi import APIRouter, Depends
 from fastapi_cache.decorator import cache
 from sqlalchemy.orm import Session
-from app.schemas.timeseries import TimeseriesResponse, TimeseriesRequest, IndicatorsOnlyResponse, IndicatorsRequest
+from app.schemas.timeseries import (
+    TimeseriesResponse, 
+    TimeseriesRequest, 
+    IndicatorsOnlyResponse, 
+    IndicatorsRequest,
+    MarketBreadthResponse,
+    MarketBreadthRequest,
+)
 from app.schemas.sector import SectorTimeseries
-from app.services.stock_service import get_stock_timeseries, get_sector_timeseries, get_stock_indicators
+from app.services.stock_service import get_stock_timeseries, get_sector_timeseries, get_stock_indicators, get_market_indicators
 from app.db.base import get_db
 
 router = APIRouter(prefix="/timeseries", tags=["timeseries"])
@@ -54,4 +61,22 @@ async def sector_timeseries(
     return await get_sector_timeseries(
         sector_level=sector_level,
         db=db
+    )
+
+
+@router.post("/market/breadth", response_model=MarketBreadthResponse)
+@cache(expire=300)  # Cache for 5 minutes
+async def market_breadth(
+    request: MarketBreadthRequest
+) -> MarketBreadthResponse:
+    """
+    Get market breadth indicators:
+    - A/D Line (Advance-Decline Line): Cumulative breadth
+    - McClellan Oscillator: Short-term breadth momentum (19 EMA - 39 EMA)
+    - McClellan Summation Index: Long-term breadth momentum
+    - Daily advances/declines/unchanged counts
+    """
+    return await get_market_indicators(
+        start_date=request.start_date,
+        end_date=request.end_date
     )
