@@ -153,6 +153,11 @@ export default function PricePanel({
 
     // Update data
     useEffect(() => {
+        // Clear existing markers first
+        if (markersRef.current) {
+            markersRef.current = markersRef.current.setMarkers([]);
+        }
+
         if (!data || !indicators) return;
 
         const timestamps = data.timestamps || [];

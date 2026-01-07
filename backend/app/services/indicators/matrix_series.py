@@ -23,10 +23,12 @@ def matrix_series(close: np.ndarray, high: np.ndarray, low: np.ndarray, price_pe
     # rk3 = vbt.MA.run(ys1, window=smoother, ewm=True).ma
     rk3 = vbt.IndicatorFactory.from_talib('EMA').run(ys1, timeperiod=smoother).real.to_numpy()
     rk4 = vbt.IndicatorFactory.from_talib('STDDEV').run(ys1, timeperiod=smoother, nbdev=1).real.to_numpy()
+    rk4 = np.where(rk4 == 0, 1, rk4)
     rk5 = (ys1 - rk3) * 200.0 / rk4
 
     # rk6 = vbt.MA.run(rk5, window=smoother, ewm=True).ma
     rk6 = vbt.IndicatorFactory.from_talib('EMA').run(rk5, timeperiod=smoother).real
+
     UP_line = vbt.IndicatorFactory.from_talib('EMA').run(rk6, timeperiod=smoother).real
     DOWN_line = vbt.IndicatorFactory.from_talib('EMA').run(UP_line, timeperiod=smoother).real
 
