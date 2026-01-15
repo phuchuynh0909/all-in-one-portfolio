@@ -177,12 +177,48 @@ class MQTTConfig:
 
 
 @dataclass
+class TelegramConfig:
+    """Telegram bot configuration for notifications."""
+    bot_token: str
+    chat_id: str
+    enabled: bool
+
+    @classmethod
+    def from_env(cls) -> "TelegramConfig":
+        """Load Telegram configuration from environment variables."""
+        return cls(
+            bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
+            chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
+            enabled=os.getenv("TELEGRAM_ENABLED", "0") in ("1", "true", "True"),
+        )
+
+
+@dataclass
+class PriceAlertConfig:
+    """Price alert worker configuration."""
+    db_path: str
+    check_interval_seconds: float
+    rate_limit_seconds: int
+
+    @classmethod
+    def from_env(cls) -> "PriceAlertConfig":
+        """Load price alert configuration from environment variables."""
+        return cls(
+            db_path=os.getenv("PRICE_ALERT_DB_PATH", "../backend/portfolio.db"),
+            check_interval_seconds=float(os.getenv("PRICE_ALERT_CHECK_INTERVAL", "1.0")),
+            rate_limit_seconds=int(os.getenv("PRICE_ALERT_RATE_LIMIT", "60")),
+        )
+
+
+@dataclass
 class Config:
     """Main configuration container."""
     isp: ISPConfig
     clickhouse: ClickHouseConfig
     mock: MockConfig
     mqtt: MQTTConfig
+    telegram: TelegramConfig
+    price_alert: PriceAlertConfig
 
     @classmethod
     def load(cls) -> "Config":
@@ -192,6 +228,8 @@ class Config:
             clickhouse=ClickHouseConfig.from_env(),
             mock=MockConfig.from_env(),
             mqtt=MQTTConfig.from_env(),
+            telegram=TelegramConfig.from_env(),
+            price_alert=PriceAlertConfig.from_env(),
         )
 
 

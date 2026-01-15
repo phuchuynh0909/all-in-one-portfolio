@@ -47,8 +47,9 @@ services:
   
   worker:
     build: ./worker
-    command: ["python", "-m", "bytewax.run", "isp"]
+    command: ["python", "-m", "bytewax.run", "price_alerts"]
     volumes:
+      - ./backend/portfolio.db:/app/portfolio.db
       - ./worker:/app
       - worker_state:/app/state_dir
     env_file:

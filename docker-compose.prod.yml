@@ -45,8 +45,9 @@ services:
     build:
       context: ./worker
       dockerfile: Dockerfile
-    command: ["python", "-m", "bytewax.run", "isp"]
+    command: ["python", "-m", "bytewax.run", "price_alerts"]
     volumes:
+      - ./backend/portfolio.db:/app/portfolio.db
       - worker_state:/app/state_dir
     env_file:
       - prod.env
