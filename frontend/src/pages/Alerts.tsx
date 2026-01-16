@@ -195,18 +195,22 @@ export default function Alerts() {
     }
   };
 
-  const formatPrice = (price: number | null | undefined) => {
+  const formatPrice = (price: number | string | null | undefined) => {
     if (price === null || price === undefined) return '—';
+    const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+    if (isNaN(numPrice)) return '—';
     return new Intl.NumberFormat('en-US', {
       minimumFractionDigits: 2,
       maximumFractionDigits: 2,
-    }).format(price);
+    }).format(numPrice);
   };
 
-  const formatPercentage = (pct: number | null | undefined) => {
+  const formatPercentage = (pct: number | string | null | undefined) => {
     if (pct === null || pct === undefined) return '—';
-    const sign = pct >= 0 ? '+' : '';
-    return `${sign}${pct.toFixed(2)}%`;
+    const numPct = typeof pct === 'string' ? parseFloat(pct) : pct;
+    if (isNaN(numPct)) return '—';
+    const sign = numPct >= 0 ? '+' : '';
+    return `${sign}${numPct.toFixed(2)}%`;
   };
 
   const getStatusChip = (alert: PriceAlertWithPrice) => {
@@ -219,12 +223,14 @@ export default function Alerts() {
     return <Chip label="Active" color="success" size="small" icon={<NotificationsActiveIcon />} />;
   };
 
-  const getPriceDiffColor = (diff: number | null | undefined, condition: AlertCondition) => {
+  const getPriceDiffColor = (diff: number | string | null | undefined, condition: AlertCondition) => {
     if (diff === null || diff === undefined) return 'text.secondary';
+    const numDiff = typeof diff === 'string' ? parseFloat(diff) : diff;
+    if (isNaN(numDiff)) return 'text.secondary';
     
     // For "greater than" conditions, positive diff means we're above target (good)
     // For "less than" conditions, negative diff means we're below target (good)
-    const isAboveTarget = diff > 0;
+    const isAboveTarget = numDiff > 0;
     
     if (condition === 'gt' || condition === 'gte') {
       return isAboveTarget ? 'success.main' : 'error.main';
@@ -232,7 +238,7 @@ export default function Alerts() {
       return isAboveTarget ? 'error.main' : 'success.main';
     }
     
-    return Math.abs(diff) < 0.01 ? 'success.main' : 'warning.main';
+    return Math.abs(numDiff) < 0.01 ? 'success.main' : 'warning.main';
   };
 
   const filteredAlerts = alerts.filter((alert) => {
@@ -381,8 +387,8 @@ export default function Alerts() {
                   </TableCell>
                   <TableCell align="right">
                     <Stack direction="row" alignItems="center" justifyContent="flex-end" spacing={0.5}>
-                      {alert.price_diff !== null && (
-                        alert.price_diff >= 0 ? (
+                      {alert.price_diff !== null && alert.price_diff !== undefined && (
+                        Number(alert.price_diff) >= 0 ? (
                           <TrendingUpIcon fontSize="small" sx={{ color: 'success.main' }} />
                         ) : (
                           <TrendingDownIcon fontSize="small" sx={{ color: 'error.main' }} />
