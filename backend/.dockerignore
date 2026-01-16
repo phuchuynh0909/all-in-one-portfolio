@@ -1,0 +1,53 @@
+# Git
+.git
+.gitignore
+
+# Python
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv
+venv
+ENV
+*.egg-info
+.eggs
+dist
+build
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+
+# Testing
+.pytest_cache
+.coverage
+htmlcov
+.tox
+
+# Local files
+*.db
+*.sqlite3
+*.log
+.env
+.env.*
+
+# Notebooks and scripts (not needed in production)
+scripts/
+notebooks/
+*.ipynb
+
+# Assets that should be mounted
+assets/
+models/
+
+# Documentation
+*.md
+docs/
+
+# Tests (optional - uncomment if you don't run tests in container)
+# tests/
+

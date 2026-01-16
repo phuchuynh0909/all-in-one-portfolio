@@ -1,56 +1,39 @@
+# Git
+.git
+.gitignore
+
 # Python
-__pycache__/
+__pycache__
 *.py[cod]
 *$py.class
 *.so
 .Python
-*.egg-info/
-dist/
-build/
-
-# Virtual environments
-venv/
-env/
-ENV/
+.venv
+venv
+ENV
+*.egg-info
 
 # IDE
-.vscode/
-.idea/
+.idea
+.vscode
 *.swp
 *.swo
-*~
 
 # Testing
-.pytest_cache/
+.pytest_cache
 .coverage
-htmlcov/
+test_*.py
 
-# Documentation
-*.md
-!requirements.txt
-
-# Git
-.git/
-.gitignore
-
-# Environment files
+# Local files
+*.log
 .env
 .env.*
-*.env
 
-# Bytewax state
+# State files (should be mounted as volume)
 state_dir/
 
 # Backup files
 backup/
-*.bak
 
-# Mac
-.DS_Store
-
-# Logs
-*.log
-
-# Test data
-mock_ticks.ndjson
-
+# Documentation
+*.md
