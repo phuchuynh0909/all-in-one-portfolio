@@ -160,15 +160,17 @@ def _model_to_schema(db_alert: PriceAlertModel) -> PriceAlert:
     )
 
 
-def enrich_alert_with_price(alert: PriceAlert, current_price: Optional[Decimal]) -> PriceAlertWithPrice:
+def enrich_alert_with_price(alert: PriceAlert, current_price: Optional[float]) -> PriceAlertWithPrice:
     """Enrich a price alert with current price information."""
     price_diff = None
     price_diff_pct = None
     
     if current_price is not None and alert.target_price:
-        price_diff = current_price - alert.target_price
-        if alert.target_price != 0:
-            price_diff_pct = (price_diff / alert.target_price) * 100
+        # Convert Decimal to float for arithmetic
+        target_price_float = float(alert.target_price)
+        price_diff = current_price - target_price_float
+        if target_price_float != 0:
+            price_diff_pct = (price_diff / target_price_float) * 100
     
     return PriceAlertWithPrice(
         **alert.model_dump(),
