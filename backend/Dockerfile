@@ -10,14 +10,22 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 # Install build dependencies
 # - build-essential: C compiler for packages without wheels
-# - libta-lib: Required for ta-lib Python package (no prebuilt wheels)
 # - libhdf5-dev: Required for PyTables/tables package
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     wget \
-    libta-lib0-dev \
     libhdf5-dev \
  && rm -rf /var/lib/apt/lists/*
+
+# Build TA-Lib 0.6.4 from source (newer version from GitHub)
+RUN wget -q https://github.com/TA-Lib/ta-lib/releases/download/v0.6.4/ta-lib-0.6.4-src.tar.gz \
+ && tar -xzf ta-lib-0.6.4-src.tar.gz \
+ && cd ta-lib-0.6.4 \
+ && ./configure --prefix=/usr \
+ && make -j$(nproc) \
+ && make install \
+ && cd .. \
+ && rm -rf ta-lib-0.6.4 ta-lib-0.6.4-src.tar.gz
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -42,16 +50,18 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
+# Copy TA-Lib shared libraries from builder (compiled from source)
+COPY --from=builder /usr/lib/libta_lib* /usr/lib/
+
 # Install only runtime dependencies
-# - libta-lib0: TA-Lib shared library (runtime)
 # - libhdf5-103-1: HDF5 runtime for PyTables
 # - libgomp1: OpenMP runtime (used by sklearn, xgboost, etc.)
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libta-lib0 \
     libhdf5-103-1 \
     libgomp1 \
  && rm -rf /var/lib/apt/lists/* \
- && apt-get clean
+ && apt-get clean \
+ && ldconfig
 
 # Create non-root user for security
 RUN groupadd --gid 1000 appuser && \
