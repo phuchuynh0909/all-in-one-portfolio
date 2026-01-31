@@ -78,6 +78,7 @@ COPY --from=builder /opt/venv /opt/venv
 COPY --chown=appuser:appuser app ./app
 COPY --chown=appuser:appuser alembic ./alembic
 COPY --chown=appuser:appuser alembic.ini ./
+COPY --chown=appuser:appuser libs/backtesting.py/ ./libs/backtesting.py/
 
 # Create directory for database with correct permissions
 RUN mkdir -p /app/data && chown appuser:appuser /app/data
