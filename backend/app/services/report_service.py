@@ -1,4 +1,5 @@
 from typing import List, Optional
+import pandas as pd
 from app.schemas.report import Report, ReportDetail
 from app.stores.raw_wichart_report import WichartReportStore
 
@@ -18,15 +19,18 @@ async def get_reports(symbol: str | None = None) -> List[Report]:
     ## remove duplicates
     df = df.drop_duplicates(subset=['id'])
 
+    def _none_if_nan(value):
+        return None if pd.isna(value) else value
+
     for _, row in df.iterrows():
         report = Report(
             id=row['id'],
-            mack=row['mack'],
-            tenbaocao=row['tenbaocao'],
-            url=row['url'],
-            nguon=row['nguon'],
-            ngaykn=row['ngaykn'],
-            rsnganh=row['rsnganh'],
+            mack=_none_if_nan(row.get('mack')),
+            tenbaocao=_none_if_nan(row.get('tenbaocao')) or "",
+            url=_none_if_nan(row.get('url')) or "",
+            nguon=_none_if_nan(row.get('nguon')) or "",
+            ngaykn=_none_if_nan(row.get('ngaykn')),
+            rsnganh=_none_if_nan(row.get('rsnganh')),
         )
         reports.append(report)
     
