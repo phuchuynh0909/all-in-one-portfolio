@@ -4,9 +4,10 @@ from app.schemas.backtest import (
     BacktestResponse, 
     H5BacktestResultsResponse, 
     H5Trade, 
-    H5Stats
+    H5Stats,
+    BacktestPlotResponse
 )
-from app.services.backtest_service import run_backtest
+from app.services.backtest_service import run_backtest, run_backtest_plot
 from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from loguru import logger
@@ -209,3 +210,19 @@ async def backtest_strategy(request: BacktestRequest) -> BacktestResponse:
     )
     
     return BacktestResponse(**result)
+
+
+@router.get("/plot", response_model=BacktestPlotResponse)
+async def get_backtest_plot(
+    symbol: str = Query("VCG", description="Symbol to backtest"),
+    start_date: str = Query("2016-01-01", description="Start date (YYYY-MM-DD)"),
+    strategy: str = Query("SMA Cross", description="Strategy name"),
+) -> BacktestPlotResponse:
+    try:
+        result = await run_backtest_plot(symbol=symbol, start_date=start_date, strategy_name=strategy)
+        return BacktestPlotResponse(**result)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except Exception as exc:
+        logger.error(f"Error generating backtest plot: {exc}")
+        raise HTTPException(status_code=500, detail=str(exc)) from exc

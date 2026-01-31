@@ -37,6 +37,14 @@ class BacktestResponse(BaseModel):
     execution_time: ExecutionTime
 
 
+class BacktestPlotResponse(BaseModel):
+    symbol: str
+    start_date: str
+    strategy: str
+    html: str
+    stats: Optional[Dict[str, Any]] = None
+
+
 # ============================================================================
 # H5 Backtest Results Schemas (for pre-computed backtest from notebook)
 # ============================================================================

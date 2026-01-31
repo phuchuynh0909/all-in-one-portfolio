@@ -127,6 +127,14 @@ export interface H5BacktestResultsResponse {
   total_trades: number;
 }
 
+export interface BacktestPlotResponse {
+  symbol: string;
+  start_date: string;
+  strategy: string;
+  html: string;
+  stats?: Record<string, unknown> | null;
+}
+
 // Fetch available symbols from watchlist
 export const fetchWatchlistSymbols = async (): Promise<string[]> => {
   const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/backtest/watchlist`);
@@ -169,6 +177,38 @@ export const useH5BacktestResults = (symbol?: string) => {
   return useQuery({
     queryKey: ['h5-backtest-results', symbol],
     queryFn: () => fetchH5BacktestResults(symbol),
+    staleTime: 5 * 60 * 1000,
+    gcTime: 30 * 60 * 1000,
+  });
+};
+
+export const fetchBacktestPlot = async (
+  symbol: string,
+  startDate?: string,
+  strategy?: string,
+): Promise<BacktestPlotResponse> => {
+  const url = new URL(`${import.meta.env.VITE_API_BASE_URL}/backtest/plot`);
+  url.searchParams.set('symbol', symbol);
+  if (startDate) {
+    url.searchParams.set('start_date', startDate);
+  }
+  if (strategy) {
+    url.searchParams.set('strategy', strategy);
+  }
+
+  const response = await fetch(url.toString());
+
+  if (!response.ok) {
+    throw new Error(`Error ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+};
+
+export const useBacktestPlot = (symbol: string, startDate?: string, strategy?: string) => {
+  return useQuery({
+    queryKey: ['backtest-plot', symbol, startDate, strategy],
+    queryFn: () => fetchBacktestPlot(symbol, startDate, strategy),
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
   });

@@ -2,12 +2,22 @@ import pandas as pd
 import numpy as np
 import json
 import time
+import tempfile
+from pathlib import Path
+import pandas as pd
+import talib
+from ta.volatility import KeltnerChannel
 from sklearn.preprocessing import StandardScaler
 from typing import List, Dict, Tuple
 from datetime import datetime
 from loguru import logger
 from app.services.stock_service import _load_delta_stocks, _load_feature_store
 from app.core.settings import settings
+from app.services.indicators import avwap, trailing_sl
+from backtesting import Backtest, Strategy
+from backtesting.lib import crossover
+from backtesting.test import SMA
+from app.services.backtest_strategies import BreakoutDeMarkerStrategyBT, BreakoutTTMStrategyBT
 
 # List of features used for ML predictions
 FEATURES_LIST = [
@@ -40,9 +50,11 @@ def get_strategy_params(strategy_name: str) -> Tuple[List[tuple], type, List[str
         strategy_params = [
             (14, 1.4, 40, 1.2, 12, 12, 12, 'v2'),
             (16, 1.0, 40, 1.2, 14, 12, 12, 'v1'),
+            (10, 1.2, 13, 1.0, 10, 12, 10, 'v3', 10, 10, 3, 20, 7),
         ]
         param_names = ['bb_window', 'bb_multiplier', 'kc_window', 'kc_multiplier', 
-                    'atr_window', 'momentum_window', 'donichan_window', 'entry_version']
+                    'atr_window', 'momentum_window', 'donichan_window', 'entry_version',
+                    'kc_atr_period', 'osc_smoothing_period', 'matype', 'william_vix_period', 'consecutive_neg_threshold']
         return strategy_params, BreakoutTTMVersion2, param_names
     elif strategy_name == "Dual RSI":
         from app.services.strategies.dual_rsi import DualRSI
@@ -225,7 +237,24 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
 
     # Format open trades
     # Parse JSON metadata before converting to records
-    open_trades_df.loc[:, 'metadata'] = open_trades_df['metadata'].apply(lambda x: json.loads(x) if x else {})
+    def _parse_metadata(value):
+        if value is None or (isinstance(value, float) and np.isnan(value)):
+            return {}
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            value = value.strip()
+            if not value:
+                return {}
+            try:
+                return json.loads(value)
+            except json.JSONDecodeError:
+                return {}
+        return {}
+
+    if 'metadata' in open_trades_df.columns:
+        open_trades_df['metadata'] = open_trades_df['metadata'].astype('object')
+        open_trades_df.loc[:, 'metadata'] = open_trades_df['metadata'].apply(_parse_metadata)
 
     # Handle NaN and infinity values before JSON serialization
     numeric_cols = ['entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'msr_rank_10']
@@ -242,7 +271,9 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     open_trades = open_trades_df[available_open_cols].to_dict('records')
 
     # Format closed trades
-    closed_trades_df.loc[:, 'metadata'] = closed_trades_df['metadata'].apply(lambda x: json.loads(x) if x else {})
+    if 'metadata' in closed_trades_df.columns:
+        closed_trades_df['metadata'] = closed_trades_df['metadata'].astype('object')
+        closed_trades_df.loc[:, 'metadata'] = closed_trades_df['metadata'].apply(_parse_metadata)
     closed_trades_df.loc[:, 'trading_days'] = closed_trades_df['exit_idx'] - closed_trades_df['entry_idx']
     closed_trades_df.loc[:, 'close_date'] = closed_trades_df.apply(lambda x: stocks.index[x['exit_idx']], axis=1)
     
@@ -278,4 +309,103 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
             'prediction_seconds': round(prediction_duration, 2),
             'formatting_seconds': round(formatting_duration, 2)
         }
+    }
+
+
+def _get_plot_strategy(strategy_name: str):
+    if strategy_name == "Breakout DeMarker":
+        return BreakoutDeMarkerStrategyBT, {
+            "demarker_period": 10,
+            "keltner_period": 16,
+            "bb_period": 15,
+            "bb_deviation": 2.5,
+            "keltner_factor": 2.2,
+            "keltner_atr_period": 20,
+            "atr_multiplier": 1.9,
+            "sl_stop": 0.06,
+            "entry_version": "v2",
+        }
+    elif strategy_name == "Breakout TTM":
+        # args = {'bb_period': 15, 'bb_multiplier': 2.5, 'kc_period': 15, 'kc_atr_period': 10, 'kc_multiplier': 2.5, 'donichan_period': 20}
+        # args = {'bb_period': 10, 'bb_multiplier': 1.8, 'kc_period': 14, 'kc_atr_period': 10, 'kc_multiplier': 1.1, 'donichan_period': 10, 'osc_smoothing_period': 10}
+        args = {'bb_period': 10, 'bb_multiplier': 1.2, 'kc_period': 13, 'kc_atr_period': 10, 'kc_multiplier': 1.0, 'donichan_period': 10, 'osc_smoothing_period': 5, 'matype': 3, 'william_vix_period': 25}
+        return BreakoutTTMStrategyBT, args
+    return BreakoutDeMarkerStrategyBT, {}
+
+
+async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) -> Dict:
+    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
+    stock_df = _load_delta_stocks(
+        symbols=[symbol],
+        start=start_dt,
+        columns=["date", "open", "high", "low", "close", "volume", "symbol"],
+    )
+
+    if stock_df.empty:
+        raise ValueError(f"No data found for symbol {symbol} from {start_date}")
+
+    stock_df = stock_df[stock_df["symbol"] == symbol].drop(columns=["symbol"]).copy()
+    stock_df = stock_df.sort_values("date")
+    stock_df = stock_df.rename(
+        columns={
+            "open": "Open",
+            "high": "High",
+            "low": "Low",
+            "close": "Close",
+            "volume": "Volume",
+        }
+    )
+    stock_df = stock_df.set_index("date")
+    stock_df = stock_df.dropna(subset=["Open", "High", "Low", "Close"])
+
+    strategy_class, strategy_params = _get_plot_strategy(strategy_name)
+    bt = Backtest(stock_df, strategy_class, cash=10000, commission=0.002, exclusive_orders=True, finalize_trades=True)
+    try:
+        stats = bt.run(**strategy_params)
+    except Exception as exc:
+        logger.exception(
+            "Backtest run failed",
+            extra={"symbol": symbol, "strategy": strategy_name, "start_date": start_date},
+        )
+        raise RuntimeError(f"{exc.__class__.__name__}: {exc}") from exc
+
+    with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as temp_file:
+        html_path = Path(temp_file.name)
+
+    try:
+        bt.plot(filename=str(html_path), plot_volume=False, plot_equity=False, open_browser=False)
+        html = html_path.read_text(encoding="utf-8")
+    except Exception as exc:
+        logger.exception(
+            "Backtest plot failed",
+            extra={"symbol": symbol, "strategy": strategy_name, "start_date": start_date},
+        )
+        raise RuntimeError(f"{exc.__class__.__name__}: {exc}") from exc
+    finally:
+        if html_path.exists():
+            html_path.unlink()
+
+    stats_dict = {}
+    if stats is not None:
+        raw_stats = stats.filter(regex="^[^_]").to_dict()
+
+        def _normalize_value(value):
+            if isinstance(value, (np.integer, np.floating)):
+                return value.item()
+            if isinstance(value, np.bool_):
+                return bool(value)
+            if isinstance(value, (pd.Timestamp, datetime)):
+                return value.isoformat()
+            if isinstance(value, pd.Timedelta):
+                return str(value)
+            return value
+
+        stats_dict = {str(k): _normalize_value(v) for k, v in raw_stats.items()}
+
+    return {
+        "symbol": symbol,
+        "start_date": start_date,
+        "strategy": strategy_name,
+        "html": html,
+        "stats": stats_dict,
     }

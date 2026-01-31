@@ -8,6 +8,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy
 
+# Avoid setuptools_scm git dependency for editable local install
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_BACKTESTING=0.6.5
+
 # Install build dependencies
 # - build-essential: C compiler for packages without wheels
 # - libhdf5-dev: Required for PyTables/tables package
@@ -37,6 +40,7 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 # Install dependencies with uv (much faster than pip)
 COPY requirements.txt ./
+COPY libs/backtesting.py/ ./libs/backtesting.py/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install -r requirements.txt
 

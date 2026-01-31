@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import List, Optional, Tuple
 from sqlalchemy.orm import Session
 import os
+from pathlib import Path
 from deltalake import DeltaTable
 import deltalake
 import pandas as pd
@@ -35,6 +36,9 @@ def _delta_storage_options() -> dict:
 # Cached DeltaTable instances with TTL
 _delta_table_cache: dict = {}
 _CACHE_TTL_SECONDS = 300  # 5 minutes
+_PARQUET_CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
+
+DEFAULT_STOCK_COLUMNS = ["date", "open", "high", "low", "close", "volume", "symbol"]
 
 def _get_cached_delta_table(table_path: str) -> DeltaTable:
     """Get a cached DeltaTable instance, refreshing if expired."""
@@ -74,6 +78,16 @@ def _build_filter(symbols: list | None, start: datetime | None, end: datetime | 
     return expr
 
 
+def _get_parquet_cache_path() -> Path:
+    cache_path = os.getenv("STOCKS_PARQUET_CACHE")
+    if cache_path:
+        return Path(cache_path)
+    base_dir = Path(__file__).resolve().parents[2]
+    data_dir = base_dir / "data"
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir / "stocks_cache.parquet"
+
+
 def _load_delta_stocks(
     *,
     symbols: list | None = None,
@@ -98,29 +112,41 @@ def _load_delta_stocks(
             logger.warning(f"Watchlist not found at {watchlist_path}, using all available symbols")
             symbols = None
 
-    t0 = time.perf_counter()
-    dt = _get_cached_delta_table(settings.stocks_delta_table)
-    logger.debug(f"[PERF] DeltaTable init (cached): {(time.perf_counter() - t0) * 1000:.2f}ms")
-    
-    logger.debug(f"[PERF] Partition columns: {dt.metadata().partition_columns}")
-    
-    t0 = time.perf_counter()
-    dataset = dt.to_pyarrow_dataset()
-    logger.debug(f"[PERF] to_pyarrow_dataset: {(time.perf_counter() - t0) * 1000:.2f}ms")
-    
-    filt = _build_filter(symbols, start, end)
-    logger.debug(f"[PERF] Filter: {filt}")
-    
-    t0 = time.perf_counter()
-    try:
-        table = dataset.to_table(filter=filt, columns=columns)
-    except Exception:
-        table = dataset.to_table(columns=columns)
-    logger.debug(f"[PERF] to_table (query): {(time.perf_counter() - t0) * 1000:.2f}ms, rows={table.num_rows}")
-    
-    t0 = time.perf_counter()
-    pdf = table.to_pandas()
-    logger.debug(f"[PERF] to_pandas: {(time.perf_counter() - t0) * 1000:.2f}ms")
+    cache_path = _get_parquet_cache_path()
+    cache_expired = False
+    if cache_path.exists():
+        cache_age = time_module.time() - cache_path.stat().st_mtime
+        cache_expired = cache_age > _PARQUET_CACHE_TTL_SECONDS
+        if cache_expired:
+            logger.info(f"[CACHE] Parquet cache expired (age={cache_age:.0f}s), rebuilding")
+
+    if cache_path.exists() and not cache_expired:
+        t0 = time.perf_counter()
+        pdf = pd.read_parquet(cache_path)
+        logger.debug(f"[PERF] parquet cache load: {(time.perf_counter() - t0) * 1000:.2f}ms, rows={len(pdf)}")
+    else:
+        t0 = time.perf_counter()
+        dt = _get_cached_delta_table(settings.stocks_delta_table)
+        logger.debug(f"[PERF] DeltaTable init (cached): {(time.perf_counter() - t0) * 1000:.2f}ms")
+
+        logger.debug(f"[PERF] Partition columns: {dt.metadata().partition_columns}")
+
+        t0 = time.perf_counter()
+        dataset = dt.to_pyarrow_dataset()
+        logger.debug(f"[PERF] to_pyarrow_dataset: {(time.perf_counter() - t0) * 1000:.2f}ms")
+
+        t0 = time.perf_counter()
+        table = dataset.to_table(columns=DEFAULT_STOCK_COLUMNS)
+        logger.debug(f"[PERF] to_table (full): {(time.perf_counter() - t0) * 1000:.2f}ms, rows={table.num_rows}")
+
+        t0 = time.perf_counter()
+        pdf = table.to_pandas()
+        logger.debug(f"[PERF] to_pandas: {(time.perf_counter() - t0) * 1000:.2f}ms")
+
+        t0 = time.perf_counter()
+        pdf.to_parquet(cache_path, index=False)
+        logger.info(f"[CACHE] Saved parquet cache to {cache_path}")
+        logger.debug(f"[PERF] to_parquet: {(time.perf_counter() - t0) * 1000:.2f}ms")
     
     if pdf.empty:
         logger.debug(f"[PERF] Total: {(time.perf_counter() - total_start) * 1000:.2f}ms (empty)")
@@ -129,6 +155,18 @@ def _load_delta_stocks(
     t0 = time.perf_counter()
     if "date" in pdf.columns:
         pdf["date"] = pd.to_datetime(pdf["date"])
+    if start is not None and "date" in pdf.columns:
+        pdf = pdf[pdf["date"] >= start]
+    if end is not None and "date" in pdf.columns:
+        pdf = pdf[pdf["date"] <= end]
+    if symbols and "symbol" in pdf.columns:
+        pdf = pdf[pdf["symbol"].isin(symbols)]
+    if columns:
+        missing_cols = [col for col in columns if col not in pdf.columns]
+        if missing_cols:
+            logger.warning(f"[CACHE] Missing columns in parquet cache: {missing_cols}")
+        available_cols = [col for col in columns if col in pdf.columns]
+        pdf = pdf[available_cols]
     if "symbol" in pdf.columns and "date" in pdf.columns:
         pdf = pdf.sort_values(["symbol", "date"]).reset_index(drop=True)
     elif "symbol" in pdf.columns:
