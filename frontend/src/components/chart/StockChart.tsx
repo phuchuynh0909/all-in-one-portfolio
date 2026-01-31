@@ -393,9 +393,14 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
           ]
         });
 
-        // Fetch reports after timeseries succeeds
-        const reportsData = await fetchReports(symbol);
-        setReports(reportsData);
+        // Fetch reports after timeseries succeeds (ignore failures)
+        try {
+          const reportsData = await fetchReports(symbol);
+          setReports(reportsData);
+        } catch (reportError) {
+          console.warn('Report list fetch failed:', reportError);
+          setReports([]);
+        }
 
         // Set data state
         setTimeseriesData(result);
