@@ -112,7 +112,7 @@ class BreakoutTTMVersion2:
             mult=self.bb_multiplier,
             bbl=self.bb_window,
             lb=20,
-            ph=0.9,
+            ph=0.85,
             ltLB=33,
             mtLB=10,
             strength_str=1,

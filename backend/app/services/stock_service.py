@@ -453,7 +453,7 @@ async def get_stock_timeseries(
                         mult=ind.params.get("mult", 1.2),
                         bbl=ind.params.get("bbl", 10),
                         lb=20,
-                        ph=0.9,
+                        ph=0.85,
                         ltLB=33,
                         mtLB=14,
                         strength_str=1
@@ -461,8 +461,6 @@ async def get_stock_timeseries(
 
                     filtered_list = filtered.reshape(-1)
                     cond_fe_list = cond_fe.reshape(-1)
-                    print(filtered_list)
-                    print(type(filtered_list))
                     indicator_data["williams_vix_fix"] = {
                         "wvf": convert_nans(wvf.to_numpy().reshape(-1)),
                         "range_high": convert_nans(range_high.to_numpy().reshape(-1)),
