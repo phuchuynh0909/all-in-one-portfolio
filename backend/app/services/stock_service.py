@@ -10,7 +10,7 @@ import pyarrow as pa
 import numpy as np
 import talib
 from loguru import logger
-from .indicators import trailing_sl, avwap, hawkes_BVC, kalman_zscore, calculate_yz_volatility, matrix_series
+from .indicators import trailing_sl, avwap, hawkes_BVC, kalman_zscore, calculate_yz_volatility, matrix_series, williams_vix_fix_indicator
 from .utils import convert_nans
 from app.schemas.timeseries import TimeseriesResponse, Indicators, IndicatorParams, IndicatorsOnlyResponse
 from app.schemas.sector import SectorTimeseries, SectorTimeseriesData
@@ -21,6 +21,7 @@ from fastapi_cache.decorator import cache
 from app.core.settings import settings
 import vectorbt as vbt
 import time as time_module
+import traceback
 
 def _delta_storage_options() -> dict:
     return {
@@ -438,8 +439,40 @@ async def get_stock_timeseries(
                         "up_line": convert_nans(matrix_series_indicator.up_line.to_numpy().reshape(-1)),
                         "down_line": convert_nans(matrix_series_indicator.down_line.to_numpy().reshape(-1))
                     }
+
+                elif ind.name == "williams_vix_fix":
+                    # entry_version: v3, bb_window: 10, bb_multiplier: 1.2, kc_window: 13, kc_multiplier: 1, atr_window: 10, momentum_window: 12, donichan_window: 10, kc_atr_period: 10, osc_smoothing_period: 10, matype: 3, william_vix_period: 20, consecutive_neg_threshold: 7
+                    close_arr = df["close"].to_numpy().reshape(-1, 1)
+                    high_arr = df["high"].to_numpy().reshape(-1, 1)
+                    low_arr = df["low"].to_numpy().reshape(-1, 1)
+                    wvf, range_high, filtered, cond_fe = williams_vix_fix_indicator(
+                        close_arr,
+                        high_arr,
+                        low_arr,
+                        period=ind.params.get("period", 20),
+                        mult=ind.params.get("mult", 1.2),
+                        bbl=ind.params.get("bbl", 10),
+                        lb=20,
+                        ph=0.9,
+                        ltLB=33,
+                        mtLB=14,
+                        strength_str=1
+                    )
+
+                    filtered_list = filtered.reshape(-1)
+                    cond_fe_list = cond_fe.reshape(-1)
+                    print(filtered_list)
+                    print(type(filtered_list))
+                    indicator_data["williams_vix_fix"] = {
+                        "wvf": convert_nans(wvf.to_numpy().reshape(-1)),
+                        "range_high": convert_nans(range_high.to_numpy().reshape(-1)),
+                        "filtered": convert_nans(filtered_list),
+                        "cond_fe": convert_nans(cond_fe_list),
+                    }
+
             except Exception as e:
                 print(f"Error calculating {ind.name}: {e}")
+                print(traceback.format_exc())
 
         return TimeseriesResponse(
             symbol=symbol,

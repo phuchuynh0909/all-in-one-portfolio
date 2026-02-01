@@ -72,20 +72,23 @@ export default function VolatilityPanel({ chart, data, timestamps }: VolatilityP
         kalmanZscoreLowerRef.current = kalmanZscoreLower;
 
         return () => {
-            if (chart) {
-                try {
-                    chart.removeSeries(yzVolatilitySeries);
-                    chart.removeSeries(kalmanZscoreSeries);
-                    chart.removeSeries(kalmanZscoreUpper);
-                    chart.removeSeries(kalmanZscoreLower);
-                } catch (e) {
-                    console.warn('Error removing series:', e);
-                }
-            }
+            const yzSeries = yzVolatilitySeriesRef.current;
+            const kalmanSeries = kalmanZscoreSeriesRef.current;
+            const kalmanUpper = kalmanZscoreUpperRef.current;
+            const kalmanLower = kalmanZscoreLowerRef.current;
             yzVolatilitySeriesRef.current = null;
             kalmanZscoreSeriesRef.current = null;
             kalmanZscoreUpperRef.current = null;
             kalmanZscoreLowerRef.current = null;
+            if (!chart) return;
+            try {
+                if (yzSeries) chart.removeSeries(yzSeries);
+                if (kalmanSeries) chart.removeSeries(kalmanSeries);
+                if (kalmanUpper) chart.removeSeries(kalmanUpper);
+                if (kalmanLower) chart.removeSeries(kalmanLower);
+            } catch (e) {
+                console.warn('Error removing series:', e);
+            }
         };
     }, [chart]);
 

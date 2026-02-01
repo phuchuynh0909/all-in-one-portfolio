@@ -17,6 +17,7 @@ import BvcPanel from './panels/BvcPanel';
 import VolatilityPanel from './panels/VolatilityPanel';
 import RsRatingPanel from './panels/RsRatingPanel';
 import MatrixSeriesPanel from './panels/MatrixSeriesPanel';
+import WilliamsVixFixPanel from './panels/WilliamsVixFixPanel';
 
 type StockChartProps = {
   symbol: string;
@@ -53,6 +54,7 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
       1,   // Panel 3: Volatility indicators
       2,   // Panel 4: RS Rating indicators
       2,   // Panel 5: Matrix Series indicator
+      1,   // Panel 6: Williams Vix Fix
     ],
     globalScaleMargins: { top: 0.02, bottom: 0.02 },
   };
@@ -389,7 +391,8 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
             { name: "kalman_zscore", params: { window: 20 } },
             { name: "yz_volatility", params: { window: 30, periods: 252 } },
             { name: "rs_rating" },
-            { name: "matrix_series", params: { price_period: 20, sup_res_period: 50, sup_res_percentage: 100, smoother: 5 } }
+            { name: "matrix_series", params: { price_period: 20, sup_res_period: 50, sup_res_percentage: 100, smoother: 5 } },
+            { name: "williams_vix_fix" }
           ]
         });
 
@@ -495,6 +498,12 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
+          />
+          <WilliamsVixFixPanel
+            chart={chartRef.current}
+            data={indicatorsData}
+            timestamps={timestamps}
+            paneIndex={6}
           />
         </>
       )}

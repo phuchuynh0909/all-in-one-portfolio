@@ -104,7 +104,6 @@ class BreakoutTTMStrategyBT(Strategy):
         close = np.asarray(self.data.Close.round(2), dtype=np.float64)
         high = np.asarray(self.data.High.round(2), dtype=np.float64)
         low = np.asarray(self.data.Low.round(2), dtype=np.float64)
-        print("Length of close, high, low: ", len(close), len(high), len(low))
 
         ## Squeeze
         bb_indicator = talib.BBANDS(close, timeperiod=self.bb_period, nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=self.matype)
@@ -128,7 +127,9 @@ class BreakoutTTMStrategyBT(Strategy):
 
         entry_1 = (shift_numba(squeeze_diff_np, 1) < 0) & (squeeze_diff_np > 0) & (ttms_np > 0)
         entry_2 = (shift_numba(squeeze_diff_np, 1) < 0) & (squeeze_diff_np > 0) & (consecutive_bar_ttm_np(ttms_np) > 7)
-        wvf, rangeHigh, filtered, entry_3 = williams_vix_fix_signal(close, high, low, period=self.william_vix_period, mult=self.bb_multiplier, bbl=self.bb_period, lb=50, ph=0.85, ltLB=40, mtLB=14, strength_str=2)
+        wvf, rangeHigh, filtered, entry_3 = williams_vix_fix_signal(close, high, low, 
+            period=self.william_vix_period, mult=self.bb_multiplier, bbl=self.bb_period, 
+            lb=20, ph=0.9, ltLB=33, mtLB=14, strength_str=1)
         buy_signal = entry_1 | entry_2 | entry_3
         self.buy_signal = buy_signal
 

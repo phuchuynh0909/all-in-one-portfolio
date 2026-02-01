@@ -36,6 +36,12 @@ export interface TimeseriesResponse {
       up_line: (number | null)[];
       down_line: (number | null)[];
     };
+    williams_vix_fix?: {
+      wvf: (number | null)[];
+      range_high: (number | null)[];
+      filtered: boolean[];
+      cond_fe: boolean[];
+    };
   };
 }
 

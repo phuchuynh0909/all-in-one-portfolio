@@ -2,11 +2,7 @@ import vectorbt as vbt
 import numpy as np
 import pandas as pd
 import numba as nb
-from app.services.indicators import atr_trailing_nb, exrem_func_nb
-
-MAX = vbt.IndicatorFactory.from_talib("MAX")
-SMA = vbt.IndicatorFactory.from_talib("SMA")
-STDDEV = vbt.IndicatorFactory.from_talib("STDDEV")
+from app.services.indicators import atr_trailing_nb, exrem_func_nb, williams_vix_fix_indicator
 
 
 @nb.njit
@@ -37,48 +33,6 @@ def count_consecutive_neg_2d(arr):
                 count = 0
     return out
 
-
-def _reindex_like(x, ref):
-    if isinstance(x, (pd.Series, pd.DataFrame)) and isinstance(ref, (pd.Series, pd.DataFrame)):
-        return x.reindex_like(ref)
-    return x
-
-
-def williams_vix_fix_signal(close, high, low, period=22, mult=2.0,
-                            bbl: int = 20,
-                            lb: int = 50,
-                            ph: float = 0.85,
-                            ltLB: int = 40,
-                            mtLB: int = 14,
-                            strength_str: int = 3):
-    highest_close = MAX.run(close, timeperiod=period).real
-    highest_close = _reindex_like(highest_close, close)
-    wvf = ((highest_close - low) / highest_close) * 100.0
-
-    mid_line = SMA.run(wvf, timeperiod=bbl).real
-    s_dev = STDDEV.run(wvf, timeperiod=bbl).real * mult
-    mid_line = _reindex_like(mid_line, wvf)
-    s_dev = _reindex_like(s_dev, wvf)
-    upper_band = mid_line + s_dev
-    range_high = MAX.run(wvf, timeperiod=lb).real * ph
-    range_high = _reindex_like(range_high, wvf)
-
-    up_range = (low > low.shift(1)) & (close > high.shift(1))
-
-    filtered = (
-        ((wvf.shift(1) >= upper_band.shift(1)) | (wvf.shift(1) >= range_high.shift(1)))
-        & (wvf < upper_band)
-        & (wvf < range_high)
-    )
-
-    cond_fe = (
-        up_range
-        & (close > close.shift(strength_str))
-        & ((close < close.shift(ltLB)) | (close < close.shift(mtLB)))
-        & filtered
-    )
-
-    return cond_fe
 
 class BreakoutTTMVersion2:
 
@@ -137,6 +91,7 @@ class BreakoutTTMVersion2:
 
         sma_indicator = vbt.IndicatorFactory.from_talib('SMA')
         sma = sma_indicator.run(self.data.close, timeperiod=self.donichan_window).real
+        MAX = vbt.IndicatorFactory.from_talib("MAX")
         hh = MAX.run(self.data.high, timeperiod=self.donichan_window).real
         ll = MAX.run(self.data.low, timeperiod=self.donichan_window).real
         mid = (hh + ll) / 2
@@ -149,18 +104,18 @@ class BreakoutTTMVersion2:
         ttms_np = ttms.to_numpy()
         consecutive_bar_ttm_np = count_consecutive_neg_2d(ttms_np)
 
-        williams_vix_fix_signal_np = williams_vix_fix_signal(
+        wvf, rangeHigh, filtered, williams_vix_fix_signal = williams_vix_fix_indicator(
             self.data.close,
             self.data.high,
             self.data.low,
             period=self.william_vix_period,
             mult=self.bb_multiplier,
             bbl=self.bb_window,
-            lb=50,
-            ph=0.85,
-            ltLB=40,
-            mtLB=14,
-            strength_str=3,
+            lb=20,
+            ph=0.9,
+            ltLB=33,
+            mtLB=10,
+            strength_str=1,
         )
 
         entry_1 = (shift_numba(squeeze_diff_np, 1) < 0) & (squeeze_diff_np > 0) & (ttms > 0)
@@ -169,7 +124,7 @@ class BreakoutTTMVersion2:
             & (squeeze_diff_np > 0)
             & (consecutive_bar_ttm_np > self.consecutive_neg_threshold)
         )
-        return entry_1 | entry_2 | williams_vix_fix_signal_np
+        return entry_1 | entry_2 | williams_vix_fix_signal
 
     def _entries_v1_v2(self):
         bb = vbt.IndicatorFactory.from_ta("BollingerBands").run(

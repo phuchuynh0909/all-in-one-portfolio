@@ -74,20 +74,23 @@ export default function RsRatingPanel({ chart, data, timestamps }: RsRatingPanel
         rsRating252SeriesRef.current = rsRating252Series;
 
         return () => {
-            if (chart) {
-                try {
-                    chart.removeSeries(rsRating20Series);
-                    chart.removeSeries(rsRating20EmaSeries);
-                    chart.removeSeries(rsRating50Series);
-                    chart.removeSeries(rsRating252Series);
-                } catch (e) {
-                    console.warn('Error removing series:', e);
-                }
-            }
+            const rs20 = rsRating20SeriesRef.current;
+            const rs20Ema = rsRating20EmaSeriesRef.current;
+            const rs50 = rsRating50SeriesRef.current;
+            const rs252 = rsRating252SeriesRef.current;
             rsRating20SeriesRef.current = null;
             rsRating20EmaSeriesRef.current = null;
             rsRating50SeriesRef.current = null;
             rsRating252SeriesRef.current = null;
+            if (!chart) return;
+            try {
+                if (rs20) chart.removeSeries(rs20);
+                if (rs20Ema) chart.removeSeries(rs20Ema);
+                if (rs50) chart.removeSeries(rs50);
+                if (rs252) chart.removeSeries(rs252);
+            } catch (e) {
+                console.warn('Error removing series:', e);
+            }
         };
     }, [chart]);
 

@@ -52,6 +52,7 @@ def get_strategy_params(strategy_name: str) -> Tuple[List[tuple], type, List[str
             (16, 1.0, 40, 1.2, 14, 12, 12, 'v1'),
             (10, 1.2, 13, 1.0, 10, 12, 10, 'v3', 10, 10, 3, 20, 7),
         ]
+
         param_names = ['bb_window', 'bb_multiplier', 'kc_window', 'kc_multiplier', 
                     'atr_window', 'momentum_window', 'donichan_window', 'entry_version',
                     'kc_atr_period', 'osc_smoothing_period', 'matype', 'william_vix_period', 'consecutive_neg_threshold']

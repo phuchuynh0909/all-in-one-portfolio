@@ -16,6 +16,12 @@ class BollingerBands(BaseModel):
     middle: List[Optional[float]]
     lower: List[Optional[float]]
 
+class WilliamsVixFix(BaseModel):
+    wvf: List[Optional[float]]
+    range_high: List[Optional[float]]
+    filtered: List[bool]
+    cond_fe: List[bool]
+
 class Indicators(BaseModel):
     rsi: Optional[List[Optional[float]]] = None
     rsi_5: Optional[List[Optional[float]]] = None
@@ -38,6 +44,7 @@ class Indicators(BaseModel):
     rs_rating_50_ema: Optional[List[Optional[float]]] = None
     rs_rating_252_ema: Optional[List[Optional[float]]] = None
     matrix_series: Optional[Dict[str, List[Optional[float]]]] = None
+    williams_vix_fix: Optional[WilliamsVixFix] = None
 
 class Timeseries(BaseModel):
     open: List[float]
