@@ -17,7 +17,7 @@ from app.services.indicators import avwap, trailing_sl
 from backtesting import Backtest, Strategy
 from backtesting.lib import crossover
 from backtesting.test import SMA
-from app.services.backtest_strategies import BreakoutDeMarkerStrategyBT, BreakoutTTMStrategyBT
+from app.services.backtest_strategies import BreakoutDeMarkerStrategyBT, BreakoutTTMStrategyBT, WilliamsVixStrategyBT
 
 # List of features used for ML predictions
 FEATURES_LIST = [
@@ -331,6 +331,22 @@ def _get_plot_strategy(strategy_name: str):
         # args = {'bb_period': 10, 'bb_multiplier': 1.8, 'kc_period': 14, 'kc_atr_period': 10, 'kc_multiplier': 1.1, 'donichan_period': 10, 'osc_smoothing_period': 10}
         args = {'bb_period': 10, 'bb_multiplier': 1.2, 'kc_period': 13, 'kc_atr_period': 10, 'kc_multiplier': 1.0, 'donichan_period': 10, 'osc_smoothing_period': 5, 'matype': 3, 'william_vix_period': 25}
         return BreakoutTTMStrategyBT, args
+    elif strategy_name == "Williams Vix Fix":
+        args = {
+            'bb_period': 10,
+            'bb_multiplier': 1.2,
+            'william_vix_period': 20,
+            'lb': 50,
+            'ph': 0.85,
+            'ltLB': 33,
+            'mtLB': 14,
+            'strength_str': 1,
+            'donichan_period': 10,
+            'atr_period': 10,
+            'atr_multiplier': 1.9,
+            'sl_stop': 0.1,
+        }
+        return WilliamsVixStrategyBT, args
     return BreakoutDeMarkerStrategyBT, {}
 
 

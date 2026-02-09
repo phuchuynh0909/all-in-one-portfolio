@@ -42,6 +42,10 @@ export interface TimeseriesResponse {
       filtered: boolean[];
       cond_fe: boolean[];
     };
+    squeeze_ttm?: {
+      histogram: (number | null)[];
+      squeeze_on: boolean[];
+    };
   };
 }
 

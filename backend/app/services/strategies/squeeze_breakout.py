@@ -6,7 +6,9 @@ import pandas as pd
 
 class SqueezeBreakoutStrategy:
 
-    def __init__(self, data: pd.DataFrame, bb_window: int, bb_multiplier: float, kc_window: int, kc_multiplier: float, atr_multiplier: float = 1.8, squeeze_threshold: float = 0.1):
+    def __init__(self, data: pd.DataFrame, bb_window: int, bb_multiplier: float, 
+        kc_window: int, kc_multiplier: float, 
+        atr_multiplier: float = 1.8, squeeze_threshold: float = 0.1):
         self.data = data
         self.bb_window = bb_window
         self.bb_multiplier = bb_multiplier

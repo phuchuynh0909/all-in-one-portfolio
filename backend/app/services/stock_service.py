@@ -10,7 +10,7 @@ import pyarrow as pa
 import numpy as np
 import talib
 from loguru import logger
-from .indicators import trailing_sl, avwap, hawkes_BVC, kalman_zscore, calculate_yz_volatility, matrix_series, williams_vix_fix_indicator
+from .indicators import trailing_sl, avwap, hawkes_BVC, kalman_zscore, calculate_yz_volatility, matrix_series, williams_vix_fix_indicator, squeeze_ttm
 from .utils import convert_nans
 from app.schemas.timeseries import TimeseriesResponse, Indicators, IndicatorParams, IndicatorsOnlyResponse
 from app.schemas.sector import SectorTimeseries, SectorTimeseriesData
@@ -440,6 +440,32 @@ async def get_stock_timeseries(
                         "down_line": convert_nans(matrix_series_indicator.down_line.to_numpy().reshape(-1))
                     }
 
+                elif ind.name == "squeeze_ttm":
+                    bb_period = ind.params.get("bb_period", 10)
+                    bb_mult = ind.params.get("bb_mult", 1.2)
+                    bb_matype = ind.params.get("bb_matype", 3)
+                    kc_period = ind.params.get("kc_period", 13)
+                    kc_mult = ind.params.get("kc_mult", 1.0)
+                    donichan_period = ind.params.get("donichan_period", 10)
+                    osc_smoothing_period = ind.params.get("osc_smoothing_period", 10)
+
+                    close_arr = df["close"].to_numpy().reshape(-1, 1)
+                    high_arr = df["high"].to_numpy().reshape(-1, 1)
+                    low_arr = df["low"].to_numpy().reshape(-1, 1)
+
+                    squeeze_diff, ttms = squeeze_ttm(close_arr, high_arr, low_arr, 
+                        bb_period=bb_period, bb_mult=bb_mult, bb_matype=bb_matype, 
+                        kc_period=kc_period, kc_mult=kc_mult, 
+                        donichan_period=donichan_period, osc_smoothing_period=osc_smoothing_period)
+                    diff_arr = squeeze_diff.to_numpy().reshape(-1)
+                    ttms_arr = ttms.to_numpy().reshape(-1)
+                    squeeze_on = np.where(np.isnan(diff_arr), False, diff_arr < 0).tolist()
+
+                    indicator_data["squeeze_ttm"] = {
+                        "histogram": convert_nans(ttms_arr),
+                        "squeeze_on": squeeze_on,
+                    }
+
                 elif ind.name == "williams_vix_fix":
                     # entry_version: v3, bb_window: 10, bb_multiplier: 1.2, kc_window: 13, kc_multiplier: 1, atr_window: 10, momentum_window: 12, donichan_window: 10, kc_atr_period: 10, osc_smoothing_period: 10, matype: 3, william_vix_period: 20, consecutive_neg_threshold: 7
                     close_arr = df["close"].to_numpy().reshape(-1, 1)
@@ -467,7 +493,7 @@ async def get_stock_timeseries(
                         "filtered": convert_nans(filtered_list),
                         "cond_fe": convert_nans(cond_fe_list),
                     }
-
+                    
             except Exception as e:
                 print(f"Error calculating {ind.name}: {e}")
                 print(traceback.format_exc())
@@ -545,6 +571,25 @@ async def get_stock_indicators(
                         "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1)),
                         "up_line": convert_nans(matrix_series_indicator.up_line.to_numpy().reshape(-1)),
                         "down_line": convert_nans(matrix_series_indicator.down_line.to_numpy().reshape(-1))
+                    }
+
+                elif ind.name == "squeeze_ttm":
+                    period = ind.params.get("period", 20)
+                    mult = ind.params.get("mult", 1.2)
+                    matype = ind.params.get("matype", 3)
+
+                    close_arr = df["close"].to_numpy().reshape(-1, 1)
+                    high_arr = df["high"].to_numpy().reshape(-1, 1)
+                    low_arr = df["low"].to_numpy().reshape(-1, 1)
+
+                    squeeze_diff, ttms = squeeze_ttm(close_arr, high_arr, low_arr, period=period, mult=mult, matype=matype)
+                    diff_arr = squeeze_diff.to_numpy().reshape(-1)
+                    ttms_arr = ttms.to_numpy().reshape(-1)
+                    squeeze_on = np.where(np.isnan(diff_arr), False, diff_arr < 0).tolist()
+
+                    indicator_data["squeeze_ttm"] = {
+                        "histogram": convert_nans(ttms_arr),
+                        "squeeze_on": squeeze_on,
                     }
 
             except Exception as e:
@@ -828,4 +873,3 @@ async def get_market_indicators(
         "declines": daily_breadth["declining"].values,
         "unchanged": daily_breadth["unchanged"].values,
     }
-

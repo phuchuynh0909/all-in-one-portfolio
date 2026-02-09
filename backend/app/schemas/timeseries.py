@@ -22,6 +22,10 @@ class WilliamsVixFix(BaseModel):
     filtered: List[bool]
     cond_fe: List[bool]
 
+class SqueezeTTM(BaseModel):
+    histogram: List[Optional[float]]
+    squeeze_on: List[bool]
+
 class Indicators(BaseModel):
     rsi: Optional[List[Optional[float]]] = None
     rsi_5: Optional[List[Optional[float]]] = None
@@ -45,6 +49,7 @@ class Indicators(BaseModel):
     rs_rating_252_ema: Optional[List[Optional[float]]] = None
     matrix_series: Optional[Dict[str, List[Optional[float]]]] = None
     williams_vix_fix: Optional[WilliamsVixFix] = None
+    squeeze_ttm: Optional[SqueezeTTM] = None
 
 class Timeseries(BaseModel):
     open: List[float]

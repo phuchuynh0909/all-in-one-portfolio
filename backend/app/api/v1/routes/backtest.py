@@ -215,7 +215,7 @@ async def backtest_strategy(request: BacktestRequest) -> BacktestResponse:
 @router.get("/plot", response_model=BacktestPlotResponse)
 async def get_backtest_plot(
     symbol: str = Query("VCG", description="Symbol to backtest"),
-    start_date: str = Query("2016-01-01", description="Start date (YYYY-MM-DD)"),
+    start_date: str = Query("2020-01-01", description="Start date (YYYY-MM-DD)"),
     strategy: str = Query("SMA Cross", description="Strategy name"),
 ) -> BacktestPlotResponse:
     try:

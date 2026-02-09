@@ -57,7 +57,7 @@ def williams_vix_fix_indicator(close, high, low, period=22, mult=2.0,
         upperBand_np = upperBand.to_numpy()
         rangeHigh_np = rangeHigh.to_numpy()
 
-        upRange = (low_np > shift_numba(low_np, 1)) & (close_np > shift_numba(high_np, 1))
+        upRange = (low_np > shift_numba(low_np, 1)) & (close_np > shift_numba(close_np, 1))
 
         filtered = (
             ((shift_numba(wvf_np, 1) >= shift_numba(upperBand_np, 1)) | (shift_numba(wvf_np, 1) >= shift_numba(rangeHigh_np, 1)))
