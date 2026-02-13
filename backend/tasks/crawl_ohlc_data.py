@@ -171,7 +171,7 @@ def _ensure_ohlc_table_exists(client: Client, database: str, table: str) -> None
             ver DateTime64(3) DEFAULT now64(3)
         )
         ENGINE = ReplacingMergeTree(ver)
-        PARTITION BY toYYYYMM(date)
+        PARTITION BY intDiv(toYear(date) - 1970, 5)
         ORDER BY (symbol, date)
         """
     )
