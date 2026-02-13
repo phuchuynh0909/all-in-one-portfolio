@@ -7,6 +7,7 @@ import time
 import json
 import pandas as pd
 from deltalake import DeltaTable, write_deltalake
+from clickhouse_driver import Client  # type: ignore
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -25,6 +26,7 @@ from playwright.async_api import async_playwright
 WICHART_EMAIL = os.getenv("WICHART_EMAIL", "kyostyle1@gmail.com")
 WICHART_PASSWORD = os.getenv("WICHART_PASSWORD", "kyostyle1")
 STORAGE_PATH = os.path.join(CURRENT_DIR, "wichart_storage.json")
+RAW_WICHART_REPORT_DELTA_PATH = "s3://delta-table-storage/raw_wichart_report"
 
 # Define the PyArrow schema for WichartReport
 wichart_report_schema = pa.schema([
@@ -135,7 +137,7 @@ def save_to_delta_table(df: pd.DataFrame):
         print("No data to save")
         return
     
-    tablePath = "s3://delta-table-storage/raw_wichart_report"
+    tablePath = RAW_WICHART_REPORT_DELTA_PATH
     storage_options = {
         "AWS_ACCESS_KEY_ID": os.getenv("MINIO_ACCESS_KEY"),
         "AWS_SECRET_ACCESS_KEY": os.getenv("MINIO_SECRET_KEY"),
@@ -187,6 +189,145 @@ def save_to_delta_table(df: pd.DataFrame):
     return
 
 
+def _prepare_report_df(df: pd.DataFrame) -> pd.DataFrame:
+    date_columns = ['ngaykn', 'ngay_congbo']
+    prepared = df.copy()
+
+    for col in date_columns:
+        if col in prepared.columns:
+            prepared[col] = pd.to_datetime(prepared[col], errors='coerce')
+
+    if 'tab_source' in prepared.columns:
+        prepared = prepared.drop(columns=['tab_source'])
+
+    schema_columns = [field.name for field in wichart_report_schema]
+    existing_columns = [col for col in schema_columns if col in prepared.columns]
+    prepared = prepared[existing_columns]
+    return prepared
+
+
+def _get_delta_storage_options() -> dict[str, str | None]:
+    return {
+        "AWS_ACCESS_KEY_ID": os.getenv("MINIO_ACCESS_KEY"),
+        "AWS_SECRET_ACCESS_KEY": os.getenv("MINIO_SECRET_KEY"),
+        "AWS_ENDPOINT_URL": f"http://{os.getenv('MINIO_ENDPOINT')}",
+        "AWS_ALLOW_HTTP": "true",
+        "AWS_EC2_METADATA_DISABLED": "true",
+        "AWS_REGION": "us-east-1",
+        "aws_conditional_put": "etag",
+    }
+
+
+def _get_clickhouse_client() -> Client:
+    return Client(
+        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
+        port=int(os.getenv("CLICKHOUSE_PORT", "9010")),
+        user=os.getenv("CLICKHOUSE_USER", "kyostyle1"),
+        password=os.getenv("CLICKHOUSE_PASSWORD", "kyostyle1"),
+        database=os.getenv("CLICKHOUSE_DB", "default"),
+    )
+
+
+def _ensure_clickhouse_table(client: Client, database: str, table: str) -> None:
+    client.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
+    client.execute(
+        f"""
+        CREATE TABLE IF NOT EXISTS {database}.{table} (
+            id Int64,
+            mack Nullable(String),
+            tenbaocao Nullable(String),
+            nguon Nullable(String),
+            khuyennghi Nullable(String),
+            giamuctieu Nullable(Float64),
+            giamuctieu_dieuchinh Nullable(Float64),
+            upside_hientai Nullable(Float64),
+            lnst_duphong Nullable(Float64),
+            tt_lnst_duphong_yoy Nullable(Float64),
+            pe_mack_n0 Nullable(Float64),
+            lnst_duphong_pt Nullable(Float64),
+            ngaykn Nullable(DateTime),
+            ngay_congbo Nullable(DateTime),
+            rsnganh Nullable(String),
+            idnganh Nullable(Int64),
+            idnganhcap3 Nullable(Int64),
+            tennganhcap3 Nullable(String),
+            kibaocao Nullable(String),
+            loaibaocao Nullable(String),
+            url Nullable(String),
+            ver DateTime64(3) DEFAULT now64(3)
+        )
+        ENGINE = ReplacingMergeTree(ver)
+        ORDER BY (id)
+        """
+    )
+
+
+@task(log_prints=True)
+def save_to_clickhouse(df: pd.DataFrame) -> int:
+    database = os.getenv("CLICKHOUSE_DB", "default")
+    table = os.getenv("CLICKHOUSE_WICHART_REPORT_TABLE", "raw_wichart_report")
+    client = _get_clickhouse_client()
+    _ensure_clickhouse_table(client, database, table)
+
+    prepared = _prepare_report_df(df)
+
+    full_load_on_first_run = os.getenv("WICHART_CLICKHOUSE_FULL_LOAD_ON_FIRST_RUN", "false").lower() in {"1", "true", "yes", "y"}
+    if full_load_on_first_run:
+        storage_options = _get_delta_storage_options()
+        if DeltaTable.is_deltatable(RAW_WICHART_REPORT_DELTA_PATH, storage_options=storage_options):
+            delta_table = DeltaTable(RAW_WICHART_REPORT_DELTA_PATH, storage_options=storage_options)
+            delta_df = delta_table.to_pyarrow_table().to_pandas()
+            prepared = _prepare_report_df(delta_df)
+            print(f"First run full load enabled. Loading {len(prepared)} rows from Delta Lake.")
+
+    if prepared.empty:
+        print("No data to save to ClickHouse")
+        return 0
+
+    ordered_columns = [field.name for field in wichart_report_schema]
+    for col in ordered_columns:
+        if col not in prepared.columns:
+            prepared[col] = None
+    prepared = prepared[ordered_columns]
+
+    date_columns = ["ngaykn", "ngay_congbo"]
+    int_columns = ["id", "idnganh", "idnganhcap3"]
+    float_columns = [
+        "giamuctieu", "giamuctieu_dieuchinh", "upside_hientai", "lnst_duphong",
+        "tt_lnst_duphong_yoy", "pe_mack_n0", "lnst_duphong_pt",
+    ]
+
+    rows = []
+    for row in prepared.itertuples(index=False, name=None):
+        row_dict = dict(zip(ordered_columns, row))
+
+        for col in date_columns:
+            val = row_dict[col]
+            row_dict[col] = None if pd.isna(val) else pd.Timestamp(val).to_pydatetime()
+
+        for col in int_columns:
+            val = row_dict[col]
+            row_dict[col] = None if pd.isna(val) else int(val)
+
+        for col in float_columns:
+            val = row_dict[col]
+            row_dict[col] = None if pd.isna(val) else float(val)
+
+        for col in ["mack", "tenbaocao", "nguon", "khuyennghi", "rsnganh", "tennganhcap3", "kibaocao", "loaibaocao", "url"]:
+            val = row_dict[col]
+            row_dict[col] = None if pd.isna(val) else str(val)
+
+        rows.append(tuple(row_dict[col] for col in ordered_columns))
+
+    client.execute(
+        f"INSERT INTO {database}.{table} ({', '.join(ordered_columns)}) VALUES",
+        rows,
+        types_check=False,
+    )
+    print(f"Inserted {len(rows)} rows to ClickHouse {database}.{table}")
+    return len(rows)
+
+
 @flow(log_prints=True)
 def crawl_wichart_report_workflow():
     """Flow: Crawl Wichart reports and save to Delta Lake."""
@@ -195,11 +336,16 @@ def crawl_wichart_report_workflow():
     df = crawl_wichart_report()
     
     if df.empty:
-        print("No data crawled, exiting workflow")
-        return
+        full_load_on_first_run = os.getenv("WICHART_CLICKHOUSE_FULL_LOAD_ON_FIRST_RUN", "false").lower() in {"1", "true", "yes", "y"}
+        if not full_load_on_first_run:
+            print("No data crawled, exiting workflow")
+            return
+        print("No new crawl data, continuing for first-run ClickHouse full load from Delta.")
 
     # Task 2: Save to Delta Table
     save_to_delta_table(df)
+
+    save_to_clickhouse(df)
     
     print("Workflow completed successfully!")
 

@@ -9,6 +9,7 @@ import pandas as pd
 import pyarrow as pa
 import numpy as np
 import talib
+import clickhouse_connect
 from loguru import logger
 from .indicators import trailing_sl, avwap, hawkes_BVC, kalman_zscore, calculate_yz_volatility, matrix_series, williams_vix_fix_indicator, squeeze_ttm
 from .utils import convert_nans
@@ -96,7 +97,6 @@ def _load_delta_stocks(
     end: datetime | None = None,
     columns: list | None = None,
 ) -> pd.DataFrame:
-    """Load OHLCV from Delta table using predicate pushdown via PyArrow filters."""
     import time
     total_start = time.perf_counter()
     
@@ -113,41 +113,40 @@ def _load_delta_stocks(
             logger.warning(f"Watchlist not found at {watchlist_path}, using all available symbols")
             symbols = None
 
-    cache_path = _get_parquet_cache_path()
-    cache_expired = False
-    if cache_path.exists():
-        cache_age = time_module.time() - cache_path.stat().st_mtime
-        cache_expired = cache_age > _PARQUET_CACHE_TTL_SECONDS
-        if cache_expired:
-            logger.info(f"[CACHE] Parquet cache expired (age={cache_age:.0f}s), rebuilding")
+    query_columns = columns or DEFAULT_STOCK_COLUMNS
+    required_cols = ["date", "symbol"]
+    selected_cols = list(dict.fromkeys([*query_columns, *required_cols]))
 
-    if cache_path.exists() and not cache_expired:
-        t0 = time.perf_counter()
-        pdf = pd.read_parquet(cache_path)
-        logger.debug(f"[PERF] parquet cache load: {(time.perf_counter() - t0) * 1000:.2f}ms, rows={len(pdf)}")
-    else:
-        t0 = time.perf_counter()
-        dt = _get_cached_delta_table(settings.stocks_delta_table)
-        logger.debug(f"[PERF] DeltaTable init (cached): {(time.perf_counter() - t0) * 1000:.2f}ms")
+    conditions: list[str] = []
+    if start is not None:
+        conditions.append(f"date >= toDate('{pd.Timestamp(start).strftime('%Y-%m-%d')}')")
+    if end is not None:
+        conditions.append(f"date <= toDate('{pd.Timestamp(end).strftime('%Y-%m-%d')}')")
+    if symbols:
+        sanitized_symbols = [s.replace("'", "''") for s in symbols]
+        symbol_list = ", ".join([f"'{symbol}'" for symbol in sanitized_symbols])
+        conditions.append(f"symbol IN ({symbol_list})")
 
-        logger.debug(f"[PERF] Partition columns: {dt.metadata().partition_columns}")
+    where_clause = f"WHERE {' AND '.join(conditions)}" if conditions else ""
+    order_clause = "ORDER BY symbol, date"
 
-        t0 = time.perf_counter()
-        dataset = dt.to_pyarrow_dataset()
-        logger.debug(f"[PERF] to_pyarrow_dataset: {(time.perf_counter() - t0) * 1000:.2f}ms")
+    table_name = os.getenv("CLICKHOUSE_OHLC_EOD_TABLE", "ohlc_eod")
+    sql = f"SELECT {', '.join(selected_cols)} FROM {settings.clickhouse_db}.{table_name} {where_clause} {order_clause}"
 
-        t0 = time.perf_counter()
-        table = dataset.to_table(columns=DEFAULT_STOCK_COLUMNS)
-        logger.debug(f"[PERF] to_table (full): {(time.perf_counter() - t0) * 1000:.2f}ms, rows={table.num_rows}")
-
-        t0 = time.perf_counter()
-        pdf = table.to_pandas()
-        logger.debug(f"[PERF] to_pandas: {(time.perf_counter() - t0) * 1000:.2f}ms")
-
-        t0 = time.perf_counter()
-        pdf.to_parquet(cache_path, index=False)
-        logger.info(f"[CACHE] Saved parquet cache to {cache_path}")
-        logger.debug(f"[PERF] to_parquet: {(time.perf_counter() - t0) * 1000:.2f}ms")
+    t0 = time.perf_counter()
+    client = clickhouse_connect.get_client(
+        host=settings.clickhouse_host,
+        port=settings.clickhouse_port,
+        username=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+        database=settings.clickhouse_db,
+    )
+    try:
+        result = client.query(sql)
+        pdf = pd.DataFrame(result.result_rows, columns=result.column_names)
+    finally:
+        client.close()
+    logger.debug(f"[PERF] clickhouse query: {(time.perf_counter() - t0) * 1000:.2f}ms, rows={len(pdf)}")
     
     if pdf.empty:
         logger.debug(f"[PERF] Total: {(time.perf_counter() - total_start) * 1000:.2f}ms (empty)")
@@ -156,16 +155,10 @@ def _load_delta_stocks(
     t0 = time.perf_counter()
     if "date" in pdf.columns:
         pdf["date"] = pd.to_datetime(pdf["date"])
-    if start is not None and "date" in pdf.columns:
-        pdf = pdf[pdf["date"] >= start]
-    if end is not None and "date" in pdf.columns:
-        pdf = pdf[pdf["date"] <= end]
-    if symbols and "symbol" in pdf.columns:
-        pdf = pdf[pdf["symbol"].isin(symbols)]
     if columns:
         missing_cols = [col for col in columns if col not in pdf.columns]
         if missing_cols:
-            logger.warning(f"[CACHE] Missing columns in parquet cache: {missing_cols}")
+            logger.warning(f"[CLICKHOUSE] Missing columns in result: {missing_cols}")
         available_cols = [col for col in columns if col in pdf.columns]
         pdf = pdf[available_cols]
     if "symbol" in pdf.columns and "date" in pdf.columns:
@@ -361,25 +354,7 @@ async def get_stock_timeseries(
                     }
                 
                 elif ind.name == "kalman_zscore":
-                    # Try to retrieve from feature store; fallback to on-the-fly calc
-                    try:
-                        col_name = f"zscore_kf_{window}"
-                        fs_df = feature_store.get_features(
-                            symbol,
-                            start=df["date"].min(),
-                            end=df["date"].max(),
-                            columns=["date", col_name],
-                        )
-                        if not fs_df.empty and col_name in fs_df.columns:
-                            # Align by date
-                            merged = df[["date"]].merge(fs_df, on="date", how="left")
-                            indicator_data["kalman_zscore"] = convert_nans(merged[col_name].values)
-                        else:
-                            indicator_data["kalman_zscore"] = kalman_zscore.calculate_kalman_zscore(close_prices, window=window)
-                    except Exception:
-                        print("Error calculating kalman zscore on-the-fly")
-                        indicator_data["kalman_zscore"] = kalman_zscore.calculate_kalman_zscore(close_prices, window=window)
-                
+                    indicator_data["kalman_zscore"] = kalman_zscore.calculate_kalman_zscore(close_prices, window=window)
                 elif ind.name == "yz_volatility":
                     window = ind.params.get("window", 30)
                     periods = ind.params.get("periods", 252)
@@ -392,25 +367,25 @@ async def get_stock_timeseries(
                             periods=periods
                         )
                     
-                elif ind.name == "rs_rating":
-                    rs_rating = feature_store.get_features(symbol, start=df["date"].min(), end=df["date"].max(), columns=["date", "rs_rating_20", 'rs_rating_50', 'rs_rating_252'])
-                    # left join with df
-                    df = df.merge(rs_rating, on="date", how="left")
+                # elif ind.name == "rs_rating":
+                #     rs_rating = feature_store.get_features(symbol, start=df["date"].min(), end=df["date"].max(), columns=["date", "rs_rating_20", 'rs_rating_50', 'rs_rating_252'])
+                #     # left join with df
+                #     df = df.merge(rs_rating, on="date", how="left")
 
-                    # Apply EMA smoothing with a fixed short span (10 days) to reduce noise
-                    # Using the same smoothing period for all ratings for consistency
-                    ema_span = 10
-                    df["rs_rating_20_ema"] = df["rs_rating_20"].ewm(span=ema_span, adjust=False).mean().round(2)
-                    df["rs_rating_50_ema"] = df["rs_rating_50"].ewm(span=ema_span, adjust=False).mean().round(2)
-                    df["rs_rating_252_ema"] = df["rs_rating_252"].ewm(span=ema_span, adjust=False).mean().round(2)
+                #     # Apply EMA smoothing with a fixed short span (10 days) to reduce noise
+                #     # Using the same smoothing period for all ratings for consistency
+                #     ema_span = 10
+                #     df["rs_rating_20_ema"] = df["rs_rating_20"].ewm(span=ema_span, adjust=False).mean().round(2)
+                #     df["rs_rating_50_ema"] = df["rs_rating_50"].ewm(span=ema_span, adjust=False).mean().round(2)
+                #     df["rs_rating_252_ema"] = df["rs_rating_252"].ewm(span=ema_span, adjust=False).mean().round(2)
 
-                    indicator_data["rs_rating_20"] = convert_nans(df["rs_rating_20"].values)
-                    indicator_data["rs_rating_50"] = convert_nans(df["rs_rating_50"].values)
-                    indicator_data["rs_rating_252"] = convert_nans(df["rs_rating_252"].values)
+                #     indicator_data["rs_rating_20"] = convert_nans(df["rs_rating_20"].values)
+                #     indicator_data["rs_rating_50"] = convert_nans(df["rs_rating_50"].values)
+                #     indicator_data["rs_rating_252"] = convert_nans(df["rs_rating_252"].values)
 
-                    indicator_data["rs_rating_20_ema"] = convert_nans(df["rs_rating_20_ema"].values)
-                    indicator_data["rs_rating_50_ema"] = convert_nans(df["rs_rating_50_ema"].values)
-                    indicator_data["rs_rating_252_ema"] = convert_nans(df["rs_rating_252_ema"].values)
+                #     indicator_data["rs_rating_20_ema"] = convert_nans(df["rs_rating_20_ema"].values)
+                #     indicator_data["rs_rating_50_ema"] = convert_nans(df["rs_rating_50_ema"].values)
+                #     indicator_data["rs_rating_252_ema"] = convert_nans(df["rs_rating_252_ema"].values)
 
                 elif ind.name == "matrix_series":
                     price_period = ind.params.get("price_period", 16)

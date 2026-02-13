@@ -15,7 +15,7 @@ import PricePanel from './panels/PricePanel';
 import RsiPanel from './panels/RsiPanel';
 import BvcPanel from './panels/BvcPanel';
 import VolatilityPanel from './panels/VolatilityPanel';
-import RsRatingPanel from './panels/RsRatingPanel';
+// import RsRatingPanel from './panels/RsRatingPanel';
 import MatrixSeriesPanel from './panels/MatrixSeriesPanel';
 import WilliamsVixFixPanel from './panels/WilliamsVixFixPanel';
 import SqueezeTtmPanel from './panels/SqueezeTtmPanel';
@@ -55,10 +55,10 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
       1,   // Panel 1: RSI indicators
       1,   // Panel 2: BVC indicator
       1,   // Panel 3: Volatility indicators
-      1,   // Panel 4: RS Rating indicators
-      2,   // Panel 5: Matrix Series indicator
-      2,   // Panel 6: Squeeze TTM
-      1,   // Panel 7: Williams Vix Fix
+      // 1,   // Panel 4: RS Rating indicators
+      2,   // Panel 4: Matrix Series indicator
+      2,   // Panel 5: Squeeze TTM
+      1,   // Panel 6: Williams Vix Fix
     ],
     globalScaleMargins: { top: 0.02, bottom: 0.02 },
   };
@@ -394,7 +394,7 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
             { name: "bvc", params: { window: 20, kappa: 0.1 } },
             { name: "kalman_zscore", params: { window: 20 } },
             { name: "yz_volatility", params: { window: 30, periods: 252 } },
-            { name: "rs_rating" },
+            // { name: "rs_rating" },
             { name: "matrix_series", params: { price_period: 20, sup_res_period: 50, sup_res_percentage: 100, smoother: 5 } },
             { name: "williams_vix_fix" },
             { name: "squeeze_ttm" }
@@ -509,11 +509,11 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
             data={indicatorsData}
             timestamps={timestamps}
           />
-          <RsRatingPanel
+          {/* <RsRatingPanel
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
-          />
+          /> */}
           <MatrixSeriesPanel
             chart={chartRef.current}
             data={indicatorsData}
@@ -523,13 +523,13 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
-            paneIndex={6}
+            paneIndex={5}
           />
           <WilliamsVixFixPanel
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
-            paneIndex={7}
+            paneIndex={6}
           />
         </>
       )}
