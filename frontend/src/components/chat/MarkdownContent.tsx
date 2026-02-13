@@ -25,6 +25,7 @@ const listItemStyles = {
     paddingLeft: '0.5em',
     marginLeft: '0.5em',
   },
+  '& ol': { listStyleType: 'decimal' as const },
   '& ul': { listStyleType: 'circle' as const },
   '& ul ul': { listStyleType: 'disc' as const },
 };
@@ -49,12 +50,19 @@ export const MarkdownContent = ({ content, sx = {} }: MarkdownContentProps) => {
   const elements: React.ReactNode[] = [];
   let listItems: { content: string; indent: number }[] = [];
   let listOrdered = false;
+  let orderedSequenceStart = 1;
 
-  const renderListTree = (nodes: ListNode[], ordered: boolean, keyPrefix: string) => {
+  const renderListTree = (
+    nodes: ListNode[],
+    ordered: boolean,
+    keyPrefix: string,
+    orderedStart?: number,
+  ) => {
     const ListTag = ordered ? 'ol' : 'ul';
     return (
       <Box
         component={ListTag}
+        {...(ordered && orderedStart ? { start: orderedStart } : {})}
         sx={{
           ...listItemStyles,
           ...(ordered ? {} : { listStyleType: 'disc' }),
@@ -73,11 +81,15 @@ export const MarkdownContent = ({ content, sx = {} }: MarkdownContentProps) => {
   const flushList = () => {
     if (listItems.length === 0) return;
     const tree = buildListTree(listItems);
+    const currentStart = listOrdered ? orderedSequenceStart : undefined;
     elements.push(
       <Box key={elements.length}>
-        {renderListTree(tree, listOrdered, `list-${elements.length}`)}
+        {renderListTree(tree, listOrdered, `list-${elements.length}`, currentStart)}
       </Box>,
     );
+    if (listOrdered) {
+      orderedSequenceStart += tree.length;
+    }
     listItems = [];
   };
 
@@ -168,6 +180,9 @@ export const MarkdownContent = ({ content, sx = {} }: MarkdownContentProps) => {
     const trimmed = line.trim();
 
     if (trimmed === '') {
+      if (listItems.length > 0) {
+        continue;
+      }
       flushList();
       elements.push(<Box key={elements.length} sx={{ height: '0.5em' }} />);
       continue;

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Box,
   TextField,
@@ -14,10 +14,14 @@ import {
   Alert,
   Stack,
   Chip,
+  Drawer,
+  Fab,
 } from '@mui/material';
-import { Sync, ShowChart } from '@mui/icons-material';
+import { Sync, ShowChart, Notes } from '@mui/icons-material';
 import { syncStock } from '../lib/services/workflows';
 import type { Report } from '../lib/services/report';
+import { getChatNotes, type ChatNoteItem } from '../lib/services/chat';
+import { MarkdownContent } from '../components/chat/MarkdownContent';
 import StockChart from '../components/chart/StockChart';
 
 export default function ChartPage() {
@@ -29,6 +33,29 @@ export default function ChartPage() {
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
   const chartPaperRef = useRef<HTMLDivElement | null>(null);
   const [chartHeight, setChartHeight] = useState(800);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [notesError, setNotesError] = useState<string | null>(null);
+  const [notes, setNotes] = useState<ChatNoteItem[]>([]);
+  const [drawerWidth, setDrawerWidth] = useState(560);
+
+  const loadNotes = useCallback(async () => {
+    const sym = currentSymbol.trim().toUpperCase();
+    if (!sym) {
+      setNotes([]);
+      return;
+    }
+    setNotesLoading(true);
+    setNotesError(null);
+    try {
+      const response = await getChatNotes(sym);
+      setNotes(response.notes);
+    } catch (error) {
+      setNotesError(error instanceof Error ? error.message : 'Failed to load notes');
+    } finally {
+      setNotesLoading(false);
+    }
+  }, [currentSymbol]);
 
   useEffect(() => {
     const updateChartHeight = () => {
@@ -79,6 +106,32 @@ export default function ChartPage() {
     } finally {
       setSyncing(false);
     }
+  };
+
+  const handleOpenNotes = async () => {
+    setNotesOpen(true);
+    await loadNotes();
+  };
+
+  const handleStartResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = drawerWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = moveEvent.clientX - startX;
+      const maxWidth = Math.max(420, window.innerWidth - 32);
+      const nextWidth = Math.min(maxWidth, Math.max(360, startWidth + delta));
+      setDrawerWidth(nextWidth);
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
   };
 
   return (
@@ -193,6 +246,96 @@ export default function ChartPage() {
       >
         <StockChart symbol={currentSymbol} onReportClick={handleReportClick} height={chartHeight} />
       </Paper>
+
+      <Fab
+        color="primary"
+        onClick={handleOpenNotes}
+        size="large"
+        sx={{
+          position: 'fixed',
+          right: 24,
+          bottom: 24,
+          zIndex: 1200,
+          width: 50,
+          height: 50,
+        }}
+      >
+        <Notes sx={{ fontSize: 34 }} />
+      </Fab>
+
+      <Drawer
+        anchor="right"
+        open={notesOpen}
+        onClose={() => setNotesOpen(false)}
+        PaperProps={{ sx: { width: { xs: '100%', sm: drawerWidth }, p: 3, position: 'relative' } }}
+      >
+        <Box
+          onMouseDown={handleStartResize}
+          sx={{
+            position: 'absolute',
+            top: 0,
+            bottom: 0,
+            right: 0,
+            width: 10,
+            cursor: 'col-resize',
+            zIndex: 2,
+            display: { xs: 'none', sm: 'block' },
+          }}
+        />
+        <Stack spacing={2} sx={{ height: '100%' }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center">
+            <Typography variant="h5">Notes ({currentSymbol})</Typography>
+            <Button size="small" onClick={loadNotes} disabled={notesLoading}>
+              {notesLoading ? 'Loading...' : 'Refresh'}
+            </Button>
+          </Stack>
+
+          {notesError ? <Alert severity="error">{notesError}</Alert> : null}
+
+          <Box sx={{ overflowY: 'auto', flex: 1, pr: 0.5 }}>
+            <Stack spacing={1.5}>
+              {!notesLoading && notes.length === 0 ? (
+                <Typography variant="body2" color="text.secondary">
+                  No notes found for this symbol.
+                </Typography>
+              ) : null}
+              {notes.map((note, idx) => (
+                <Paper
+                  key={`${note.created_at}-${idx}`}
+                  sx={{
+                    p: 2,
+                    border: '1px solid',
+                    borderColor: 'rgba(99, 102, 241, 0.25)',
+                    background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
+                  }}
+                >
+                  <Typography
+                    variant="body2"
+                    sx={{
+                      color: '#a5b4fc',
+                      fontFamily: "'SF Mono', 'Fira Code', 'Monaco', monospace",
+                      letterSpacing: 0.2,
+                    }}
+                  >
+                    {note.created_at ? new Date(note.created_at).toLocaleString() : 'N/A'}
+                  </Typography>
+                  <Box
+                    sx={{
+                      mt: 1,
+                      color: '#f1f5f9',
+                      fontWeight: 500,
+                      fontSize: '1rem',
+                      lineHeight: 1.75,
+                    }}
+                  >
+                    <MarkdownContent content={note.message} />
+                  </Box>
+                </Paper>
+              ))}
+            </Stack>
+          </Box>
+        </Stack>
+      </Drawer>
 
       {/* Report Dialog */}
       <Dialog

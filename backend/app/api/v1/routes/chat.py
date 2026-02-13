@@ -1,17 +1,20 @@
 import base64
 import json
+import os
 import re
 import struct
 import time
 import uuid
-from typing import Generator, Optional
+from typing import Generator, List, Optional
 
+import clickhouse_connect
 import requests
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from app.core.settings import settings
 from app.utils.chat_protos import build_dynamic_messages
 
 
@@ -30,6 +33,23 @@ class ChatStreamRequest(BaseModel):
     master_account: Optional[str] = "AK0909"
     code_verifier: Optional[str] = None
     device_id: Optional[str] = None
+
+
+class SaveChatNoteRequest(BaseModel):
+    symbol: str = Field(..., min_length=1, max_length=32)
+    message: str = Field(..., min_length=1)
+    chat_id: Optional[str] = None
+
+
+class ChatNoteItem(BaseModel):
+    symbol: str
+    message: str
+    chat_id: Optional[str] = None
+    created_at: str
+
+
+class ChatNotesResponse(BaseModel):
+    notes: List[ChatNoteItem]
 
 
 def _get_token_exp(token: str) -> Optional[int]:
@@ -193,6 +213,89 @@ def _stream_decode_and_parse(
                 yield msg_bytes
 
 
+def _get_clickhouse_client():
+    return clickhouse_connect.get_client(
+        host=settings.clickhouse_host,
+        port=settings.clickhouse_port,
+        username=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+        database=settings.clickhouse_db,
+    )
+
+
+def _ensure_chat_notes_table(client, database: str, table: str) -> None:
+    client.command(f"CREATE DATABASE IF NOT EXISTS {database}")
+    client.command(
+        f"""
+        CREATE TABLE IF NOT EXISTS {database}.{table} (
+            id UUID DEFAULT generateUUIDv4(),
+            symbol String,
+            message String,
+            chat_id Nullable(String),
+            created_at DateTime64(3) DEFAULT now64(3)
+        )
+        ENGINE = MergeTree
+        ORDER BY (symbol, created_at)
+        """
+    )
+
+
+@router.post("/notes")
+def save_chat_note(request: SaveChatNoteRequest) -> dict:
+    database = settings.clickhouse_db
+    table = os.getenv("CLICKHOUSE_CHAT_NOTES_TABLE", "chat_agent_notes")
+    client = _get_clickhouse_client()
+    try:
+        _ensure_chat_notes_table(client, database, table)
+        client.insert(
+            table=f"{database}.{table}",
+            data=[[
+                request.symbol.strip().upper(),
+                request.message,
+                request.chat_id,
+            ]],
+            column_names=["symbol", "message", "chat_id"],
+        )
+        return {"status": "ok"}
+    except Exception as exc:
+        logger.exception("Failed to save chat note")
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        client.close()
+
+
+@router.get("/notes", response_model=ChatNotesResponse)
+def list_chat_notes(symbol: str = Query(..., min_length=1, max_length=32), limit: int = Query(100, ge=1, le=500)) -> ChatNotesResponse:
+    database = settings.clickhouse_db
+    table = os.getenv("CLICKHOUSE_CHAT_NOTES_TABLE", "chat_agent_notes")
+    client = _get_clickhouse_client()
+    try:
+        _ensure_chat_notes_table(client, database, table)
+        query = (
+            f"SELECT symbol, message, chat_id, created_at "
+            f"FROM {database}.{table} "
+            "WHERE symbol = %(symbol)s "
+            "ORDER BY created_at DESC "
+            "LIMIT %(limit)s"
+        )
+        result = client.query(query, parameters={"symbol": symbol.strip().upper(), "limit": limit})
+        notes = [
+            ChatNoteItem(
+                symbol=row[0],
+                message=row[1],
+                chat_id=row[2],
+                created_at=row[3].isoformat() if row[3] is not None else "",
+            )
+            for row in result.result_rows
+        ]
+        return ChatNotesResponse(notes=notes)
+    except Exception as exc:
+        logger.exception("Failed to list chat notes")
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        client.close()
+
+
 @router.post("/stream")
 def stream_chat(request: ChatStreamRequest) -> StreamingResponse:
     def event_generator() -> Generator[str, None, None]:
@@ -258,6 +361,9 @@ def stream_chat(request: ChatStreamRequest) -> StreamingResponse:
                             "eventType": event.eventType,
                             "chatId": event.chatId,
                         }
+                        if event.eventType == "chat.output_text.done":
+                            # skip the last message
+                            break
                         yield f"event: message\ndata: {json.dumps(data)}\n\n"
                     except Exception:
                         logger.exception("Chat stream decode failed")

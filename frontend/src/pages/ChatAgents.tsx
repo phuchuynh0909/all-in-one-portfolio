@@ -21,6 +21,7 @@ import ThumbDownOutlinedIcon from '@mui/icons-material/ThumbDownOutlined';
 import { MarkdownContent } from '../components/chat/MarkdownContent';
 import {
   refreshAccessToken,
+  saveChatNote,
   startChatStream,
   type ChatStreamMessage,
 } from '../lib/services/chat';
@@ -30,6 +31,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   content: string;
   isStreaming?: boolean;
+  chatId?: string;
 }
 
 const DOLPHIN_AVATAR = '🐬';
@@ -56,6 +58,9 @@ const ChatAgents = () => {
   const [streamError, setStreamError] = useState<string | null>(null);
   const [isStreaming, setIsStreaming] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [noteSymbols, setNoteSymbols] = useState<Record<string, string>>({});
+  const [noteSaving, setNoteSaving] = useState<Record<string, boolean>>({});
+  const [noteStatus, setNoteStatus] = useState<Record<string, string>>({});
 
   const streamControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -165,15 +170,16 @@ const ChatAgents = () => {
           if (tokens.refresh_token) setRefreshToken(tokens.refresh_token);
         },
         onMessage: (message: ChatStreamMessage) => {
-          if (message.text) {
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === assistantMessageId
-                  ? { ...m, content: m.content + message.text }
-                  : m,
-              ),
-            );
-          }
+          setMessages((prev) =>
+            prev.map((m) => {
+              if (m.id !== assistantMessageId) return m;
+              return {
+                ...m,
+                content: message.text ? m.content + message.text : m.content,
+                chatId: message.chatId || m.chatId,
+              };
+            }),
+          );
         },
         onError: (error) => {
           setStreamError(error instanceof Error ? error.message : 'Stream error');
@@ -214,6 +220,24 @@ const ChatAgents = () => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    }
+  };
+
+  const handleSaveNote = async (msg: ChatMessage) => {
+    const symbol = (noteSymbols[msg.id] || '').trim().toUpperCase();
+    if (!symbol || !msg.content.trim()) {
+      setNoteStatus((prev) => ({ ...prev, [msg.id]: 'Please input symbol before saving.' }));
+      return;
+    }
+    setNoteSaving((prev) => ({ ...prev, [msg.id]: true }));
+    setNoteStatus((prev) => ({ ...prev, [msg.id]: '' }));
+    try {
+      await saveChatNote({ symbol, message: msg.content, chat_id: msg.chatId });
+      setNoteStatus((prev) => ({ ...prev, [msg.id]: 'Saved as note.' }));
+    } catch (error) {
+      setNoteStatus((prev) => ({ ...prev, [msg.id]: error instanceof Error ? error.message : 'Failed to save note.' }));
+    } finally {
+      setNoteSaving((prev) => ({ ...prev, [msg.id]: false }));
     }
   };
 
@@ -338,13 +362,40 @@ const ChatAgents = () => {
                 </Box>
               )}
               {msg.role === 'assistant' && msg.content && !msg.isStreaming && (
-                <Stack direction="row" spacing={0.5} sx={{ mt: 1.5 }}>
-                  <IconButton size="small" sx={{ color: 'text.secondary' }}>
-                    <ThumbUpOutlinedIcon fontSize="small" />
-                  </IconButton>
-                  <IconButton size="small" sx={{ color: 'text.secondary' }}>
-                    <ThumbDownOutlinedIcon fontSize="small" />
-                  </IconButton>
+                <Stack spacing={1} sx={{ mt: 1.5 }}>
+                  <Stack direction="row" spacing={0.5}>
+                    <IconButton size="small" sx={{ color: 'text.secondary' }}>
+                      <ThumbUpOutlinedIcon fontSize="small" />
+                    </IconButton>
+                    <IconButton size="small" sx={{ color: 'text.secondary' }}>
+                      <ThumbDownOutlinedIcon fontSize="small" />
+                    </IconButton>
+                  </Stack>
+                  <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1}>
+                    <TextField
+                      size="small"
+                      label="Symbol"
+                      placeholder="e.g. HSG"
+                      value={noteSymbols[msg.id] || ''}
+                      onChange={(e) =>
+                        setNoteSymbols((prev) => ({ ...prev, [msg.id]: e.target.value.toUpperCase() }))
+                      }
+                      sx={{ minWidth: 120 }}
+                    />
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      onClick={() => handleSaveNote(msg)}
+                      disabled={!!noteSaving[msg.id]}
+                    >
+                      {noteSaving[msg.id] ? 'Saving...' : 'Save as note'}
+                    </Button>
+                  </Stack>
+                  {noteStatus[msg.id] ? (
+                    <Typography variant="caption" color={noteStatus[msg.id] === 'Saved as note.' ? 'success.main' : 'error.main'}>
+                      {noteStatus[msg.id]}
+                    </Typography>
+                  ) : null}
                 </Stack>
               )}
             </Box>

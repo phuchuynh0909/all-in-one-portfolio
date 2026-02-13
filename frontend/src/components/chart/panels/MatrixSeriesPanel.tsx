@@ -36,7 +36,7 @@ export default function MatrixSeriesPanel({ chart, data, timestamps }: MatrixSer
             wickDownColor: '#ef4444',
             priceScaleId: 'right',
         }, 5);
-        matrixSeriesCandle.moveToPane(5);
+        matrixSeriesCandle.moveToPane(4);
         matrixSeriesCandleRef.current = matrixSeriesCandle;
 
         // Matrix Series Support Line (red)
@@ -51,7 +51,7 @@ export default function MatrixSeriesPanel({ chart, data, timestamps }: MatrixSer
             priceScaleId: 'right',
             lastValueVisible: true,
         }, 5);
-        matrixSeriesSupport.moveToPane(5);
+        matrixSeriesSupport.moveToPane(4);
         matrixSeriesSupportRef.current = matrixSeriesSupport;
 
         // Matrix Series Resistance Line (green)
@@ -66,7 +66,7 @@ export default function MatrixSeriesPanel({ chart, data, timestamps }: MatrixSer
             priceScaleId: 'right',
             lastValueVisible: true,
         }, 5);
-        matrixSeriesResistance.moveToPane(5);
+        matrixSeriesResistance.moveToPane(4);
         matrixSeriesResistanceRef.current = matrixSeriesResistance;
 
         // Hidden line series for overbought/oversold markers in Matrix Series panel
@@ -79,7 +79,7 @@ export default function MatrixSeriesPanel({ chart, data, timestamps }: MatrixSer
             priceLineVisible: false,
             crosshairMarkerVisible: false,
         }, 5);
-        matrixSeriesMarker.moveToPane(5);
+        matrixSeriesMarker.moveToPane(4);
         matrixSeriesMarkerRef.current = matrixSeriesMarker;
 
         return () => {

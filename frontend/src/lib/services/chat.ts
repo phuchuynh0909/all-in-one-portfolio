@@ -43,9 +43,42 @@ export interface ChatStreamHandlers {
   onComplete?: () => void;
 }
 
+export interface SaveChatNoteRequest {
+  symbol: string;
+  message: string;
+  chat_id?: string;
+}
+
+export interface SaveChatNoteResponse {
+  status: string;
+}
+
+export interface ChatNoteItem {
+  symbol: string;
+  message: string;
+  chat_id?: string | null;
+  created_at: string;
+}
+
+export interface ChatNotesResponse {
+  notes: ChatNoteItem[];
+}
+
 export const refreshAccessToken = async (
   payload: RefreshTokenRequest,
 ): Promise<RefreshTokenResponse> => apiPost('/auth/refresh-token', payload);
+
+export const saveChatNote = async (
+  payload: SaveChatNoteRequest,
+): Promise<SaveChatNoteResponse> => apiPost('/chat/notes', payload);
+
+export const getChatNotes = async (symbol: string): Promise<ChatNotesResponse> => {
+  const response = await fetch(`${API_BASE_URL}/chat/notes?symbol=${encodeURIComponent(symbol)}`);
+  if (!response.ok) {
+    throw new Error(`GET /chat/notes failed: ${response.status}`);
+  }
+  return (await response.json()) as ChatNotesResponse;
+};
 
 export const startChatStream = (
   payload: ChatStreamRequest,
