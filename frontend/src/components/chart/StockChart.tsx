@@ -23,9 +23,10 @@ import SqueezeTtmPanel from './panels/SqueezeTtmPanel';
 type StockChartProps = {
   symbol: string;
   onReportClick?: (report: Report) => void;
+  height?: number;
 };
 
-export default function StockChart({ symbol, onReportClick }: StockChartProps) {
+export default function StockChart({ symbol, onReportClick, height }: StockChartProps) {
   const [reports, setReports] = useState<Report[]>([]);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
@@ -46,8 +47,9 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
 
   // Chart configuration with pane stretch factors (relative ratios)
   // Using setStretchFactor instead of setHeight due to v5 bug
+  const resolvedHeight = height ?? 800;
   const chartConfig = {
-    totalHeight: 800, // Total chart height in pixels
+    totalHeight: resolvedHeight,
     paneStretchFactors: [
       5,   // Panel 0: Main price chart (largest)
       1,   // Panel 1: RSI indicators
@@ -433,6 +435,16 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     fetchData();
   }, [symbol, isChartReady]);
 
+  useEffect(() => {
+    if (!chartRef.current || !timestamps.length) return;
+    const fitChart = () => {
+      chartRef.current?.timeScale().fitContent();
+      applyPaneHeights();
+    };
+    const timeoutId = window.setTimeout(fitChart, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [timestamps, isChartReady]);
+
   // Handle resize
   useEffect(() => {
     const handleResize = () => {
@@ -447,6 +459,11 @@ export default function StockChart({ symbol, onReportClick }: StockChartProps) {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  useEffect(() => {
+    if (!chartRef.current || !chartContainerRef.current) return;
+    chartRef.current.resize(chartContainerRef.current.clientWidth || 0, resolvedHeight);
+  }, [resolvedHeight]);
 
   return (
     <Box sx={{

@@ -12,6 +12,7 @@ psycopg2-binary>=2.9.0
 # Encryption and API utilities
 pycryptodomex>=3.19.0
 requests>=2.31.0
+protobuf>=4.25.0
 
 # Data processing
 pandas>=2.1.0

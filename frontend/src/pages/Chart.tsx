@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Box,
   TextField,
@@ -27,6 +27,21 @@ export default function ChartPage() {
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
+  const chartPaperRef = useRef<HTMLDivElement | null>(null);
+  const [chartHeight, setChartHeight] = useState(800);
+
+  useEffect(() => {
+    const updateChartHeight = () => {
+      if (!chartPaperRef.current) return;
+      const { top } = chartPaperRef.current.getBoundingClientRect();
+      const available = window.innerHeight - top - 24;
+      setChartHeight(Math.max(360, Math.floor(available)));
+    };
+
+    updateChartHeight();
+    window.addEventListener('resize', updateChartHeight);
+    return () => window.removeEventListener('resize', updateChartHeight);
+  }, []);
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === 'Enter') {
@@ -67,7 +82,7 @@ export default function ChartPage() {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ py: 4 }}>
+    <Container maxWidth={false} sx={{ py: 4 }}>
       {/* Header */}
       <Box sx={{ mb: 4 }}>
         <Typography
@@ -168,6 +183,7 @@ export default function ChartPage() {
 
       {/* Chart */}
       <Paper
+        ref={chartPaperRef}
         sx={{
           p: 2,
           background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
@@ -175,7 +191,7 @@ export default function ChartPage() {
           borderRadius: 2,
         }}
       >
-        <StockChart symbol={currentSymbol} onReportClick={handleReportClick} />
+        <StockChart symbol={currentSymbol} onReportClick={handleReportClick} height={chartHeight} />
       </Paper>
 
       {/* Report Dialog */}

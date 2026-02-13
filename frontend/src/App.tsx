@@ -26,6 +26,7 @@ import { FinancialStatements } from './pages/FinancialStatements';
 import Scanner from './pages/Scanner';
 import Live from './pages/Live';
 import Alerts from './pages/Alerts';
+import ChatAgents from './pages/ChatAgents';
 
 const theme = createTheme({
   palette: {
@@ -59,6 +60,7 @@ const navItems = [
   { path: '/scanner', label: 'Scanner' },
   { path: '/live', label: '🔴 Live' },
   { path: '/alerts', label: '🔔 Alerts' },
+  { path: '/chat', label: '🤖 Chat' },
 ];
 
 // Create a client
@@ -126,6 +128,14 @@ export default function App() {
               <Route path="/scanner" element={<Scanner />} />
               <Route path="/live" element={<Live />} />
               <Route path="/alerts" element={<Alerts />} />
+              <Route
+                path="/chat"
+                element={
+                  <Box sx={{ my: -3, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+                    <ChatAgents />
+                  </Box>
+                }
+              />
             </Routes>
           </Box>
         </BrowserRouter>
