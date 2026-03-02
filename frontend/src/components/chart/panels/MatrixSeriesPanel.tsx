@@ -117,21 +117,24 @@ export default function MatrixSeriesPanel({ chart, data, timestamps }: MatrixSer
         const msUpLine = data.matrix_series.up_line ?? [];
         const msDownLine = data.matrix_series.down_line ?? [];
 
-        // Create candlestick data from hh/ll
-        const matrixCandleData = timestamps.map((timestamp: string, i: number) => {
+        // Create candlestick data from hh/ll (validate to avoid "Value is null" in lightweight-charts)
+        const rawMatrixCandleData = timestamps.map((timestamp: string, i: number) => {
             const hh = msHh[i];
             const ll = msLl[i];
-            if (hh == null || ll == null) return null;
+            if (hh == null || ll == null || typeof hh !== 'number' || typeof ll !== 'number' || isNaN(hh) || isNaN(ll)) return null;
+
+            const time = formatChartTime(timestamp);
+            if (typeof time !== 'number' || isNaN(time) || !isFinite(time)) return null;
 
             // Determine color based on direction (compare to previous)
             const prevHh = i > 0 ? msHh[i - 1] : hh;
             const prevLl = i > 0 ? msLl[i - 1] : ll;
             const currentMid = (hh + ll) / 2;
-            const prevMid = (prevHh! + prevLl!) / 2;
+            const prevMid = ((prevHh ?? hh) + (prevLl ?? ll)) / 2;
             const isUp = currentMid >= prevMid;
 
             return {
-                time: formatChartTime(timestamp),
+                time,
                 open: hh,
                 high: Math.max(hh, ll),
                 low: Math.min(hh, ll),
@@ -140,9 +143,20 @@ export default function MatrixSeriesPanel({ chart, data, timestamps }: MatrixSer
                 borderColor: isUp ? '#22c55e' : '#ef4444',
                 wickColor: isUp ? '#22c55e' : '#ef4444',
             };
-        }).filter(Boolean);
+        }).filter((c): c is NonNullable<typeof c> => c != null);
 
-        matrixSeriesCandleRef.current?.setData(matrixCandleData);
+        const matrixCandleData = rawMatrixCandleData
+            .sort((a, b) => a.time - b.time)
+            .reduce((acc: typeof rawMatrixCandleData, c) => {
+                const last = acc[acc.length - 1];
+                if (!last || last.time !== c.time) acc.push(c);
+                else acc[acc.length - 1] = c;
+                return acc;
+            }, []);
+
+        if (matrixCandleData.length > 0) {
+            matrixSeriesCandleRef.current?.setData(matrixCandleData);
+        }
 
         // Support line
         const supportData = formatIndicatorData(timestamps, msSupportLine);

@@ -131,8 +131,8 @@ def _load_delta_stocks(
     order_clause = "ORDER BY symbol, date"
 
     table_name = os.getenv("CLICKHOUSE_OHLC_EOD_TABLE", "ohlc_eod")
-    sql = f"SELECT {', '.join(selected_cols)} FROM {settings.clickhouse_db}.{table_name} {where_clause} {order_clause}"
-
+    sql = f"SELECT {', '.join(selected_cols)} FROM {settings.clickhouse_db}.{table_name} FINAL {where_clause} {order_clause}"
+    logger.debug(f"[PERF] clickhouse query: {sql}")
     t0 = time.perf_counter()
     client = clickhouse_connect.get_client(
         host=settings.clickhouse_host,
@@ -144,6 +144,9 @@ def _load_delta_stocks(
     try:
         result = client.query(sql)
         pdf = pd.DataFrame(result.result_rows, columns=result.column_names)
+        # Deduplicate by (symbol, date), keeping last occurrence
+        if "symbol" in pdf.columns and "date" in pdf.columns:
+            pdf = pdf.drop_duplicates(subset=["symbol", "date"], keep="last")
     finally:
         client.close()
     logger.debug(f"[PERF] clickhouse query: {(time.perf_counter() - t0) * 1000:.2f}ms, rows={len(pdf)}")

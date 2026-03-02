@@ -17,7 +17,12 @@ from app.services.indicators import avwap, trailing_sl
 from backtesting import Backtest, Strategy
 from backtesting.lib import crossover
 from backtesting.test import SMA
-from app.services.backtest_strategies import BreakoutDeMarkerStrategyBT, BreakoutTTMStrategyBT, WilliamsVixStrategyBT
+from app.services.backtest_strategies import (
+    BreakoutDeMarkerStrategyBT,
+    BreakoutTTMStrategyBT,
+    EpisodicPivotStrategyBT,
+    WilliamsVixStrategyBT,
+)
 
 # List of features used for ML predictions
 FEATURES_LIST = [
@@ -347,6 +352,18 @@ def _get_plot_strategy(strategy_name: str):
             'sl_stop': 0.1,
         }
         return WilliamsVixStrategyBT, args
+    elif strategy_name == "Episodic Pivot":
+        args = {
+            'gap_threshold': 0.01,
+            'vol_mult': 1.2,
+            'vol_period': 10,
+            'wait_days': 2,
+            'breakout_lookahead': 1,
+            'hold_days': 3,
+            'atr_period': 10,
+            'atr_multiplier': 1.8,
+        }
+        return EpisodicPivotStrategyBT, args
     return BreakoutDeMarkerStrategyBT, {}
 
 
@@ -390,7 +407,7 @@ async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) ->
         html_path = Path(temp_file.name)
 
     try:
-        bt.plot(filename=str(html_path), plot_volume=False, plot_equity=False, open_browser=False)
+        bt.plot(filename=str(html_path), plot_volume=True, plot_equity=False, open_browser=False)
         html = html_path.read_text(encoding="utf-8")
     except Exception as exc:
         logger.exception(

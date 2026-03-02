@@ -21,7 +21,7 @@ export default function BacktestVisualization() {
   const [selectedSymbol, setSelectedSymbol] = useState<string>('VCG');
   const [selectedStrategy, setSelectedStrategy] = useState<string>('Breakout TTM');
 
-  const strategies = ['Breakout DeMarker', 'Breakout TTM', 'Williams Vix Fix'];
+  const strategies = ['Breakout DeMarker', 'Breakout TTM', 'Williams Vix Fix', 'Episodic Pivot'];
 
   const { data: symbolsData } = useWatchlistSymbols();
   const symbols = symbolsData || [];

@@ -340,8 +340,8 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
           `;
 
           let left = param.point.x;
-          const timeScaleWidth = chartRef.current.timeScale().width();
-          const priceScaleWidth = chartRef.current.priceScale('left').width();
+          const timeScaleWidth = chartRef.current.timeScale()?.width() ?? 0;
+          const priceScaleWidth = chartRef.current.priceScale('left')?.width() ?? 0;
           const halfTooltipWidth = toolTipWidth / 2;
           const newLeft = Math.max(
             Math.min(
