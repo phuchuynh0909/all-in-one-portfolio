@@ -4,6 +4,7 @@ import {
   TextField,
   Container,
   Paper,
+  InputAdornment,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -16,8 +17,9 @@ import {
   Chip,
   Drawer,
   Fab,
+  IconButton,
 } from '@mui/material';
-import { Sync, ShowChart, Notes } from '@mui/icons-material';
+import { Sync, Notes, Search } from '@mui/icons-material';
 import { syncStock } from '../lib/services/workflows';
 import type { Report } from '../lib/services/report';
 import { getChatNotes, type ChatNoteItem } from '../lib/services/chat';
@@ -38,6 +40,7 @@ export default function ChartPage() {
   const [notesError, setNotesError] = useState<string | null>(null);
   const [notes, setNotes] = useState<ChatNoteItem[]>([]);
   const [drawerWidth, setDrawerWidth] = useState(560);
+  const symbolInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadNotes = useCallback(async () => {
     const sym = currentSymbol.trim().toUpperCase();
@@ -135,103 +138,105 @@ export default function ChartPage() {
   };
 
   return (
-    <Container maxWidth={false} sx={{ py: 4 }}>
-      {/* Header */}
-      <Box sx={{ mb: 4 }}>
-        <Typography
-          variant="h4"
-          sx={{
-            fontWeight: 700,
-            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%)',
-            backgroundClip: 'text',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            mb: 1,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 1.5,
-          }}
-        >
-          <ShowChart sx={{ fontSize: 36, color: '#6366f1' }} />
-          Stock Chart
-        </Typography>
-        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-          Real-time market data visualization with technical indicators
-        </Typography>
-      </Box>
-
-      {/* Symbol Selector */}
+    <Container
+      maxWidth={false}
+      sx={{
+        py: 2,
+        minHeight: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+      }}
+    >
       <Paper
         sx={{
-          p: 2,
-          mb: 3,
-          background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
-          border: '1px solid rgba(99, 102, 241, 0.2)',
+          p: 0.5,
+          mb: 1,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          gap: 1,
+          background: 'linear-gradient(135deg, rgba(18, 18, 28, 0.98) 0%, rgba(20, 20, 32, 0.98) 100%)',
+          border: '1px solid rgba(99, 102, 241, 0.25)',
           borderRadius: 2,
         }}
       >
-        <Stack
-          direction={{ xs: 'column', sm: 'row' }}
-          spacing={2}
-          alignItems="center"
-          justifyContent="space-between"
-        >
-          <Stack direction="row" spacing={2} alignItems="center">
-            <TextField
-              label="Symbol"
-              value={symbol}
-              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-              onKeyDown={handleKeyDown}
-              onFocus={handleFocus}
-              onBlur={handleBlur}
-              variant="outlined"
-              size="small"
-              placeholder={isFocused ? 'Enter symbol' : 'Press Enter to update'}
-              sx={{
-                minWidth: 150,
-                '& .MuiOutlinedInput-notchedOutline': {
-                  borderColor: 'rgba(99, 102, 241, 0.3)',
-                },
-                '& .MuiOutlinedInput-root:hover .MuiOutlinedInput-notchedOutline': {
-                  borderColor: 'rgba(99, 102, 241, 0.5)',
-                },
-                '& .MuiOutlinedInput-root.Mui-focused .MuiOutlinedInput-notchedOutline': {
-                  borderColor: '#6366f1',
-                },
-              }}
-            />
-            <Chip
-              label={currentSymbol}
-              sx={{
-                bgcolor: 'rgba(99, 102, 241, 0.15)',
-                color: '#a5b4fc',
+        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ minWidth: 0 }}>
+          <TextField
+            value={symbol}
+            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+            onKeyDown={handleKeyDown}
+            onFocus={handleFocus}
+            onBlur={handleBlur}
+            inputRef={symbolInputRef}
+            variant="standard"
+            placeholder={isFocused ? 'Enter symbol' : currentSymbol}
+            InputProps={{
+              disableUnderline: true,
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search sx={{ color: '#9ca3af' }} />
+                </InputAdornment>
+              ),
+              sx: {
+                color: '#e5e7eb',
+                fontSize: '1rem',
                 fontWeight: 600,
-                fontSize: '0.875rem',
-              }}
-            />
-          </Stack>
-
-          <Button
-            variant="outlined"
-            onClick={handleSync}
-            disabled={syncing}
-            startIcon={<Sync sx={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />}
-            sx={{
-              borderColor: 'rgba(99, 102, 241, 0.5)',
-              color: '#a5b4fc',
-              '&:hover': {
-                borderColor: '#6366f1',
-                bgcolor: 'rgba(99, 102, 241, 0.1)',
-              },
-              '@keyframes spin': {
-                '0%': { transform: 'rotate(0deg)' },
-                '100%': { transform: 'rotate(360deg)' },
+                letterSpacing: 0.4,
+                px: 1,
+                py: 0.5,
+                minWidth: 160,
               },
             }}
-          >
-            {syncing ? 'Syncing…' : `Sync ${currentSymbol}`}
-          </Button>
+            sx={{
+              bgcolor: 'rgba(15, 15, 25, 0.85)',
+              border: '1px solid rgba(99, 102, 241, 0.25)',
+              borderRadius: 2,
+              '&:hover': {
+                borderColor: 'rgba(99, 102, 241, 0.45)',
+              },
+              '&.Mui-focused': {
+                borderColor: '#6366f1',
+              },
+            }}
+          />
+          <Chip
+            label={currentSymbol}
+            onClick={() => {
+              setIsFocused(true);
+              setSymbol('');
+              symbolInputRef.current?.focus();
+            }}
+            sx={{
+              bgcolor: 'rgba(99, 102, 241, 0.18)',
+              color: '#a5b4fc',
+              fontWeight: 600,
+              fontSize: '0.875rem',
+              cursor: 'pointer',
+            }}
+          />
         </Stack>
+
+        <IconButton
+          onClick={handleSync}
+          disabled={syncing}
+          aria-label={`Sync ${currentSymbol}`}
+          sx={{
+            width: 40,
+            height: 40,
+            border: '1px solid rgba(99, 102, 241, 0.5)',
+            color: '#a5b4fc',
+            '&:hover': {
+              borderColor: '#6366f1',
+              bgcolor: 'rgba(99, 102, 241, 0.1)',
+            },
+            '@keyframes spin': {
+              '0%': { transform: 'rotate(0deg)' },
+              '100%': { transform: 'rotate(360deg)' },
+            },
+          }}
+        >
+          <Sync sx={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
+        </IconButton>
       </Paper>
 
       {/* Chart */}
@@ -239,6 +244,9 @@ export default function ChartPage() {
         ref={chartPaperRef}
         sx={{
           p: 2,
+          flex: 1,
+          minHeight: 0,
+          position: 'relative',
           background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
           border: '1px solid rgba(99, 102, 241, 0.2)',
           borderRadius: 2,
