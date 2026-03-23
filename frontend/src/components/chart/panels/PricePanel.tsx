@@ -1,26 +1,37 @@
 import { useEffect, useRef } from 'react';
 import {
-    IChartApi,
-    ISeriesApi,
     CandlestickSeries,
     HistogramSeries,
     LineSeries,
     createSeriesMarkers
 } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, SeriesMarker, UTCTimestamp } from 'lightweight-charts';
 import {
     formatChartTime,
     formatReportDateForChart,
     formatIndicatorData
 } from '../../../lib/services/timeseries';
-import { Report } from '../../../lib/services/report';
+import type { Report } from '../../../lib/services/report';
 
 type PricePanelProps = {
     chart: IChartApi;
     data: any; // Timeseries data
     indicators: any; // Indicators data
     reports: Report[];
+    positionMarkers?: PositionSeriesMarker[];
     isChartReady: boolean;
     onSeriesReady: (series: ISeriesApi<"Candlestick">) => void;
+};
+
+type ChartMarker = SeriesMarker<UTCTimestamp>;
+type BarMarkerPosition = 'inBar' | 'aboveBar' | 'belowBar';
+export type PositionSeriesMarker = Omit<SeriesMarker<UTCTimestamp>, 'id' | 'position'> & {
+    id: string;
+    position: BarMarkerPosition;
+};
+
+type MarkerController = {
+    setMarkers: (markers: ChartMarker[]) => void;
 };
 
 export default function PricePanel({
@@ -28,6 +39,7 @@ export default function PricePanel({
     data,
     indicators,
     reports,
+    positionMarkers = [],
     isChartReady,
     onSeriesReady
 }: PricePanelProps) {
@@ -37,7 +49,8 @@ export default function PricePanel({
     const atrTrailingRef = useRef<ISeriesApi<"Line"> | null>(null);
     const vwapHighestRef = useRef<ISeriesApi<"Line"> | null>(null);
     const vwapLowestRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const markersRef = useRef<any>(null);
+    const reportMarkersRef = useRef<MarkerController | null>(null);
+    const positionMarkersRef = useRef<MarkerController | null>(null);
 
     useEffect(() => {
         if (!chart) return;
@@ -147,16 +160,15 @@ export default function PricePanel({
             atrTrailingRef.current = null;
             vwapHighestRef.current = null;
             vwapLowestRef.current = null;
-            markersRef.current = null;
+            reportMarkersRef.current = null;
+            positionMarkersRef.current = null;
         };
     }, [chart]);
 
     // Update data
     useEffect(() => {
-        // Clear existing markers first
-        if (markersRef.current) {
-            markersRef.current = markersRef.current.setMarkers([]);
-        }
+        reportMarkersRef.current?.setMarkers([]);
+        positionMarkersRef.current?.setMarkers([]);
 
         if (!data || !indicators) return;
 
@@ -198,24 +210,34 @@ export default function PricePanel({
             }));
             markerSeriesRef.current?.setData(markerSeriesData);
 
-            // Create markers for reports
-            const markers = reports
+            const reportMarkers: ChartMarker[] = reports
                 .filter(report => report.ngaykn)
                 .map(report => ({
                     time: formatReportDateForChart(report.ngaykn || ''),
                     position: 'inBar' as const,
                     color: '#2196F3',
                     text: '📄',
-                    shape: '' as const,
+                    shape: 'circle' as const,
                     size: 1,
-                    title: `${report.tenbaocao}\n${report.nguon}\n${new Date(report.ngaykn || '').toLocaleDateString('en-GB', { timeZone: 'Asia/Ho_Chi_Minh' })}`,
                 }));
 
-            if (markers.length > 0 && markerSeriesRef.current) {
-                markersRef.current = createSeriesMarkers(markerSeriesRef.current, markers as any);
+            if (markerSeriesRef.current) {
+                if (!reportMarkersRef.current) {
+                    reportMarkersRef.current = createSeriesMarkers(markerSeriesRef.current, reportMarkers);
+                } else {
+                    reportMarkersRef.current.setMarkers(reportMarkers);
+                }
+            }
+
+            if (candlestickSeriesRef.current) {
+                if (!positionMarkersRef.current) {
+                    positionMarkersRef.current = createSeriesMarkers(candlestickSeriesRef.current, positionMarkers);
+                } else {
+                    positionMarkersRef.current.setMarkers(positionMarkers);
+                }
             }
         }
-    }, [data, indicators, reports, isChartReady]);
+    }, [data, indicators, reports, positionMarkers, isChartReady]);
 
     return null;
 }

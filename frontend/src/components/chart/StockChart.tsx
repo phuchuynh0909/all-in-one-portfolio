@@ -1,17 +1,20 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, CircularProgress, Typography } from '@mui/material';
-import { createChart, ISeriesApi } from 'lightweight-charts';
+import { createChart } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
 import {
   fetchTimeseries,
   getDateRange,
+  formatChartTime,
 } from '../../lib/services/timeseries';
 import { differenceInDays } from 'date-fns';
 
 import type { Report } from '../../lib/services/report';
 import { fetchReports } from '../../lib/services/report';
+import { getPositions, getTransactions, type Position, type Transaction } from '../../lib/services/portfolio';
 
 // Import Panel Components
-import PricePanel from './panels/PricePanel';
+import PricePanel, { type PositionSeriesMarker } from './panels/PricePanel';
 import RsiPanel from './panels/RsiPanel';
 import BvcPanel from './panels/BvcPanel';
 import VolatilityPanel from './panels/VolatilityPanel';
@@ -26,15 +29,32 @@ type StockChartProps = {
   height?: number;
 };
 
-export default function StockChart({ symbol, onReportClick, height }: StockChartProps) {
+export default function StockChart({ symbol, height }: StockChartProps) {
   const [reports, setReports] = useState<Report[]>([]);
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<any>(null);
+  const chartRef = useRef<IChartApi | null>(null);
+
+  type PositionMarkerGroup = {
+    id: string;
+    time: UTCTimestamp;
+    side: 'buy' | 'sell';
+    marker: PositionSeriesMarker;
+    events: (Transaction | Position)[];
+  };
 
   // State for data
   const [timeseriesData, setTimeseriesData] = useState<any>(null);
   const [indicatorsData, setIndicatorsData] = useState<any>(null);
   const [timestamps, setTimestamps] = useState<string[]>([]);
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [positions, setPositions] = useState<Position[]>([]);
+  const [markerPopup, setMarkerPopup] = useState<{
+    time: UTCTimestamp;
+    index: number;
+    groups: PositionMarkerGroup[];
+    x: number;
+    y: number;
+  } | null>(null);
 
   // Ref for main candlestick series (needed for Legend)
   const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
@@ -44,6 +64,7 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
   const [isChartReady, setIsChartReady] = useState(false);
   const toolTipWidth = 200;
   const legendWidth = 450;
+  const markerPopupWidth = 280;
 
   // Chart configuration with pane stretch factors (relative ratios)
   // Using setStretchFactor instead of setHeight due to v5 bug
@@ -103,6 +124,147 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
 
   const formatPrice = (price: number): string => {
     return price.toFixed(2);
+  };
+
+  type CandlePoint = {
+    time: number;
+    open: number;
+    high: number;
+    low: number;
+    close: number;
+  };
+
+  const isCandlePoint = (value: unknown): value is CandlePoint => {
+    if (!value || typeof value !== 'object') return false;
+    const point = value as Record<string, unknown>;
+    return (
+      typeof point.time === 'number'
+      && typeof point.open === 'number'
+      && typeof point.high === 'number'
+      && typeof point.low === 'number'
+      && typeof point.close === 'number'
+    );
+  };
+
+  const timeIndexMap = useMemo(() => {
+    const map = new Map<UTCTimestamp, number>();
+    timestamps.forEach((timestamp: string, index: number) => {
+      map.set(formatChartTime(timestamp), index);
+    });
+    return map;
+  }, [timestamps]);
+
+  const positionEventsByTime = useMemo(() => {
+    const map = new Map<UTCTimestamp, { buy: (Transaction | Position)[]; sell: Transaction[] }>();
+    transactions.forEach((tx) => {
+      const time = formatChartTime(tx.transaction_date);
+      const existing = map.get(time) || { buy: [], sell: [] };
+      if (tx.transaction_type === 'buy') {
+        existing.buy = [...existing.buy, tx];
+      } else {
+        existing.sell = [...existing.sell, tx];
+      }
+      map.set(time, existing);
+    });
+    positions.forEach((pos) => {
+      const time = formatChartTime(pos.purchase_date);
+      const existing = map.get(time) || { buy: [], sell: [] };
+      existing.buy = [...existing.buy, pos];
+      map.set(time, existing);
+    });
+    return map;
+  }, [transactions, positions]);
+
+  const positionMarkerGroups = useMemo<PositionMarkerGroup[]>(() => {
+    return Array.from(positionEventsByTime.entries())
+      .sort((a, b) => a[0] - b[0])
+      .flatMap(([time, grouped]) => {
+        const buyEvents = grouped.buy;
+        const sellEvents = grouped.sell;
+        const groups: PositionMarkerGroup[] = [];
+
+        if (buyEvents.length > 0) {
+          const id = `tx-buy-${time}`;
+          groups.push({
+            id,
+            time,
+            side: 'buy',
+            events: buyEvents,
+            marker: {
+              id,
+              time,
+              position: 'belowBar',
+              color: '#22c55e',
+              text: '🅑',
+              // shape: 'arrowUp',
+              size: 3,
+            },
+          });
+        }
+
+        if (sellEvents.length > 0) {
+          const id = `tx-sell-${time}`;
+          groups.push({
+            id,
+            time,
+            side: 'sell',
+            events: sellEvents,
+            marker: {
+              id,
+              time,
+              position: 'aboveBar',
+              color: '#ef4444',
+              text: '🅢',
+              // shape: 'arrowDown',
+              size: 3,
+            },
+          });
+        }
+
+        return groups;
+      });
+  }, [positionEventsByTime]);
+
+  const positionMarkers = useMemo<PositionSeriesMarker[]>(() => {
+    return positionMarkerGroups.map((group) => group.marker);
+  }, [positionMarkerGroups]);
+
+  const positionMarkerTimeById = useMemo(() => {
+    const map = new Map<string, UTCTimestamp>();
+    positionMarkerGroups.forEach((group) => {
+      map.set(group.id, group.time);
+    });
+    return map;
+  }, [positionMarkerGroups]);
+
+  const positionMarkerGroupById = useMemo(() => {
+    const map = new Map<string, PositionMarkerGroup>();
+    positionMarkerGroups.forEach((group) => {
+      map.set(group.id, group);
+    });
+    return map;
+  }, [positionMarkerGroups]);
+
+  const positionMarkerGroupsByTime = useMemo(() => {
+    const map = new Map<UTCTimestamp, PositionMarkerGroup[]>();
+    positionMarkerGroups.forEach((group) => {
+      const existing = map.get(group.time) || [];
+      map.set(group.time, [...existing, group]);
+    });
+    return map;
+  }, [positionMarkerGroups]);
+
+  const normalizeMouseTime = (time: Time | undefined): UTCTimestamp | null => {
+    if (!time) return null;
+    if (typeof time === 'number') return time;
+    if (typeof time === 'string') return formatChartTime(time);
+    if ('year' in time && 'month' in time && 'day' in time) {
+      const yyyy = String(time.year).padStart(4, '0');
+      const mm = String(time.month).padStart(2, '0');
+      const dd = String(time.day).padStart(2, '0');
+      return formatChartTime(`${yyyy}-${mm}-${dd}`);
+    }
+    return null;
   };
 
   // Initialize chart
@@ -200,7 +362,9 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
 
   // Setup legend and crosshair handler
   useEffect(() => {
-    if (!chartRef.current || !chartContainerRef.current) return;
+    const chart = chartRef.current;
+    const container = chartContainerRef.current;
+    if (!chart || !container) return;
 
     // Create and style the legend and tooltip elements
     const legendElement = document.createElement('div');
@@ -265,22 +429,25 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
       </div>
     `;
 
-    chartContainerRef.current.appendChild(legendElement);
-    chartContainerRef.current.appendChild(toolTipElement);
+    container.appendChild(legendElement);
+    container.appendChild(toolTipElement);
 
     // Subscribe to crosshair move
-    const subscription = chartRef.current.subscribeCrosshairMove((param: any) => {
+    const handleCrosshairMove = (param: MouseEventParams<Time>) => {
       // Update legend with OHLC data
       if (candlestickSeriesRef.current) {
         const candleData = param.seriesData.get(candlestickSeriesRef.current);
-        if (candleData) {
+        if (isCandlePoint(candleData)) {
           const { open, high, low, close, time } = candleData;
 
           // Get previous day's data
           const series = candlestickSeriesRef.current;
           const dataPoints = series.data();
-          const currentIndex = dataPoints.findIndex((d: any) => d.time === time);
-          const prevClose = currentIndex > 0 ? dataPoints[currentIndex - 1].close : open;
+          const currentIndex = dataPoints.findIndex((d) => d.time === time);
+          const previousPoint = currentIndex > 0 ? dataPoints[currentIndex - 1] : null;
+          const prevClose = previousPoint && 'close' in previousPoint && typeof previousPoint.close === 'number'
+            ? previousPoint.close
+            : open;
 
           const percentChange = calculatePercentageChange(prevClose, close);
           const isPositive = close >= prevClose;
@@ -309,17 +476,18 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
         param.point === undefined ||
         !param.time ||
         param.point.x < 0 ||
-        param.point.x > chartContainerRef.current!.clientWidth ||
+        param.point.x > container.clientWidth ||
         param.point.y < 0 ||
-        param.point.y > chartContainerRef.current!.clientHeight
+        param.point.y > container.clientHeight
       ) {
         toolTipElement.style.display = 'none';
       } else {
+        const crosshairTime = typeof param.time === 'number' ? param.time : null;
         const hoveredReport = reports.find((report: Report) => {
           if (!report.ngaykn) return false;
-          if (!param.time) return false;
+          if (!crosshairTime) return false;
           const reportDate = new Date(report.ngaykn);
-          const diff = differenceInDays(reportDate, new Date((param?.time as number) * 1000));
+          const diff = differenceInDays(reportDate, new Date(crosshairTime * 1000));
           return diff >= -3 && diff <= 3;
         });
 
@@ -340,8 +508,8 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
           `;
 
           let left = param.point.x;
-          const timeScaleWidth = chartRef.current.timeScale()?.width() ?? 0;
-          const priceScaleWidth = chartRef.current.priceScale('left')?.width() ?? 0;
+          const timeScaleWidth = chart.timeScale()?.width() ?? 0;
+          const priceScaleWidth = chart.priceScale('left')?.width() ?? 0;
           const halfTooltipWidth = toolTipWidth / 2;
           const newLeft = Math.max(
             Math.min(
@@ -357,20 +525,18 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
           toolTipElement.style.display = 'none';
         }
       }
-    });
+    };
+
+    chart.subscribeCrosshairMove(handleCrosshairMove);
 
     return () => {
-      if (chartContainerRef.current) {
-        if (chartContainerRef.current.contains(legendElement)) {
-          chartContainerRef.current.removeChild(legendElement);
-        }
-        if (chartContainerRef.current.contains(toolTipElement)) {
-          chartContainerRef.current.removeChild(toolTipElement);
-        }
+      if (container.contains(legendElement)) {
+        container.removeChild(legendElement);
       }
-      if (chartRef.current) {
-        chartRef.current.unsubscribeCrosshairMove(subscription);
+      if (container.contains(toolTipElement)) {
+        container.removeChild(toolTipElement);
       }
+      chart.unsubscribeCrosshairMove(handleCrosshairMove);
     };
   }, [symbol, reports]); // Depend on symbol and reports
 
@@ -410,6 +576,24 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
           setReports([]);
         }
 
+        try {
+          const txData = await getTransactions();
+          const symbolKey = symbol.trim().toUpperCase();
+          setTransactions(txData.filter((tx) => tx.ticker?.toUpperCase() === symbolKey));
+        } catch (txError) {
+          console.warn('Transaction list fetch failed:', txError);
+          setTransactions([]);
+        }
+
+        try {
+          const positionData = await getPositions();
+          const symbolKey = symbol.trim().toUpperCase();
+          setPositions(positionData.filter((pos) => pos.ticker?.toUpperCase() === symbolKey));
+        } catch (positionError) {
+          console.warn('Position list fetch failed:', positionError);
+          setPositions([]);
+        }
+
         // Set data state
         setTimeseriesData(result);
         setIndicatorsData(result.indicators);
@@ -444,6 +628,79 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
     const timeoutId = window.setTimeout(fitChart, 0);
     return () => window.clearTimeout(timeoutId);
   }, [timestamps, isChartReady]);
+
+  useEffect(() => {
+    const chart = chartRef.current;
+    const container = chartContainerRef.current;
+    if (!chart || !container) return;
+
+    const handleClick = (param: MouseEventParams<Time>) => {
+      if (!param || !param.point) {
+        setMarkerPopup(null);
+        return;
+      }
+
+      let markerTime: UTCTimestamp | null = null;
+      let groups: PositionMarkerGroup[] = [];
+
+      if (typeof param.hoveredObjectId === 'string') {
+        const hoveredGroup = positionMarkerGroupById.get(param.hoveredObjectId);
+        if (hoveredGroup) {
+          markerTime = positionMarkerTimeById.get(param.hoveredObjectId) ?? hoveredGroup.time;
+          groups = [hoveredGroup];
+        }
+      }
+
+      if (groups.length === 0) {
+        const chartTime = normalizeMouseTime(param.time);
+        if (chartTime != null) {
+          groups = positionMarkerGroupsByTime.get(chartTime) || [];
+          markerTime = chartTime;
+        }
+      }
+
+      if (groups.length === 0) {
+        setMarkerPopup(null);
+        return;
+      }
+
+      if (markerTime == null) {
+        setMarkerPopup(null);
+        return;
+      }
+
+      const index = timeIndexMap.get(markerTime) ?? -1;
+      const left = Math.min(
+        Math.max(12, param.point.x - markerPopupWidth / 2),
+        Math.max(12, container.clientWidth - markerPopupWidth - 12)
+      );
+      const top = Math.min(
+        Math.max(12, param.point.y - 20),
+        Math.max(12, container.clientHeight - 220)
+      );
+
+      setMarkerPopup({
+        time: markerTime,
+        index,
+        groups,
+        x: left,
+        y: top,
+      });
+    };
+
+    chart.subscribeClick(handleClick);
+    return () => {
+      chart.unsubscribeClick(handleClick);
+    };
+  }, [positionMarkerGroupById, positionMarkerGroupsByTime, positionMarkerTimeById, timeIndexMap]);
+
+  useEffect(() => {
+    if (!markerPopup) return;
+    const groupsAtTime = positionMarkerGroupsByTime.get(markerPopup.time) || [];
+    if (groupsAtTime.length === 0) {
+      setMarkerPopup(null);
+    }
+  }, [markerPopup, positionMarkerGroupsByTime]);
 
   // Handle resize
   useEffect(() => {
@@ -491,6 +748,7 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
             data={timeseriesData}
             indicators={indicatorsData}
             reports={reports}
+            positionMarkers={positionMarkers}
             isChartReady={isChartReady}
             onSeriesReady={(series) => { candlestickSeriesRef.current = series; }}
           />
@@ -594,6 +852,72 @@ export default function StockChart({ symbol, onReportClick, height }: StockChart
           >
             ⚠️ {error}
           </Typography>
+        </Box>
+      )}
+      {markerPopup && markerPopup.index >= 0 && (
+        <Box
+          sx={{
+            position: 'absolute',
+            left: markerPopup.x,
+            top: markerPopup.y,
+            width: markerPopupWidth,
+            background: 'linear-gradient(135deg, rgba(40, 40, 45, 0.98) 0%, rgba(28, 28, 34, 0.98) 100%)',
+            border: '1px solid rgba(148, 163, 184, 0.2)',
+            borderRadius: 2,
+            boxShadow: '0 12px 28px rgba(0, 0, 0, 0.45)',
+            px: 2,
+            py: 1.5,
+            zIndex: 5,
+          }}
+        >
+          <Typography
+            variant="subtitle2"
+            sx={{
+              color: '#e5e7eb',
+              fontWeight: 600,
+              mb: 1,
+            }}
+          >
+            {formatDate(markerPopup.time)}:
+          </Typography>
+          <Box sx={{ mb: 1.5 }}>
+            {markerPopup.groups.map((group) => (
+              <Box key={group.id} sx={{ mb: 1 }}>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: group.side === 'buy' ? '#22c55e' : '#ef4444',
+                    fontWeight: 700,
+                    display: 'block',
+                    mb: 0.5,
+                    letterSpacing: '0.03em',
+                  }}
+                >
+                  {group.side === 'buy' ? 'BUY' : 'SELL'} ({group.events.length})
+                </Typography>
+                {group.events.map((event) => {
+                  const isTransaction = 'transaction_type' in event;
+                  const isBuy = isTransaction ? event.transaction_type === 'buy' : true;
+                  const price = Number(isTransaction ? event.price : event.purchase_price);
+                  const quantity = Number(event.quantity);
+                  const eventDate = isTransaction ? event.transaction_date : event.purchase_date;
+                  return (
+                    <Typography
+                      key={`${group.id}-${event.id}-${eventDate}`}
+                      variant="body2"
+                      sx={{
+                        color: isBuy ? '#22c55e' : '#ef4444',
+                        fontWeight: 600,
+                        mb: 0.5,
+                      }}
+                    >
+                      {isBuy ? 'Mua' : 'Ban'} {quantity} CP, Gia: {formatPrice(price)}
+                    </Typography>
+                  );
+                })}
+              </Box>
+            ))}
+          </Box>
         </Box>
       )}
     </Box>

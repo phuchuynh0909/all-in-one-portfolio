@@ -78,12 +78,44 @@ export interface ClosePositionResponse {
   realized_pl_pct: number;
 }
 
+export interface Position {
+  id: number;
+  ticker: string;
+  quantity: number;
+  purchase_price: number;
+  purchase_date: string;
+  notes?: string | null;
+  current_price?: number | null;
+  created_at: string;
+}
+
+export interface Transaction {
+  id: number;
+  ticker: string;
+  transaction_type: 'buy' | 'sell';
+  quantity: number;
+  price: number;
+  close_price?: number | null;
+  transaction_date: string;
+  fees?: number | null;
+  notes?: string | null;
+  created_at: string;
+}
+
 export async function optimizePortfolio(request: OptimizationRequest): Promise<OptimizationResult> {
   return apiPost<OptimizationResult>('/portfolio/optimize', request);
 }
 
 export async function closePosition(request: ClosePositionRequest): Promise<ClosePositionResponse> {
   return apiPost<ClosePositionResponse>('/portfolio/positions/close', request);
+}
+
+export async function getPositions(): Promise<Position[]> {
+  return apiGet<Position[]>('/portfolio/positions');
+}
+
+export async function getTransactions(): Promise<Transaction[]> {
+  return apiGet<Transaction[]>('/portfolio/transactions');
 }
 
 export async function getAllStockSymbols(limit?: number): Promise<StockSymbol[]> {
