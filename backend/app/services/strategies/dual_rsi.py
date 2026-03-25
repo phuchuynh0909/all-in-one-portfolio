@@ -9,14 +9,16 @@ class DualRSI:
                  rsi_window_high: int = 14,
                  rsi_window_low: int = 5,
                  vwap_window: int = 200,
-                 sl_stop: float = 0.05):
+                 sl_stop: float = 0.05,
+                 donichan_window: int = 10):
         
         self.data = data
         self.rsi_window_high = rsi_window_high
         self.rsi_window_low = rsi_window_low
         self.vwap_window = vwap_window
         self.sl_stop = sl_stop
-
+        self.donichan_window = donichan_window
+        
         self.indicators = {
             'rsi': vbt.IndicatorFactory.from_talib("RSI"),
             'vwap': vbt.IndicatorFactory(
