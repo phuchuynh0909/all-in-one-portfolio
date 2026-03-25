@@ -60,8 +60,11 @@ class DualRSI:
 
     def get_exits(self, entries):
         vwap_highest = self.indicators['vwap'].xs(True, level='avwap_is_highest', axis=1)
-        exits = self.data.high.vbt > vwap_highest.shift(1).vbt
-        return exits
+        exits1 = self.data.high.vbt > vwap_highest.shift(1).vbt
+        
+        lowest_low = self.data.low.vbt.rolling_min(self.donichan_window)
+        exits2 = self.data.close < lowest_low.vbt.fshift(1)
+        return exits1 | exits2
     
     def get_portfolio(self):
         entries = self.get_entries()
