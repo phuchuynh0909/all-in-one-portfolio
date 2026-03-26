@@ -57,29 +57,29 @@ MONTH_CHARS_INV = {v: k for k, v in MONTH_CHARS.items()}
 
 KRX_PREFIX = "41I1"
 KRX_SUFFIX = "000"
-KRX_SWITCH = (2025, 11)  # Nov 2025 was the first KRX-format contract
+KRX_SWITCH = (2026, 1)  # Full KRX from Jan 2026
 
-
-def _is_krx(year: int, month: int) -> bool:
-    return (year, month) >= KRX_SWITCH
+SPECIAL_CASES: dict[tuple[int, int], str] = {
+    (2025, 11): "41I1FB000",  # Nov 2025: one-off KRX pilot before full switch
+}
+SPECIAL_CASES_INV: dict[str, tuple[int, int]] = {v: k for k, v in SPECIAL_CASES.items()}
 
 
 def encode(year: int, month: int) -> str:
-    if _is_krx(year, month):
+    if (year, month) in SPECIAL_CASES:
+        return SPECIAL_CASES[(year, month)]
+    if (year, month) >= KRX_SWITCH:
         return f"{KRX_PREFIX}{YEAR_CHARS[year]}{MONTH_CHARS[month]}{KRX_SUFFIX}"
     return f"VN30F{year % 100:02d}{month:02d}"
 
 
 def decode(symbol: str) -> tuple[int, int]:
+    if symbol in SPECIAL_CASES_INV:
+        return SPECIAL_CASES_INV[symbol]
     if symbol.startswith(KRX_PREFIX):
-        yc = symbol[4]
-        mc = symbol[5]
-        return YEAR_CHARS_INV[yc], MONTH_CHARS_INV[mc]
+        return YEAR_CHARS_INV[symbol[4]], MONTH_CHARS_INV[symbol[5]]
     if symbol.startswith("VN30F") and len(symbol) >= 9:
-        yy = int(symbol[5:7])
-        mm = int(symbol[7:9])
-        year = 2000 + yy
-        return year, mm
+        return 2000 + int(symbol[5:7]), int(symbol[7:9])
     raise ValueError(f"Unrecognised symbol format: {symbol!r}")
 
 
