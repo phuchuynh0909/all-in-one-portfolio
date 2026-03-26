@@ -22,7 +22,7 @@ export default function BsiPanel({ chart, data }: BsiPanelProps) {
                 type: 'custom',
                 formatter: (price: number) => price.toFixed(2),
             },
-            title: 'BSI RF',
+            title: 'BSI',
             priceScaleId: 'right',
         }, 1);
         bsiRfSeriesRef.current = bsiRfSeries;
@@ -60,7 +60,7 @@ export default function BsiPanel({ chart, data }: BsiPanelProps) {
 
         const bsiRfData = data.timestamps
             .map((ts, i) => {
-                const value = data.indicators.bsi_rf[i];
+                const value = data.indicators.bsi[i];
                 if (value === null || value === undefined) return null;
                 return {
                     time: (new Date(ts).getTime() / 1000) as UTCTimestamp,
