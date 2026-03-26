@@ -60,7 +60,9 @@ KRX_SUFFIX = "000"
 KRX_SWITCH = (2026, 1)  # Full KRX from Jan 2026
 
 SPECIAL_CASES: dict[tuple[int, int], str] = {
-    (2025, 11): "41I1FB000",  # Nov 2025: one-off KRX pilot before full switch
+    (2025, 7): "41I1F7000",
+    (2025, 8): "41I1F8000",
+    (2025, 11): "41I1FB000",
 }
 SPECIAL_CASES_INV: dict[str, tuple[int, int]] = {v: k for k, v in SPECIAL_CASES.items()}
 
