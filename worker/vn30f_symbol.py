@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 
+# ── KRX format (2026+): 41I1[YEAR_CHAR][MONTH_CHAR]000 ──────────────────────
+# Year chars: skip I, O, U  →  0-9 A-H J K L M N P Q R S T V W
 YEAR_CHARS = {
     2010: "0",
     2011: "1",
@@ -34,7 +36,7 @@ YEAR_CHARS = {
     2038: "V",
     2039: "W",
 }
-
+# Month chars: 1-9 digits, 10=A, 11=B, 12=C
 MONTH_CHARS = {
     1: "1",
     2: "2",
@@ -53,18 +55,28 @@ MONTH_CHARS = {
 YEAR_CHARS_INV = {v: k for k, v in YEAR_CHARS.items()}
 MONTH_CHARS_INV = {v: k for k, v in MONTH_CHARS.items()}
 
-PREFIX = "41I1"
-SUFFIX = "000"
+KRX_PREFIX = "41I1"
+KRX_SUFFIX = "000"
+KRX_SWITCH_YEAR = 2026  # first year to use KRX format
 
 
 def encode(year: int, month: int) -> str:
-    return f"{PREFIX}{YEAR_CHARS[year]}{MONTH_CHARS[month]}{SUFFIX}"
+    if year >= KRX_SWITCH_YEAR:
+        return f"{KRX_PREFIX}{YEAR_CHARS[year]}{MONTH_CHARS[month]}{KRX_SUFFIX}"
+    return f"VN30F{year % 100:02d}{month:02d}"
 
 
 def decode(symbol: str) -> tuple[int, int]:
-    yc = symbol[4]
-    mc = symbol[5]
-    return YEAR_CHARS_INV[yc], MONTH_CHARS_INV[mc]
+    if symbol.startswith(KRX_PREFIX):
+        yc = symbol[4]
+        mc = symbol[5]
+        return YEAR_CHARS_INV[yc], MONTH_CHARS_INV[mc]
+    if symbol.startswith("VN30F") and len(symbol) >= 9:
+        yy = int(symbol[5:7])
+        mm = int(symbol[7:9])
+        year = 2000 + yy
+        return year, mm
+    raise ValueError(f"Unrecognised symbol format: {symbol!r}")
 
 
 def third_thursday(year: int, month: int) -> date:
