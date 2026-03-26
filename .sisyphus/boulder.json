@@ -1,0 +1,37 @@
+{
+  "active_plan": "/Users/phuchuynh/Work/all-in-one-portfolio/.sisyphus/plans/tick-data-clickhouse-sync.md",
+  "started_at": "2026-03-26T04:28:11.945Z",
+  "session_ids": [
+    "ses_2d7ab7484ffelG22ua5LGrVioN",
+    "ses_2d79794b7ffeM1S86ljVcaSMxx",
+    "ses_2d7975849ffe26fxjRV3uULS1T",
+    "ses_2d79650c1ffe7ZD4bQHdV71KKB",
+    "ses_2d7970e8dffe2PJGcoMHBx0P9E",
+    "ses_2d796d2fcffeWykUbTqFQq0Gf6",
+    "ses_2d7968ccbffeCH4xuUNZP5AXLW",
+    "ses_2d78f9186ffexSaEC9DJiVDHOw",
+    "ses_2d790611effeS8gcD9oZ4E086N",
+    "ses_2d78fc8a1ffedZ3YiQLFt6glfJ",
+    "ses_2d78a085dffekZcKy7cCSt9DXf",
+    "ses_2d7895c2fffeKtyM7sqsnGKjW4",
+    "ses_2d789b6b5ffeqi92lBJVnjt37e",
+    "ses_2d78652f7ffeiARcQFd0f3n16r",
+    "ses_2d786a74effeO0t2gNkKNLYia7",
+    "ses_2d7868fd2ffedQC5We5TSydXPn",
+    "ses_2d78628acffeeeeOq5ecmq8bI3",
+    "ses_2d782c109ffe6mbSN2ifT3MR1W"
+  ],
+  "plan_name": "tick-data-clickhouse-sync",
+  "agent": "atlas",
+  "task_sessions": {
+    "final-wave:f1": {
+      "task_key": "final-wave:f1",
+      "task_label": "F1",
+      "task_title": "**Plan Compliance Audit** — `oracle`",
+      "session_id": "ses_2d782c109ffe6mbSN2ifT3MR1W",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-03-26T04:57:31.733Z"
+    }
+  }
+}

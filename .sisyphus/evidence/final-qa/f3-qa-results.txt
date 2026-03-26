@@ -1,0 +1,57 @@
+F3 QA Executor — Final QA Results
+Date: 2026-03-26
+========================================
+
+=== T1 Schema Validation ===
+Command: python -c "from model import TICKS_ARROW_SCHEMA, TICKS_CLICKHOUSE_TABLE, TICKS_CLICKHOUSE_ORDER_BY, TICKS_CREATE_TABLE_DDL; assert len(TICKS_ARROW_SCHEMA) == 6; assert TICKS_CLICKHOUSE_TABLE == 'ticks'; assert 'symbol' in TICKS_CLICKHOUSE_ORDER_BY; assert 'Nullable' not in TICKS_CREATE_TABLE_DDL; print('T1 schema: PASS')"
+Output: T1 schema: PASS
+Result: PASS
+
+=== T2 Mapping/Coercion ===
+Command: python -c "from tick_contract import normalize_tick, to_clickhouse_tuple; ..."
+Output: Invalid ts type: <class 'str'> (expected log for malformed input)
+        T2 mapping: PASS
+Result: PASS
+
+=== T3 API Client ===
+Command: python -c "from dnse_client import DNSEClient, REQUEST_DELAY; ..."
+Output: T3 client: PASS
+Result: PASS
+
+=== T4 Scheduler ===
+Command: python -c "from reconciler_schedule import should_run_today, get_last_run_date; ..."
+Output: T4 scheduler: PASS
+Result: PASS
+
+=== T5 Audit SQL ===
+Command: python -c "from audit_queries import ReconcilerMetrics, DUPLICATE_AUDIT_SQL, SESSION_COUNT_SQL; ..."
+Output: T5 audit SQL: PASS
+Result: PASS
+
+=== T6 Config ===
+Command: TICK_SYMBOL=41I1G4000 python -c "from config import TickSyncConfig, ReconcilerConfig; ..."
+Output: T6 config: PASS
+Result: PASS
+
+=== T14 Idempotency ===
+Command: python validate_idempotency.py --date 2026-03-26
+Output: test_idempotency: PASS
+        test_boundary_ticks: PASS
+Result: PASS
+
+=== T13 Pipeline CLI ===
+Command: python run_pipeline.py --help
+Output: usage: run_pipeline.py [-h] [--date DATE] [--dry-run] [--force] [--skip-audit]
+        Operational entrypoint for tick reconciliation pipeline
+        options: --date, --dry-run, --force, --skip-audit
+Result: PASS
+
+=== T11 Audit CLI ===
+Command: python run_audit.py --help
+Output: usage: run_audit.py [-h] [--date DATE] [--table TABLE] [--output OUTPUT]
+        Run duplicate audit and merge-health checks on ClickHouse ticks table
+        options: --date, --table, --output
+Result: PASS
+
+========================================
+SUMMARY: 9/9 scenarios passed
