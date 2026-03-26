@@ -96,56 +96,60 @@ def _ensure_ohlc_1h_table_exists(client, database: str, table: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+VN30F1M = "VN30F1M"
+
+
 @task(log_prints=True)
 def aggregate_ticks_to_ohlc_1h(
     date_from: str,
     date_to: str,
-    symbol: str | None = None,
+    contract_symbol: str | None = None,
 ) -> int:
-    """Aggregate raw ticks into 1-hour OHLC candles.
-
-    Args:
-        date_from: UTC datetime string, e.g. "2026-03-26 02:00:00"
-        date_to:   UTC datetime string, e.g. "2026-03-26 08:00:00"
-        symbol:    Optional symbol filter; None = all symbols.
-
-    Returns:
-        Number of inserted rows.
-    """
     database = _get_env("CLICKHOUSE_DB", "default")
-    ticks_table = TICKS_TABLE
-    ohlc_table = OHLC_1H_TABLE
-
     client = _get_ch_client()
-    _ensure_ohlc_1h_table_exists(client, database, ohlc_table)
+    _ensure_ohlc_1h_table_exists(client, database, OHLC_1H_TABLE)
 
-    symbol_filter = f"AND symbol = '{symbol}'" if symbol else ""
+    if contract_symbol:
+        symbol_filter = f"AND symbol = '{contract_symbol}'"
+    else:
+        symbol_filter = "AND (symbol LIKE '41I1%' OR symbol LIKE 'VN30%')"
 
     sql = f"""
         SELECT
-            symbol,
+            '{VN30F1M}',
             toStartOfHour(toTimezone(sending_time, 'Asia/Ho_Chi_Minh')) AS ts,
             argMin(match_price, sending_time) AS open,
-            max(match_price) AS high,
-            min(match_price) AS low,
+            max(match_price)                  AS high,
+            min(match_price)                  AS low,
             argMax(match_price, sending_time) AS close,
-            sum(match_qty) AS volume,
-            sumIf(match_qty, side = 1) AS buy_volume,
-            sumIf(match_qty, side = 2) AS sell_volume
-        FROM {database}.{ticks_table} FINAL
+            sum(match_qty)                    AS volume,
+            sumIf(match_qty, side = 1)        AS buy_volume,
+            sumIf(match_qty, side = 2)        AS sell_volume
+        FROM {database}.{TICKS_TABLE} FINAL
         WHERE sending_time >= toDateTime64('{date_from}', 6, 'UTC')
           AND sending_time <= toDateTime64('{date_to}', 6, 'UTC')
           {symbol_filter}
-        GROUP BY symbol, ts
-        ORDER BY symbol, ts
+        GROUP BY ts
+        ORDER BY ts
     """
 
-    result = client.query(sql)
-    raw_rows = result.result_rows
+    raw_rows = client.query(sql).result_rows
+
+    column_names = [
+        "symbol",
+        "ts",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "buy_volume",
+        "sell_volume",
+    ]
 
     rows: list[tuple] = [
         (
-            str(r[0]),
+            VN30F1M,
             r[1] if isinstance(r[1], datetime) else datetime.fromisoformat(str(r[1])),
             float(r[2]),
             float(r[3]),
@@ -158,62 +162,29 @@ def aggregate_ticks_to_ohlc_1h(
         for r in raw_rows
     ]
 
-    column_names = [
-        "symbol",
-        "ts",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "buy_volume",
-        "sell_volume",
-    ]
-
     inserted = 0
     for batch in _iter_batches(rows, batch_size=50000):
-        client.insert(
-            f"{database}.{ohlc_table}",
-            batch,
-            column_names=column_names,
-        )
+        client.insert(f"{database}.{OHLC_1H_TABLE}", batch, column_names=column_names)
         inserted += len(batch)
 
     _save_sync_state(
-        SYNC_STATE_PATH,
-        {"last_date_from": date_from, "last_date_to": date_to},
+        SYNC_STATE_PATH, {"last_date_from": date_from, "last_date_to": date_to}
     )
-
-    print(
-        f"Inserted {inserted} OHLC-1h rows into {database}.{ohlc_table} "
-        f"[{date_from} → {date_to}]"
-    )
+    print(f"Inserted {inserted} VN30F1M rows [{date_from} → {date_to}]")
     return inserted
 
 
 @task(log_prints=True)
-def aggregate_session_to_ohlc_1h(
-    session_date: str | None = None,
-    symbol: str | None = None,
-) -> int:
-    """Convenience wrapper: aggregate a single trading session (09:00-15:00 ICT).
+def aggregate_session_to_ohlc_1h(session_date: str | None = None) -> int:
+    from vn30f_symbol import symbol_for_date as _sym
 
-    Args:
-        session_date: ISO date string (YYYY-MM-DD). Defaults to today.
-        symbol:       Optional symbol filter.
-
-    Returns:
-        Number of inserted rows.
-    """
     if session_date is None:
         session_date = date.today().isoformat()
-
-    # Session window: 09:00-15:00 ICT = 02:00-08:00 UTC
+    contract = _sym(date.fromisoformat(session_date))
     date_from = f"{session_date} 02:00:00"
     date_to = f"{session_date} 08:00:00"
-
-    print(f"Aggregating session {session_date} (UTC {date_from} → {date_to})")
-    return aggregate_ticks_to_ohlc_1h(date_from, date_to, symbol)
+    print(f"Session {session_date}: contract={contract} → VN30F1M")
+    return aggregate_ticks_to_ohlc_1h(date_from, date_to, contract)
 
 
 # ---------------------------------------------------------------------------
@@ -222,75 +193,9 @@ def aggregate_session_to_ohlc_1h(
 
 
 @flow(log_prints=True)
-def tick_to_ohlc_1h_pipeline(
-    session_date: str | None = None,
-    symbol: str | None = None,
-) -> None:
-    """Orchestrate tick → 1-hour OHLC aggregation for a trading session."""
-    total = aggregate_session_to_ohlc_1h(session_date, symbol)
-    print(f"Pipeline complete — {total} total OHLC-1h rows inserted.")
-
-
-@task(log_prints=True)
-def merge_to_vn30f1m(date_from: str, date_to: str) -> int:
-    client = _get_ch_client()
-    database = _get_env("CLICKHOUSE_DB", "default")
-    ohlc_table = OHLC_1H_TABLE
-    target_symbol = "VN30F1M"
-
-    _ensure_ohlc_1h_table_exists(client, database, ohlc_table)
-
-    column_names = [
-        "symbol",
-        "ts",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "buy_volume",
-        "sell_volume",
-    ]
-
-    sql = f"""
-        SELECT '{target_symbol}', ts, open, high, low, close,
-               volume, buy_volume, sell_volume
-        FROM {database}.{ohlc_table} FINAL
-        WHERE symbol LIKE '41I1%'
-          AND ts >= toDateTime('{date_from}', 'Asia/Ho_Chi_Minh')
-          AND ts <  toDateTime('{date_to}',   'Asia/Ho_Chi_Minh')
-        ORDER BY ts ASC
-    """
-    rows = client.query(sql).result_rows
-
-    if not rows:
-        print(f"No 41I1* rows found for [{date_from} → {date_to}]")
-        return 0
-
-    inserted = 0
-    for batch in _iter_batches(list(rows), batch_size=50000):
-        client.insert(f"{database}.{ohlc_table}", batch, column_names=column_names)
-        inserted += len(batch)
-
-    print(
-        f"merge_to_vn30f1m: {inserted} rows inserted as VN30F1M [{date_from} → {date_to}]"
-    )
-    return inserted
-
-
-@flow(log_prints=True)
-def vn30f1m_pipeline(
-    start_date: str,
-    end_date: str | None = None,
-) -> None:
-    from datetime import date as _date
-
-    if end_date is None:
-        end_date = _date.today().isoformat()
-    date_from = f"{start_date} 00:00:00"
-    date_to = f"{end_date} 23:59:59"
-    total = merge_to_vn30f1m(date_from, date_to)
-    print(f"vn30f1m_pipeline complete: {total} rows")
+def tick_to_ohlc_1h_pipeline(session_date: str | None = None) -> None:
+    total = aggregate_session_to_ohlc_1h(session_date)
+    print(f"Pipeline complete — {total} VN30F1M rows inserted.")
 
 
 # ---------------------------------------------------------------------------
@@ -336,18 +241,9 @@ def _run_cli() -> None:
             source=str(Path(__file__).parent),
             entrypoint="ohlc_1h.py:tick_to_ohlc_1h_pipeline",
         ).deploy(
-            name="tick-to-ohlc-1h",
+            name="vn30f1m-ohlc-1h",
             work_pool_name="my-worker",
             cron="5 8 * * 1-5",  # 08:05 UTC = 15:05 ICT, weekdays
-        )
-
-        vn30f1m_pipeline.from_source(
-            source=str(Path(__file__).parent),
-            entrypoint="ohlc_1h.py:vn30f1m_pipeline",
-        ).deploy(
-            name="vn30f1m-merge",
-            work_pool_name="my-worker",
-            cron="15 8 * * 1-5",
         )
         return
 
@@ -365,11 +261,14 @@ def _run_cli() -> None:
         date_from = f"{session_date} 02:00:00"
         date_to = f"{session_date} 08:00:00"
 
-    symbol_filter = f"AND symbol = '{args.symbol}'" if args.symbol else ""
+    if args.symbol:
+        symbol_filter = f"AND symbol = '{args.symbol}'"
+    else:
+        symbol_filter = "AND (symbol LIKE '41I1%' OR symbol LIKE 'VN30%')"
 
     sql = f"""
         SELECT
-            symbol,
+            '{VN30F1M}',
             toStartOfHour(toTimezone(sending_time, 'Asia/Ho_Chi_Minh')) AS ts,
             argMin(match_price, sending_time) AS open,
             max(match_price)                  AS high,
@@ -382,11 +281,11 @@ def _run_cli() -> None:
         WHERE sending_time >= toDateTime64('{date_from}', 6, 'UTC')
           AND sending_time <= toDateTime64('{date_to}', 6, 'UTC')
           {symbol_filter}
-        GROUP BY symbol, ts
-        ORDER BY symbol, ts
+        GROUP BY ts
+        ORDER BY ts
     """
 
-    print(f"Querying ticks [{date_from} → {date_to}] ...")
+    print(f"Querying ticks [{date_from} → {date_to}] → VN30F1M ...")
     raw_rows = client.query(sql).result_rows
 
     if not raw_rows:
@@ -395,7 +294,7 @@ def _run_cli() -> None:
 
     rows: list[tuple] = [
         (
-            str(r[0]),
+            VN30F1M,
             r[1] if isinstance(r[1], datetime) else datetime.fromisoformat(str(r[1])),
             float(r[2]),
             float(r[3]),
