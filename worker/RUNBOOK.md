@@ -9,7 +9,10 @@ This pipeline uses two workers to sync tick data. The `tick_ingest.py` script ru
 python -c "from config import config; from clickhouse_client import get_clickhouse_client; from model import TICKS_CREATE_TABLE_DDL; c = get_clickhouse_client(); c.query(TICKS_CREATE_TABLE_DDL.format(database=config.clickhouse.database))"
 
 # 2. Start stream ingestor (keep running in background)
+# IMPORTANT: must run from inside the worker/ directory so tick_ingest is on the Python path
 cd worker && python -m bytewax.run tick_ingest:flow
+# Alternative from project root:
+# PYTHONPATH=worker python -m bytewax.run tick_ingest:flow
 
 # 3. Run reconciler (at or after 15:00 ICT)
 cd worker && python reconciler.py
@@ -20,6 +23,8 @@ cd worker && python run_pipeline.py
 
 ## Normal Daily Operations
 The stream ingestor runs continuously during the trading session. Run the reconciler once at 15:00 ICT using `python reconciler.py`. You can also use a cron job.
+
+All scripts must be run from inside the `worker/` directory (or with `PYTHONPATH=worker`).
 
 Cron example:
 `0 8 * * 1-5 cd /path/to/worker && python reconciler.py` (08:00 UTC = 15:00 ICT)
