@@ -3,22 +3,24 @@
 ## Overview
 This pipeline uses two workers to sync tick data. The `tick_ingest.py` script runs a continuous Bytewax stream. The `reconciler.py` script runs once at 15:00 ICT. This version covers a single symbol, `41I1G4000`, for live and nearline data.
 
+> **Working directory**: All commands must be run from inside `worker/` (or use `PYTHONPATH=worker` from the project root). Bytewax locates modules by name on the Python path.
+
 ## Quick Start
 ```bash
-# 1. Create ClickHouse table (one-time setup)
+# All commands below assume you are inside the worker/ directory
+cd worker
+
+# 1. Create ClickHouse table (one-time setup — skip if table already exists)
 python -c "from config import config; from clickhouse_client import get_clickhouse_client; from model import TICKS_CREATE_TABLE_DDL; c = get_clickhouse_client(); c.query(TICKS_CREATE_TABLE_DDL.format(database=config.clickhouse.database))"
 
 # 2. Start stream ingestor (keep running in background)
-# IMPORTANT: must run from inside the worker/ directory so tick_ingest is on the Python path
-cd worker && python -m bytewax.run tick_ingest:flow
-# Alternative from project root:
-# PYTHONPATH=worker python -m bytewax.run tick_ingest:flow
+python -m bytewax.run tick_ingest:flow
 
 # 3. Run reconciler (at or after 15:00 ICT)
-cd worker && python reconciler.py
+python reconciler.py
 
 # 4. Run full pipeline with audit (recommended)
-cd worker && python run_pipeline.py
+python run_pipeline.py
 ```
 
 ## Normal Daily Operations
@@ -31,26 +33,30 @@ Cron example:
 
 ## Rerun and Recovery
 ```bash
+cd worker
+
 # Rerun reconciler for today (force bypass schedule guard)
-python worker/reconciler.py --force
+python reconciler.py --force
 
 # Rerun for a specific past date
-python worker/reconciler.py --date 2026-03-25 --force
+python reconciler.py --date 2026-03-25 --force
 
 # Preview what reconciler would do (no writes)
-python worker/reconciler.py --dry-run --force
+python reconciler.py --dry-run --force
 ```
 
 ## Audit and Monitoring
 ```bash
+cd worker
+
 # Check for duplicates and merge health
-python worker/run_audit.py --date 2026-03-26
+python run_audit.py --date 2026-03-26
 
 # Save evidence to file
-python worker/run_audit.py --date 2026-03-26 --output .sisyphus/evidence/task-11-audit-happy.txt
+python run_audit.py --date 2026-03-26 --output ../.sisyphus/evidence/task-11-audit-happy.txt
 
 # Full pipeline with audit
-python worker/run_pipeline.py --date 2026-03-26
+python run_pipeline.py --date 2026-03-26
 ```
 
 ## Rollback and Disable
@@ -67,8 +73,18 @@ Check these paths for evidence:
 
 ## Troubleshooting
 Common issues and fixes:
-1. Schedule guard: If `reconciler.py` says "not running", use the `--force` flag.
-2. ClickHouse connection failed: Check `CLICKHOUSE_HOST`, `PORT`, `USER`, and `PASSWORD` in your `.env` file.
-3. API returns null data: This is usually an authentication error. Check `ENTRADE_USER` and `ENTRADE_PASSWORD` in your `.env` file.
-4. High duplicate count: Run `python run_audit.py --date YYYY-MM-DD`. Wait for the ClickHouse background merge to finish, then rerun.
-5. Table doesn't exist: Run the `CREATE TABLE` command from the Quick Start section.
+
+1. **`ModuleNotFoundError: No module named 'tick_ingest'`** — You are running from the wrong directory. Run from inside `worker/`:
+   ```bash
+   cd worker && python -m bytewax.run tick_ingest:flow
+   ```
+
+2. **Schedule guard**: If `reconciler.py` says "not running", use the `--force` flag.
+
+3. **ClickHouse connection failed**: Check `CLICKHOUSE_HOST`, `PORT`, `USER`, and `PASSWORD` in your `.env` file.
+
+4. **API returns null data**: This is usually an authentication error. Check `ENTRADE_USER` and `ENTRADE_PASSWORD` in your `.env` file.
+
+5. **High duplicate count**: Run `python run_audit.py --date YYYY-MM-DD`. Wait for the ClickHouse background merge to finish, then rerun.
+
+6. **Table doesn't exist**: Run the `CREATE TABLE` command from Quick Start. If `bytewax.clickhouse` logs `Table 'ticks' exists` on import, the table is already present and the step can be skipped.
