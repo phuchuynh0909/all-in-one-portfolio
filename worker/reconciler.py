@@ -16,6 +16,7 @@ from model import TICKS_CLICKHOUSE_TABLE
 from prefect import flow, task
 from reconciler_schedule import mark_run_done, should_run_today
 from tick_contract import normalize_tick, to_clickhouse_tuple
+from vn30f_symbol import symbol_for_date
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -66,13 +67,14 @@ def _tick_key(row: dict) -> tuple[str, str, float, int, int]:
 
 def fetch_session_ticks(date_str: str) -> list[dict]:
     day = date.fromisoformat(date_str)
+    target_symbol = symbol_for_date(day)
     session_start_utc, session_end_utc = _session_window_utc(date_str)
     client = DNSEClient(
         request_delay=config.reconciler.request_delay, timeout=30, logger=log
     )
 
     raw_ticks = client.fetch_day_ticks(
-        symbol=config.tick_sync.symbol,
+        symbol=target_symbol,
         day=day,
         board=config.tick_sync.board,
     )
@@ -196,10 +198,11 @@ def run_reconciler(date_str: str, dry_run: bool = False) -> ReconcilerMetrics:
         metrics.fetched_rows = len(api_rows)
 
         ch_client = get_clickhouse_client()
+        target_symbol = symbol_for_date(date.fromisoformat(date_str))
         ch_rows = fetch_ch_session_ticks(
             ch_client=ch_client,
             db=config.clickhouse.database,
-            symbol=config.tick_sync.symbol,
+            symbol=target_symbol,
             date_str=date_str,
         )
 

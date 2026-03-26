@@ -8,6 +8,7 @@ from mqtt_input import MqttSource
 from mock_clickhouse import MockClickHouseSource
 from config import config
 from tick_contract import normalize_tick, to_clickhouse_tuple
+from vn30f_symbol import current_symbol as vn30f_current_symbol
 from model import (
     TICKS_ARROW_SCHEMA,
     TICKS_CLICKHOUSE_SCHEMA,
@@ -75,7 +76,8 @@ if config.mock.enabled:
     )
 else:
     print("Using MqttSource for tick_ingest")
-    tick_topic = TICK_TOPIC_TEMPLATE.format(symbol=config.tick_sync.symbol)
+    live_symbol = config.tick_sync.symbol or vn30f_current_symbol()
+    tick_topic = TICK_TOPIC_TEMPLATE.format(symbol=live_symbol)
     stream = op.input(
         "mqtt_ticks",
         flow,

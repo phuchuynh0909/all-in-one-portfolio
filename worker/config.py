@@ -6,9 +6,17 @@ from pathlib import Path
 from dataclasses import dataclass
 from datetime import time as dtime
 from dotenv import load_dotenv
+from vn30f_symbol import current_symbol as _current_vn30f_symbol
 
 # Load environment variables from .env file
 load_dotenv()
+
+
+def _parse_bool(raw: str | None, default: bool = False) -> bool:
+    """Parse a bool-like environment variable."""
+    if raw is None:
+        return default
+    return raw.strip().lower() in ("1", "true", "yes", "on")
 
 
 @dataclass
@@ -77,16 +85,24 @@ class ClickHouseConfig:
     user: str
     password: str
     database: str
+    secure: bool
+    connect_timeout: int
 
     @classmethod
     def from_env(cls) -> "ClickHouseConfig":
         """Load ClickHouse configuration from environment variables."""
+        port = int(os.getenv("CLICKHOUSE_PORT", "9010"))
+        secure_raw = os.getenv("CLICKHOUSE_SECURE")
+        # Auto-enable TLS for common HTTPS ClickHouse ports when unset.
+        secure = _parse_bool(secure_raw, default=port in (443, 8443))
         return cls(
             host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-            port=int(os.getenv("CLICKHOUSE_PORT", "9010")),
+            port=port,
             user=os.getenv("CLICKHOUSE_USER", "myuser"),
             password=os.getenv("CLICKHOUSE_PASSWORD", "mypassword"),
             database=os.getenv("CLICKHOUSE_DB", "default"),
+            secure=secure,
+            connect_timeout=int(os.getenv("CLICKHOUSE_CONNECT_TIMEOUT", "10")),
         )
 
 
@@ -251,7 +267,7 @@ class TickSyncConfig:
     @classmethod
     def from_env(cls) -> "TickSyncConfig":
         """Load tick sync configuration from environment variables."""
-        symbol = os.getenv("TICK_SYMBOL", "41I1G4000")
+        symbol = os.getenv("TICK_SYMBOL") or _current_vn30f_symbol()
         if not symbol:
             raise ValueError("TICK_SYMBOL must not be empty")
 

@@ -231,6 +231,68 @@ def tick_to_ohlc_1h_pipeline(
     print(f"Pipeline complete — {total} total OHLC-1h rows inserted.")
 
 
+@task(log_prints=True)
+def merge_to_vn30f1m(date_from: str, date_to: str) -> int:
+    client = _get_ch_client()
+    database = _get_env("CLICKHOUSE_DB", "default")
+    ohlc_table = OHLC_1H_TABLE
+    target_symbol = "VN30F1M"
+
+    _ensure_ohlc_1h_table_exists(client, database, ohlc_table)
+
+    column_names = [
+        "symbol",
+        "ts",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "buy_volume",
+        "sell_volume",
+    ]
+
+    sql = f"""
+        SELECT '{target_symbol}', ts, open, high, low, close,
+               volume, buy_volume, sell_volume
+        FROM {database}.{ohlc_table} FINAL
+        WHERE symbol LIKE '41I1%'
+          AND ts >= toDateTime('{date_from}', 'Asia/Ho_Chi_Minh')
+          AND ts <  toDateTime('{date_to}',   'Asia/Ho_Chi_Minh')
+        ORDER BY ts ASC
+    """
+    rows = client.query(sql).result_rows
+
+    if not rows:
+        print(f"No 41I1* rows found for [{date_from} → {date_to}]")
+        return 0
+
+    inserted = 0
+    for batch in _iter_batches(list(rows), batch_size=50000):
+        client.insert(f"{database}.{ohlc_table}", batch, column_names=column_names)
+        inserted += len(batch)
+
+    print(
+        f"merge_to_vn30f1m: {inserted} rows inserted as VN30F1M [{date_from} → {date_to}]"
+    )
+    return inserted
+
+
+@flow(log_prints=True)
+def vn30f1m_pipeline(
+    start_date: str,
+    end_date: str | None = None,
+) -> None:
+    from datetime import date as _date
+
+    if end_date is None:
+        end_date = _date.today().isoformat()
+    date_from = f"{start_date} 00:00:00"
+    date_to = f"{end_date} 23:59:59"
+    total = merge_to_vn30f1m(date_from, date_to)
+    print(f"vn30f1m_pipeline complete: {total} rows")
+
+
 # ---------------------------------------------------------------------------
 # Deployment
 # ---------------------------------------------------------------------------
@@ -277,6 +339,15 @@ def _run_cli() -> None:
             name="tick-to-ohlc-1h",
             work_pool_name="my-worker",
             cron="5 8 * * 1-5",  # 08:05 UTC = 15:05 ICT, weekdays
+        )
+
+        vn30f1m_pipeline.from_source(
+            source=str(Path(__file__).parent),
+            entrypoint="ohlc_1h.py:vn30f1m_pipeline",
+        ).deploy(
+            name="vn30f1m-merge",
+            work_pool_name="my-worker",
+            cron="15 8 * * 1-5",
         )
         return
 
