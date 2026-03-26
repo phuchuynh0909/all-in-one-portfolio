@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import logging
 import time
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import requests
@@ -13,6 +13,7 @@ from clickhouse_client import get_clickhouse_client
 from config import config
 from dnse_client import DNSEClient
 from model import TICKS_CLICKHOUSE_TABLE
+from prefect import flow, task
 from reconciler_schedule import mark_run_done, should_run_today
 from tick_contract import normalize_tick, to_clickhouse_tuple
 
@@ -247,5 +248,102 @@ def main() -> None:
         mark_run_done(args.date)
 
 
+# ---------------------------------------------------------------------------
+# Prefect tasks
+# ---------------------------------------------------------------------------
+
+
+@task(log_prints=True)
+def reconcile_date(date_str: str, dry_run: bool = False) -> ReconcilerMetrics:
+    metrics = run_reconciler(date_str, dry_run=dry_run)
+    print_metrics(metrics)
+    return metrics
+
+
+@task(log_prints=True)
+def backfill_dates(
+    start_date: str,
+    end_date: str,
+    dry_run: bool = False,
+) -> list[ReconcilerMetrics]:
+    results: list[ReconcilerMetrics] = []
+    current = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    while current <= end:
+        date_str = current.isoformat()
+        log.info("Backfilling %s ...", date_str)
+        metrics = run_reconciler(date_str, dry_run=dry_run)
+        print_metrics(metrics)
+        results.append(metrics)
+        current += timedelta(days=1)
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Prefect flows
+# ---------------------------------------------------------------------------
+
+
+@flow(log_prints=True)
+def reconciler_pipeline(
+    session_date: str | None = None,
+    force: bool = False,
+    dry_run: bool = False,
+) -> None:
+    if session_date is None:
+        session_date = date.today().isoformat()
+    if not should_run_today(force=force):
+        log.info("Schedule guard: not running")
+        return
+    metrics = reconcile_date(session_date, dry_run=dry_run)
+    if not dry_run:
+        mark_run_done(session_date)
+    log.info("reconciler_pipeline complete for %s", session_date)
+
+
+@flow(log_prints=True)
+def backfill_pipeline(
+    start_date: str,
+    end_date: str | None = None,
+    dry_run: bool = False,
+) -> None:
+    if end_date is None:
+        end_date = date.today().isoformat()
+    all_metrics = backfill_dates(start_date, end_date, dry_run=dry_run)
+    total_fetched = sum(m.fetched_rows for m in all_metrics)
+    total_patched = sum(m.patched_rows for m in all_metrics)
+    print(
+        f"Backfill complete — {len(all_metrics)} days, "
+        f"{total_fetched} fetched, {total_patched} patched"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Deployment
+# ---------------------------------------------------------------------------
+
 if __name__ == "__main__":
-    main()
+    import sys
+    from pathlib import Path
+
+    # CLI mode: python reconciler.py [--date ...] [--force] [--dry-run]
+    if len(sys.argv) > 1 and not sys.argv[1].startswith("deploy"):
+        main()
+    else:
+        reconciler_pipeline.from_source(
+            source=str(Path(__file__).parent),
+            entrypoint="reconciler.py:reconciler_pipeline",
+        ).deploy(
+            name="tick-reconciler-daily",
+            work_pool_name="my-worker",
+            cron="5 8 * * 1-5",  # 08:05 UTC = 15:05 ICT, weekdays
+        )
+
+        backfill_pipeline.from_source(
+            source=str(Path(__file__).parent),
+            entrypoint="reconciler.py:backfill_pipeline",
+        ).deploy(
+            name="tick-reconciler-backfill",
+            work_pool_name="my-worker",
+            # No cron — triggered manually
+        )
