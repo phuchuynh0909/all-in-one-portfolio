@@ -235,14 +235,130 @@ def tick_to_ohlc_1h_pipeline(
 # Deployment
 # ---------------------------------------------------------------------------
 
-if __name__ == "__main__":
-    from pathlib import Path
 
-    tick_to_ohlc_1h_pipeline.from_source(
-        source=str(Path(__file__).parent),
-        entrypoint="ohlc_1h.py:tick_to_ohlc_1h_pipeline",
-    ).deploy(
-        name="tick-to-ohlc-1h",
-        work_pool_name="my-worker",
-        cron="5 8 * * 1-5",  # 08:05 UTC = 15:05 ICT, weekdays
+def _run_cli() -> None:
+    import argparse
+    from datetime import date as _date
+
+    parser = argparse.ArgumentParser(
+        description="Aggregate ticks → OHLC 1h candles (plain Python, no Prefect)"
     )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--session-date",
+        metavar="YYYY-MM-DD",
+        help="Aggregate a single trading session (09:00-15:00 ICT). Defaults to today.",
+    )
+    group.add_argument(
+        "--date-from",
+        metavar="YYYY-MM-DD HH:MM:SS",
+        help="UTC start of custom window (pair with --date-to).",
+    )
+    parser.add_argument(
+        "--date-to",
+        metavar="YYYY-MM-DD HH:MM:SS",
+        help="UTC end of custom window (pair with --date-from).",
+    )
+    parser.add_argument("--symbol", default=None, help="Filter to a single symbol.")
+    parser.add_argument(
+        "deploy",
+        nargs="?",
+        help="Pass 'deploy' as positional arg to register Prefect deployments instead.",
+    )
+    args = parser.parse_args()
+
+    if args.deploy == "deploy":
+        from pathlib import Path
+
+        tick_to_ohlc_1h_pipeline.from_source(
+            source=str(Path(__file__).parent),
+            entrypoint="ohlc_1h.py:tick_to_ohlc_1h_pipeline",
+        ).deploy(
+            name="tick-to-ohlc-1h",
+            work_pool_name="my-worker",
+            cron="5 8 * * 1-5",  # 08:05 UTC = 15:05 ICT, weekdays
+        )
+        return
+
+    client = _get_ch_client()
+    database = _get_env("CLICKHOUSE_DB", "default")
+    ohlc_table = OHLC_1H_TABLE
+    _ensure_ohlc_1h_table_exists(client, database, ohlc_table)
+
+    if args.date_from:
+        if not args.date_to:
+            parser.error("--date-from requires --date-to")
+        date_from, date_to = args.date_from, args.date_to
+    else:
+        session_date = args.session_date or _date.today().isoformat()
+        date_from = f"{session_date} 02:00:00"
+        date_to = f"{session_date} 08:00:00"
+
+    symbol_filter = f"AND symbol = '{args.symbol}'" if args.symbol else ""
+
+    sql = f"""
+        SELECT
+            symbol,
+            toStartOfHour(sending_time) AS ts,
+            argMin(match_price, sending_time) AS open,
+            max(match_price)                  AS high,
+            min(match_price)                  AS low,
+            argMax(match_price, sending_time) AS close,
+            sum(match_qty)                    AS volume,
+            sumIf(match_qty, side = 1)        AS buy_volume,
+            sumIf(match_qty, side = 2)        AS sell_volume
+        FROM {database}.{TICKS_TABLE} FINAL
+        WHERE sending_time >= toDateTime64('{date_from}', 6, 'UTC')
+          AND sending_time <= toDateTime64('{date_to}', 6, 'UTC')
+          {symbol_filter}
+        GROUP BY symbol, ts
+        ORDER BY symbol, ts
+    """
+
+    print(f"Querying ticks [{date_from} → {date_to}] ...")
+    raw_rows = client.query(sql).result_rows
+
+    if not raw_rows:
+        print("No tick data found for the given window.")
+        return
+
+    rows: list[tuple] = [
+        (
+            str(r[0]),
+            r[1] if isinstance(r[1], datetime) else datetime.fromisoformat(str(r[1])),
+            float(r[2]),
+            float(r[3]),
+            float(r[4]),
+            float(r[5]),
+            int(r[6]),
+            int(r[7]),
+            int(r[8]),
+        )
+        for r in raw_rows
+    ]
+
+    column_names = [
+        "symbol",
+        "ts",
+        "open",
+        "high",
+        "low",
+        "close",
+        "volume",
+        "buy_volume",
+        "sell_volume",
+    ]
+
+    inserted = 0
+    for batch in _iter_batches(rows, batch_size=50000):
+        client.insert(f"{database}.{ohlc_table}", batch, column_names=column_names)
+        inserted += len(batch)
+
+    _save_sync_state(
+        SYNC_STATE_PATH, {"last_date_from": date_from, "last_date_to": date_to}
+    )
+    print(f"Done — inserted {inserted} rows into {database}.{ohlc_table}")
+
+
+if __name__ == "__main__":
+    _run_cli()
