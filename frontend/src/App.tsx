@@ -27,6 +27,7 @@ import Scanner from './pages/Scanner';
 import Live from './pages/Live';
 import Alerts from './pages/Alerts';
 import ChatAgents from './pages/ChatAgents';
+import Future from './pages/Future';
 
 const theme = createTheme({
   palette: {
@@ -59,6 +60,7 @@ const navItems = [
   { path: '/financial', label: 'Financial Statements' },
   { path: '/scanner', label: 'Scanner' },
   { path: '/live', label: '🔴 Live' },
+  { path: '/future', label: '⚡ Future' },
   { path: '/alerts', label: '🔔 Alerts' },
   { path: '/chat', label: '🤖 Chat' },
 ];
@@ -127,6 +129,7 @@ export default function App() {
               <Route path="/financial" element={<FinancialStatements />} />
               <Route path="/scanner" element={<Scanner />} />
               <Route path="/live" element={<Live />} />
+              <Route path="/future" element={<Future />} />
               <Route path="/alerts" element={<Alerts />} />
               <Route
                 path="/chat"
