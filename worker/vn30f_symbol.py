@@ -57,11 +57,15 @@ MONTH_CHARS_INV = {v: k for k, v in MONTH_CHARS.items()}
 
 KRX_PREFIX = "41I1"
 KRX_SUFFIX = "000"
-KRX_SWITCH_YEAR = 2026  # first year to use KRX format
+KRX_SWITCH = (2025, 11)  # Nov 2025 was the first KRX-format contract
+
+
+def _is_krx(year: int, month: int) -> bool:
+    return (year, month) >= KRX_SWITCH
 
 
 def encode(year: int, month: int) -> str:
-    if year >= KRX_SWITCH_YEAR:
+    if _is_krx(year, month):
         return f"{KRX_PREFIX}{YEAR_CHARS[year]}{MONTH_CHARS[month]}{KRX_SUFFIX}"
     return f"VN30F{year % 100:02d}{month:02d}"
 
