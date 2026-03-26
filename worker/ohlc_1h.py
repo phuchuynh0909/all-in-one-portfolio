@@ -74,7 +74,7 @@ def _ensure_ohlc_1h_table_exists(client, database: str, table: str) -> None:
         f"""
         CREATE TABLE IF NOT EXISTS {database}.{table} (
             symbol String,
-            ts DateTime('UTC'),
+            ts DateTime('Asia/Ho_Chi_Minh'),
             open Float64,
             high Float64,
             low Float64,
@@ -124,7 +124,7 @@ def aggregate_ticks_to_ohlc_1h(
     sql = f"""
         SELECT
             symbol,
-            toStartOfHour(sending_time) AS ts,
+            toStartOfHour(toTimezone(sending_time, 'Asia/Ho_Chi_Minh')) AS ts,
             argMin(match_price, sending_time) AS open,
             max(match_price) AS high,
             min(match_price) AS low,
@@ -299,7 +299,7 @@ def _run_cli() -> None:
     sql = f"""
         SELECT
             symbol,
-            toStartOfHour(sending_time) AS ts,
+            toStartOfHour(toTimezone(sending_time, 'Asia/Ho_Chi_Minh')) AS ts,
             argMin(match_price, sending_time) AS open,
             max(match_price)                  AS high,
             min(match_price)                  AS low,
