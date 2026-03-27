@@ -103,7 +103,9 @@ export default function Future() {
         });
       }
     }
-    candleSeriesRef.current.setMarkers(markers);
+    if (candleSeriesRef.current) {
+        candleSeriesRef.current.setMarkers(markers);
+    }
 
     chartRef.current?.timeScale().fitContent();
   }, [data]);

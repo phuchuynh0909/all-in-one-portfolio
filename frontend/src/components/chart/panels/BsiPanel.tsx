@@ -44,8 +44,12 @@ export default function BsiPanel({ chart, data }: BsiPanelProps) {
         return () => {
             if (chart) {
                 try {
-                    chart.removeSeries(bsiRfSeries);
-                    chart.removeSeries(zeroLine);
+                    if (bsiRfSeriesRef.current) {
+                        chart.removeSeries(bsiRfSeriesRef.current);
+                    }
+                    if (zeroLineRef.current) {
+                        chart.removeSeries(zeroLineRef.current);
+                    }
                 } catch (e) {
                     console.warn('Error removing series:', e);
                 }

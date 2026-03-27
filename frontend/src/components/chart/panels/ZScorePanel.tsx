@@ -61,10 +61,18 @@ export default function ZScorePanel({ chart, data, threshold = 2.0 }: ZScorePane
         return () => {
             if (chart) {
                 try {
-                    chart.removeSeries(bsiNormSeries);
-                    chart.removeSeries(upperThresholdLine);
-                    chart.removeSeries(lowerThresholdLine);
-                    chart.removeSeries(zeroLine);
+                    if (bsiNormSeriesRef.current) {
+                        chart.removeSeries(bsiNormSeriesRef.current);
+                    }
+                    if (upperThresholdLineRef.current) {
+                        chart.removeSeries(upperThresholdLineRef.current);
+                    }
+                    if (lowerThresholdLineRef.current) {
+                        chart.removeSeries(lowerThresholdLineRef.current);
+                    }
+                    if (zeroLineRef.current) {
+                        chart.removeSeries(zeroLineRef.current);
+                    }
                 } catch (e) {
                     console.warn('Error removing series:', e);
                 }
