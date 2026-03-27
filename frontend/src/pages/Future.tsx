@@ -74,7 +74,7 @@ export default function Future() {
     }));
     candleSeriesRef.current.setData(candleData);
 
-    const markers = [];
+    const markers: any[] = [];
     const bsiNorm = data.indicators.bsi_norm;
 
     for (let i = 1; i < bsiNorm.length; i++) {
@@ -87,24 +87,26 @@ export default function Future() {
       if (prev < THRESHOLD && curr >= THRESHOLD) {
         markers.push({
           time,
-          position: 'aboveBar' as const,
+          position: 'aboveBar',
           color: '#ef5350',
-          shape: 'arrowDown' as const,
+          shape: 'arrowDown',
           text: 'Overbought',
         });
       }
       else if (prev > -THRESHOLD && curr <= -THRESHOLD) {
         markers.push({
           time,
-          position: 'belowBar' as const,
+          position: 'belowBar',
           color: '#26a69a',
-          shape: 'arrowUp' as const,
+          shape: 'arrowUp',
           text: 'Oversold',
         });
       }
     }
-    if (candleSeriesRef.current) {
-        candleSeriesRef.current.setMarkers(markers);
+    
+    const series = candleSeriesRef.current as any;
+    if (series.setMarkers) {
+        series.setMarkers(markers);
     }
 
     chartRef.current?.timeScale().fitContent();
