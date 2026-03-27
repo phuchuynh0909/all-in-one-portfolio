@@ -63,6 +63,7 @@ SPECIAL_CASES: dict[tuple[int, int], str] = {
     (2025, 7): "41I1F7000",
     (2025, 8): "41I1F8000",
     (2025, 11): "41I1FB000",
+    (2025, 10): "41I1FA000",
 }
 SPECIAL_CASES_INV: dict[str, tuple[int, int]] = {v: k for k, v in SPECIAL_CASES.items()}
 

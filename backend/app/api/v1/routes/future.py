@@ -85,25 +85,45 @@ def _compute_bsi(
     return bsi, bsi_rf, bsi_norm
 
 
-@router.get("/ohlc-1h/{symbol}")
-async def get_ohlc_1h(
+def _compute_kama(prices: np.ndarray, period: int) -> np.ndarray:
+    n = len(prices)
+    kama = np.full(n, np.nan)
+    if n <= period:
+        return kama
+
+    fast_sc = 2.0 / (2 + 1)
+    slow_sc = 2.0 / (30 + 1)
+
+    kama[period - 1] = prices[period - 1]
+    for i in range(period, n):
+        direction = abs(prices[i] - prices[i - period])
+        volatility = np.sum(np.abs(np.diff(prices[i - period : i + 1])))
+        er = direction / volatility if volatility > 0 else 0.0
+        sc = (er * (fast_sc - slow_sc) + slow_sc) ** 2
+        kama[i] = kama[i - 1] + sc * (prices[i] - kama[i - 1])
+
+    return kama
+
+
+@router.get("/ohlc-5m/{symbol}")
+async def get_ohlc_5m(
     symbol: str,
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     kappa: float = Query(0.1),
-    hp_period: int = Query(20),
-    lp_period: int = Query(5),
+    hp_period: int = Query(16),
+    lp_period: int = Query(14),
     ch: Client = Depends(get_clickhouse_client),
 ):
     """
-    Get 1-hour OHLC data with BSI indicators for a futures symbol.
+    Get 5-minute OHLC data with BSI indicators for a futures symbol.
     """
     start_clause = ""
     end_clause = ""
     if start_date:
         start_clause = f"AND ts >= toDateTime('{start_date}', 'Asia/Ho_Chi_Minh')"
     else:
-        default_start = (datetime.now() - timedelta(days=90)).strftime("%Y-%m-%d")
+        default_start = (datetime.now() - timedelta(days=360)).strftime("%Y-%m-%d")
         start_clause = f"AND ts >= toDateTime('{default_start}', 'Asia/Ho_Chi_Minh')"
     if end_date:
         end_clause = f"AND ts <= toDateTime('{end_date}', 'Asia/Ho_Chi_Minh')"
@@ -112,7 +132,7 @@ async def get_ohlc_1h(
         SELECT
             formatDateTime(ts, '%Y-%m-%dT%H:%i:%S', 'Asia/Ho_Chi_Minh') AS timestamp,
             open, high, low, close, volume, buy_volume, sell_volume
-        FROM default.ohlc_1h FINAL
+        FROM default.ohlc_5m FINAL
         WHERE symbol = '{symbol}'
           {start_clause}
           {end_clause}
@@ -148,26 +168,27 @@ async def get_ohlc_1h(
         lp_period=lp_period,
     )
 
-    def _safe_list(arr: np.ndarray) -> list:
+    close_arr = np.array(closes, dtype=float)
+    kama_21 = _compute_kama(close_arr, period=21)
+    kama_200 = _compute_kama(close_arr, period=200)
+
+    def _safe(arr: np.ndarray) -> list:
         return [None if np.isnan(v) else float(v) for v in arr]
 
     return {
         "symbol": symbol,
         "timestamps": timestamps,
-        "ohlc": {
-            "open": opens,
-            "high": highs,
-            "low": lows,
-            "close": closes,
-        },
+        "ohlc": {"open": opens, "high": highs, "low": lows, "close": closes},
         "volume": {
             "total": volumes,
             "buy": buy_vols.tolist(),
             "sell": sell_vols.tolist(),
         },
         "indicators": {
-            "bsi": _safe_list(bsi),
-            "bsi_rf": _safe_list(bsi_rf),
-            "bsi_norm": _safe_list(bsi_norm),
+            "bsi": _safe(bsi),
+            "bsi_rf": _safe(bsi_rf),
+            "bsi_norm": _safe(bsi_norm),
+            "kama_21": _safe(kama_21),
+            "kama_200": _safe(kama_200),
         },
     }

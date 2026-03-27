@@ -69,7 +69,7 @@ export default function Future() {
   return (
     <Box sx={{ p: 3 }}>
       <Stack spacing={2}>
-        <Typography variant="h4">⚡ Future — {SYMBOL} (1H)</Typography>
+        <Typography variant="h4">⚡ Future — {SYMBOL} (5M)</Typography>
         <Paper sx={{ p: 2 }}>
           <Typography variant="caption">Z-Score Threshold: {threshold.toFixed(1)}</Typography>
           <Slider value={threshold} min={0.5} max={4} step={0.5}

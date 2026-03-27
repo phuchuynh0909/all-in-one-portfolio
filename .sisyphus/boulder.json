@@ -19,7 +19,12 @@
     "ses_2d786a74effeO0t2gNkKNLYia7",
     "ses_2d7868fd2ffedQC5We5TSydXPn",
     "ses_2d78628acffeeeeOq5ecmq8bI3",
-    "ses_2d782c109ffe6mbSN2ifT3MR1W"
+    "ses_2d782c109ffe6mbSN2ifT3MR1W",
+    "ses_2d7159705ffegpE4NRMCLvftUO",
+    "ses_2d70f9c24ffeFusP6qQfSxJq3a",
+    "ses_2d60c0a46ffel6fUMSpJVBo6fz",
+    "ses_2d60b774affejiDN0S3d0jueRF",
+    "ses_2d5ac7889ffe5AOSkCO3KfHhKe"
   ],
   "plan_name": "tick-data-clickhouse-sync",
   "agent": "atlas",

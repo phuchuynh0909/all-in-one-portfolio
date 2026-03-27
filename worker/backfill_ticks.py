@@ -10,8 +10,8 @@ Usage:
 
 Contract symbols are resolved automatically per date via vn30f_symbol.
 After backfill, run merge to build VN30F1M:
-    python ohlc_1h.py --date-from "2025-01-01 00:00:00" --date-to "2026-03-27 00:00:00"
-    then: python -c "from ohlc_1h import vn30f1m_pipeline; vn30f1m_pipeline('2025-01-01')"
+    python ohlc_5m.py --date-from "2025-01-01 00:00:00" --date-to "2026-03-27 00:00:00"
+    then: python -c "from ohlc_5m import vn30f1m_pipeline; vn30f1m_pipeline('2025-01-01')"
 """
 
 import argparse
@@ -92,10 +92,10 @@ def run(start: date, end: date, dry_run: bool = False) -> None:
     if not dry_run and total_patched > 0:
         print("\nNext step — aggregate ticks into 1h OHLC + build VN30F1M:")
         print(
-            f'  python ohlc_1h.py --date-from "{start} 00:00:00" --date-to "{end} 23:59:59"'
+            f'  python ohlc_5m.py --date-from "{start} 00:00:00" --date-to "{end} 23:59:59"'
         )
         print(
-            f"  python -c \"from ohlc_1h import vn30f1m_pipeline; vn30f1m_pipeline('{start}', '{end}')\""
+            f"  python -c \"from ohlc_5m import vn30f1m_pipeline; vn30f1m_pipeline('{start}', '{end}')\""
         )
 
 

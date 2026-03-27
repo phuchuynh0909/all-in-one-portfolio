@@ -1,4 +1,4 @@
-"""Prefect flow: aggregate tick data into 1-hour OHLC candles."""
+"""Prefect flow: aggregate tick data into 5-minute OHLC candles."""
 
 from typing import Any, Generator, Sequence
 from datetime import date, datetime
@@ -13,10 +13,10 @@ import clickhouse_connect  # type: ignore
 # Constants
 # ---------------------------------------------------------------------------
 SYNC_STATE_PATH = os.getenv(
-    "OHLC_1H_SYNC_STATE_PATH", "./.state/ohlc_1h_sync_state.json"
+    "OHLC_5M_SYNC_STATE_PATH", "./.state/ohlc_5m_sync_state.json"
 )
 TICKS_TABLE = os.getenv("CLICKHOUSE_TICKS_TABLE", "ticks")
-OHLC_1H_TABLE = os.getenv("CLICKHOUSE_OHLC_1H_TABLE", "ohlc_1h")
+OHLC_5M_TABLE = os.getenv("CLICKHOUSE_OHLC_5M_TABLE", "ohlc_5m")
 
 # ---------------------------------------------------------------------------
 # Private helpers
@@ -68,7 +68,7 @@ def _iter_batches(
         yield list(rows[start:end])
 
 
-def _ensure_ohlc_1h_table_exists(client, database: str, table: str) -> None:
+def _ensure_ohlc_5m_table_exists(client, database: str, table: str) -> None:
     client.command(f"CREATE DATABASE IF NOT EXISTS {database}")
     client.command(
         f"""
@@ -100,14 +100,14 @@ VN30F1M = "VN30F1M"
 
 
 @task(log_prints=True)
-def aggregate_ticks_to_ohlc_1h(
+def aggregate_ticks_to_ohlc_5m(
     date_from: str,
     date_to: str,
     contract_symbol: str | None = None,
 ) -> int:
     database = _get_env("CLICKHOUSE_DB", "default")
     client = _get_ch_client()
-    _ensure_ohlc_1h_table_exists(client, database, OHLC_1H_TABLE)
+    _ensure_ohlc_5m_table_exists(client, database, OHLC_5M_TABLE)
 
     if contract_symbol:
         symbol_filter = f"AND symbol = '{contract_symbol}'"
@@ -117,7 +117,7 @@ def aggregate_ticks_to_ohlc_1h(
     sql = f"""
         SELECT
             '{VN30F1M}',
-            toStartOfHour(toTimezone(sending_time, 'Asia/Ho_Chi_Minh')) AS ts,
+            toStartOfFiveMinutes(toTimezone(sending_time, 'Asia/Ho_Chi_Minh')) AS ts,
             argMin(match_price, sending_time) AS open,
             max(match_price)                  AS high,
             min(match_price)                  AS low,
@@ -164,7 +164,7 @@ def aggregate_ticks_to_ohlc_1h(
 
     inserted = 0
     for batch in _iter_batches(rows, batch_size=50000):
-        client.insert(f"{database}.{OHLC_1H_TABLE}", batch, column_names=column_names)
+        client.insert(f"{database}.{OHLC_5M_TABLE}", batch, column_names=column_names)
         inserted += len(batch)
 
     _save_sync_state(
@@ -175,7 +175,7 @@ def aggregate_ticks_to_ohlc_1h(
 
 
 @task(log_prints=True)
-def aggregate_session_to_ohlc_1h(session_date: str | None = None) -> int:
+def aggregate_session_to_ohlc_5m(session_date: str | None = None) -> int:
     from vn30f_symbol import symbol_for_date as _sym
 
     if session_date is None:
@@ -184,7 +184,7 @@ def aggregate_session_to_ohlc_1h(session_date: str | None = None) -> int:
     date_from = f"{session_date} 02:00:00"
     date_to = f"{session_date} 08:00:00"
     print(f"Session {session_date}: contract={contract} → VN30F1M")
-    return aggregate_ticks_to_ohlc_1h(date_from, date_to, contract)
+    return aggregate_ticks_to_ohlc_5m(date_from, date_to, contract)
 
 
 # ---------------------------------------------------------------------------
@@ -193,8 +193,8 @@ def aggregate_session_to_ohlc_1h(session_date: str | None = None) -> int:
 
 
 @flow(log_prints=True)
-def tick_to_ohlc_1h_pipeline(session_date: str | None = None) -> None:
-    total = aggregate_session_to_ohlc_1h(session_date)
+def tick_to_ohlc_5m_pipeline(session_date: str | None = None) -> None:
+    total = aggregate_session_to_ohlc_5m(session_date)
     print(f"Pipeline complete — {total} VN30F1M rows inserted.")
 
 
@@ -208,7 +208,7 @@ def _run_cli() -> None:
     from datetime import date as _date
 
     parser = argparse.ArgumentParser(
-        description="Aggregate ticks → OHLC 1h candles (plain Python, no Prefect)"
+        description="Aggregate ticks → OHLC 5m candles (plain Python, no Prefect)"
     )
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
@@ -237,11 +237,11 @@ def _run_cli() -> None:
     if args.deploy == "deploy":
         from pathlib import Path
 
-        tick_to_ohlc_1h_pipeline.from_source(
+        tick_to_ohlc_5m_pipeline.from_source(
             source=str(Path(__file__).parent),
-            entrypoint="ohlc_1h.py:tick_to_ohlc_1h_pipeline",
+            entrypoint="ohlc_5m.py:tick_to_ohlc_5m_pipeline",
         ).deploy(
-            name="vn30f1m-ohlc-1h",
+            name="vn30f1m-ohlc-5m",
             work_pool_name="my-worker",
             cron="5 8 * * 1-5",  # 08:05 UTC = 15:05 ICT, weekdays
         )
@@ -249,8 +249,8 @@ def _run_cli() -> None:
 
     client = _get_ch_client()
     database = _get_env("CLICKHOUSE_DB", "default")
-    ohlc_table = OHLC_1H_TABLE
-    _ensure_ohlc_1h_table_exists(client, database, ohlc_table)
+    ohlc_table = OHLC_5M_TABLE
+    _ensure_ohlc_5m_table_exists(client, database, ohlc_table)
 
     if args.date_from:
         if not args.date_to:
@@ -269,7 +269,7 @@ def _run_cli() -> None:
     sql = f"""
         SELECT
             '{VN30F1M}',
-            toStartOfHour(toTimezone(sending_time, 'Asia/Ho_Chi_Minh')) AS ts,
+            toStartOfFiveMinutes(toTimezone(sending_time, 'Asia/Ho_Chi_Minh')) AS ts,
             argMin(match_price, sending_time) AS open,
             max(match_price)                  AS high,
             min(match_price)                  AS low,
