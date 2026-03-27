@@ -6,8 +6,9 @@ import { fetchFutureOhlc } from '../lib/services/future';
 import type { FutureOhlcResponse } from '../lib/services/future';
 import BsiPanel from '../components/chart/panels/BsiPanel';
 import ZScorePanel from '../components/chart/panels/ZScorePanel';
+import KamaPanel from '../components/chart/panels/KamaPanel';
 
-const SYMBOL = '41I1G4000';
+const SYMBOL = 'VN30F1M';
 
 export default function Future() {
   const chartContainerRef = useRef<HTMLDivElement>(null);
@@ -81,6 +82,7 @@ export default function Future() {
           <div ref={chartContainerRef} style={{ width: '100%' }} />
           {chartRef.current && data && (
             <>
+              <KamaPanel chart={chartRef.current} data={data} />
               <BsiPanel chart={chartRef.current} data={data} />
               <ZScorePanel chart={chartRef.current} data={data} threshold={threshold} />
             </>
