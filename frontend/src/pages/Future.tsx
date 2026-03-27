@@ -22,7 +22,11 @@ export default function Future() {
     const loadData = async () => {
       try {
         setLoading(true);
-        const response = await fetchFutureOhlc(SYMBOL);
+        const response = await fetchFutureOhlc(SYMBOL, {
+          kappa: 0.1,
+          hp_period: 45,
+          lp_period: 11
+        });
         setData(response);
         setError(null);
       } catch (err) {

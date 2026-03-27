@@ -111,8 +111,8 @@ async def get_ohlc_5m(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     kappa: float = Query(0.1),
-    hp_period: int = Query(16),
-    lp_period: int = Query(14),
+    hp_period: int = Query(45),
+    lp_period: int = Query(11),
     ch: Client = Depends(get_clickhouse_client),
 ):
     """
