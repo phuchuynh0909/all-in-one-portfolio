@@ -18,6 +18,7 @@ export default function Future() {
   const [data, setData] = useState<FutureOhlcResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   useEffect(() => {
     const loadData = async () => {
@@ -110,6 +111,27 @@ export default function Future() {
     }
 
     chartRef.current?.timeScale().fitContent();
+
+    // Crosshair subscription for dynamic legend
+    const times = data.timestamps.map(ts => (new Date(ts).getTime() / 1000) as UTCTimestamp);
+    setHoveredIndex(times.length - 1);
+
+    const crosshairHandler = (param: any) => {
+      if (!param.time) {
+        setHoveredIndex(times.length - 1);
+        return;
+      }
+      const idx = times.indexOf(param.time as UTCTimestamp);
+      if (idx !== -1) {
+        setHoveredIndex(idx);
+      }
+    };
+
+    chartRef.current?.subscribeCrosshairMove(crosshairHandler);
+
+    return () => {
+      chartRef.current?.unsubscribeCrosshairMove(crosshairHandler);
+    };
   }, [data]);
 
   return (
@@ -118,8 +140,37 @@ export default function Future() {
         <Typography variant="h4">⚡ Future — {SYMBOL} (5M)</Typography>
         {loading && <CircularProgress />}
         {error && <Alert severity="error">{error}</Alert>}
-        <Paper sx={{ p: 0 }}>
+        <Paper sx={{ p: 0, position: 'relative' }}>
           <div ref={chartContainerRef} style={{ width: '100%' }} />
+          {data && hoveredIndex !== null && hoveredIndex >= 0 && (
+            <Box
+              sx={{
+                position: 'absolute',
+                top: 12,
+                left: 12,
+                zIndex: 10,
+                pointerEvents: 'none',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.5,
+              }}
+            >
+              <Box sx={{ display: 'flex', gap: 2 }}>
+                <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#f97316' }}>
+                  KAMA 21 <span style={{ color: '#fff' }}>{data.indicators.kama_21[hoveredIndex]?.toFixed(2) ?? 'N/A'}</span>
+                </Typography>
+                <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#a78bfa' }}>
+                  KAMA 200 <span style={{ color: '#fff' }}>{data.indicators.kama_200[hoveredIndex]?.toFixed(2) ?? 'N/A'}</span>
+                </Typography>
+              </Box>
+              <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#10a4f4' }}>
+                BSI <span style={{ color: '#fff' }}>{data.indicators.bsi[hoveredIndex]?.toFixed(2) ?? 'N/A'}</span>
+              </Typography>
+              <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#f59e0b' }}>
+                Z-Score <span style={{ color: '#fff' }}>{data.indicators.bsi_norm[hoveredIndex]?.toFixed(2) ?? 'N/A'}</span>
+              </Typography>
+            </Box>
+          )}
           {chartRef.current && data && (
             <>
               <KamaPanel chart={chartRef.current} data={data} />
