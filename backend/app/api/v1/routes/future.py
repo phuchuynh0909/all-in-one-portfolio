@@ -15,7 +15,7 @@ router = APIRouter(prefix="/future", tags=["future"])
 def _roofing_filter(
     series: np.ndarray,
     hp_period: int = 48,
-    lp_period: int = 10,
+    lp_period: int = 2,
 ) -> np.ndarray:
     """
     John Ehlers' Roofing Filter (Cycle Analytics for Traders, 2013)
@@ -111,8 +111,8 @@ async def get_ohlc_5m(
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
     kappa: float = Query(0.1),
-    hp_period: int = Query(45),
-    lp_period: int = Query(11),
+    hp_period: int = Query(48),
+    lp_period: int = Query(2),
     ch: Client = Depends(get_clickhouse_client),
 ):
     """
