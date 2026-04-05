@@ -22,6 +22,7 @@ from app.services.backtest_strategies import (
     BreakoutTTMStrategyBT,
     BreakoutTTMV1StrategyBT,
     BreakoutTTMV1bStrategyBT,
+    BreakoutTTMV1cStrategyBT,
     BreakoutTTMV2StrategyBT,
     BreakoutTTMV3StrategyBT,
     EpisodicPivotStrategyBT,
@@ -383,6 +384,9 @@ def _get_plot_strategy(strategy_name: str):
     elif strategy_name == "Breakout TTM V1b":
         # V1 + only enter when close > ATR trailing (uptrend confirmed at entry)
         return BreakoutTTMV1bStrategyBT, {}
+    elif strategy_name == "Breakout TTM V1c":
+        # V1 + SMF Cloud regime filter (bull regime gate + switch_down force exit)
+        return BreakoutTTMV1cStrategyBT, {}
     elif strategy_name == "Breakout TTM V2":
         # Best params Trial #493 — Total Return 397%, Sortino 1.001
         return BreakoutTTMV2StrategyBT, {}

@@ -26,6 +26,7 @@ export default function BacktestVisualization() {
     'Breakout TTM',
     'Breakout TTM V1',
     'Breakout TTM V1b',
+    'Breakout TTM V1c',
     'Breakout TTM V2',
     'Breakout TTM V3',
     'Williams Vix Fix',

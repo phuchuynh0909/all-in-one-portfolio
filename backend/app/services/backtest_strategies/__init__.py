@@ -3,6 +3,7 @@ from .breakout_ttm import (
     BreakoutTTMStrategyBT,
     BreakoutTTMV1StrategyBT,
     BreakoutTTMV1bStrategyBT,
+    BreakoutTTMV1cStrategyBT,
     BreakoutTTMV2StrategyBT,
     BreakoutTTMV3StrategyBT,
 )
@@ -14,6 +15,7 @@ __all__ = [
     'BreakoutTTMStrategyBT',
     'BreakoutTTMV1StrategyBT',
     'BreakoutTTMV1bStrategyBT',
+    'BreakoutTTMV1cStrategyBT',
     'BreakoutTTMV2StrategyBT',
     'BreakoutTTMV3StrategyBT',
     'EpisodicPivotStrategyBT',

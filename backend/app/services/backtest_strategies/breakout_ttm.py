@@ -3,6 +3,7 @@ import numpy as np
 import pandas as pd
 import talib
 from app.services.indicators.trailing_sl import trailing_sl
+from app.services.indicators.smart_money_flow import smart_money_flow, SMF_DEFAULTS
 
 import numba
 @numba.njit
@@ -500,6 +501,140 @@ class BreakoutTTMV3StrategyBT(Strategy):
             self.buy(sl=sl)
             return
         if self.position:
+            if close < self.low_sl[idx - 1]:
+                self.position.close()
+                return
+            if (self.data.Close[idx - 1] >= self.atr_trail[idx - 1]
+                    and close < self.atr_trail[idx]):
+                self.position.close()
+
+
+class BreakoutTTMV1cStrategyBT(Strategy):
+    """
+    V1c — TTM Breakout V1 gated by SMF Cloud regime filter.
+
+    Entry: same as V1 (no_squeeze & TTM > 0 & KAMA flat)
+           AND SMF last_signal == +1 (bull regime)
+    Exit:  ATR trailing cross OR lowest-low SL
+           OR SMF switch_down (regime turns bearish → force exit)
+
+    SMF default params: optimised from backtest_005b study.
+    """
+    # BB
+    bb_period             = 14
+    bb_multiplier         = 1.0
+    # Keltner
+    kc_period             = 51
+    kc_multiplier         = 1.2
+    kc_atr_period         = 7
+    # TTM oscillator
+    donichan_period       = 9
+    osc_smoothing_period  = 11
+    # Exit
+    atr_period            = 11
+    atr_multiplier        = 3.5
+    low_stop_lookback     = 5
+    # KAMA slope filter
+    kama_period           = 10
+    kama_fast             = 4
+    kama_slow             = 23
+    kama_slope_win        = 4
+    flat_threshold_pct    = 2.8
+    # SMF regime params (optimised defaults)
+    smf_trend_len         = SMF_DEFAULTS["trend_len"]
+    smf_mf_len            = SMF_DEFAULTS["mf_len"]
+    smf_mf_smooth         = SMF_DEFAULTS["mf_smooth"]
+    smf_mf_power          = SMF_DEFAULTS["mf_power"]
+    smf_atr_len           = SMF_DEFAULTS["atr_len"]
+    smf_min_mult          = SMF_DEFAULTS["min_mult"]
+    smf_max_mult          = SMF_DEFAULTS["max_mult"]
+    smf_basis_type        = 'ALMA'
+
+    def init(self):
+        close = np.asarray(self.data.Close, dtype=np.float64)
+        high  = np.asarray(self.data.High,  dtype=np.float64)
+        low   = np.asarray(self.data.Low,   dtype=np.float64)
+        open_ = np.asarray(self.data.Open,  dtype=np.float64)
+        vol   = np.asarray(self.data.Volume, dtype=np.float64)
+
+        # ── TTM Breakout V1 signals ───────────────────────────────────────────
+        bb_upper, _, bb_lower = talib.BBANDS(
+            close, timeperiod=self.bb_period,
+            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=0,
+        )
+        kc_atr   = talib.ATR(high, low, close, timeperiod=self.kc_atr_period)
+        kc_ema   = talib.EMA(close, timeperiod=self.kc_period)
+        kc_upper = kc_ema + self.kc_multiplier * kc_atr
+        kc_lower = kc_ema - self.kc_multiplier * kc_atr
+
+        hh  = talib.MAX(high, timeperiod=self.donichan_period)
+        ll  = talib.MIN(low,  timeperiod=self.donichan_period)
+        sma = talib.SMA(close, timeperiod=self.donichan_period)
+        osc = close - ((hh + ll) / 2.0 + sma) / 2.0
+        ttms = talib.LINEARREG(osc, timeperiod=self.osc_smoothing_period)
+
+        sqz_on  = (bb_upper < kc_upper) & (bb_lower > kc_lower)
+        sqz_off = (bb_upper > kc_upper) & (bb_lower < kc_lower)
+        no_sqz  = (~sqz_on) & (~sqz_off)
+
+        kama = kama_1d(close, self.kama_period, self.kama_fast, self.kama_slow)
+        flat = slope_flat_1d(kama, self.kama_slope_win, self.flat_threshold_pct)
+
+        ttm_signal = no_sqz & (ttms > 0) & flat
+
+        # ── SMF Cloud regime ──────────────────────────────────────────────────
+        smf = smart_money_flow(
+            open_, high, low, close, vol,
+            trend_len    = self.smf_trend_len,
+            mf_len       = self.smf_mf_len,
+            mf_smooth    = self.smf_mf_smooth,
+            mf_power     = self.smf_mf_power,
+            atr_len      = self.smf_atr_len,
+            min_mult     = self.smf_min_mult,
+            max_mult     = self.smf_max_mult,
+            basis_type   = self.smf_basis_type,
+        )
+        bull_regime       = smf["last_signal"] == 1
+        self.switch_down  = smf["switch_down"]
+        smf_basis         = smf["b_close"]
+        smf_upper         = smf["upper"]
+        smf_lower         = smf["lower"]
+
+        # ── Combined entry: TTM V1 AND bull regime ────────────────────────────
+        self.buy_signal = ttm_signal & bull_regime
+
+        # ── Exits ─────────────────────────────────────────────────────────────
+        atr_exit       = talib.ATR(high, low, close, timeperiod=self.atr_period)
+        self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
+        self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
+
+        # ── Chart indicators ──────────────────────────────────────────────────
+        self.I(_identity, ttms,                     name='TTMS',        overlay=False, color='#4fc3f7')
+        self.I(_identity, kama,                     name='KAMA',        overlay=True,  color='#f7c59f')
+        self.I(_identity, flat.astype(float),       name='KAMA Flat',   overlay=False, color='#3ddc84')
+        self.I(_identity, bull_regime.astype(float),name='SMF Regime',  overlay=False, color='#a855f7')
+        self.I(_identity, smf_basis,                name='SMF Basis',   overlay=True,  color='#f39c12')
+        self.I(_identity, smf_upper,                name='SMF Upper',   overlay=True,  color='#3498db')
+        self.I(_identity, smf_lower,                name='SMF Lower',   overlay=True,  color='#e74c3c')
+        self.I(_identity, self.buy_signal.astype(float), name='Buy Signal', overlay=False, color='blue')
+        self.I(_identity, self.atr_trail,           name='ATR Trail',   overlay=True,  color='red')
+
+    def next(self):
+        idx = len(self.data.Close) - 1
+        if idx < 1:
+            return
+        close = self.data.Close[idx]
+        if not self.position and self.buy_signal[idx]:
+            sl = float(self.low_sl[idx - 1])
+            if np.isnan(sl) or sl >= close:
+                sl = close * 0.95
+            self.buy(sl=sl)
+            return
+        if self.position:
+            # Force exit when SMF regime flips to bearish
+            if self.switch_down[idx]:
+                self.position.close()
+                return
             if close < self.low_sl[idx - 1]:
                 self.position.close()
                 return
