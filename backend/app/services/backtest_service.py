@@ -20,6 +20,11 @@ from backtesting.test import SMA
 from app.services.backtest_strategies import (
     BreakoutDeMarkerStrategyBT,
     BreakoutTTMStrategyBT,
+    BreakoutTTMV1StrategyBT,
+    BreakoutTTMV1bStrategyBT,
+    BreakoutTTMV1cStrategyBT,
+    BreakoutTTMV2StrategyBT,
+    BreakoutTTMV3StrategyBT,
     EpisodicPivotStrategyBT,
     WilliamsVixStrategyBT,
 )
@@ -62,6 +67,45 @@ def get_strategy_params(strategy_name: str) -> Tuple[List[tuple], type, List[str
                     'atr_window', 'momentum_window', 'donichan_window', 'entry_version',
                     'kc_atr_period', 'osc_smoothing_period', 'matype', 'william_vix_period', 'consecutive_neg_threshold']
         return strategy_params, BreakoutTTMVersion2, param_names
+    elif strategy_name in ("Breakout TTM V1", "Breakout TTM V1b"):
+        # Best params Trial #453 — Total Return 403%, Sortino 0.995
+        # V1b adds: only enter when close > ATR trailing (uptrend confirmed)
+        from app.services.strategies.breakout_ttm import BreakoutTTMVersion2
+        strategy_params = [
+            (14, 1.0, 51, 1.2, 11, 12, 9, 'v1', 7, 11, 0, 22, 14),
+        ]
+        param_names = ['bb_window', 'bb_multiplier', 'kc_window', 'kc_multiplier',
+                       'atr_window', 'momentum_window', 'donichan_window', 'entry_version',
+                       'kc_atr_period', 'osc_smoothing_period', 'matype', 'william_vix_period',
+                       'consecutive_neg_threshold']
+        return strategy_params, BreakoutTTMVersion2, param_names
+
+    elif strategy_name == "Breakout TTM V2":
+        # Best params Trial #493 — Total Return 397%, Sortino 1.001
+        # entry_version='v2': momentum zero-cross breakout, KAMA flat slope gated
+        from app.services.strategies.breakout_ttm import BreakoutTTMVersion2
+        strategy_params = [
+            (18, 1.2, 53, 1.5, 5, 12, 9, 'v2', 5, 11, 0, 27, 13),
+        ]
+        param_names = ['bb_window', 'bb_multiplier', 'kc_window', 'kc_multiplier',
+                       'atr_window', 'momentum_window', 'donichan_window', 'entry_version',
+                       'kc_atr_period', 'osc_smoothing_period', 'matype', 'william_vix_period',
+                       'consecutive_neg_threshold']
+        return strategy_params, BreakoutTTMVersion2, param_names
+
+    elif strategy_name == "Breakout TTM V3":
+        # Best params Trial #238 — Total Return 403%, Sortino 0.981
+        # entry_version='v3': breakout (KAMA gated) + bottom fishing + WVF
+        from app.services.strategies.breakout_ttm import BreakoutTTMVersion2
+        strategy_params = [
+            (11, 1.1, 30, 1.5, 5, 12, 20, 'v3', 7, 15, 0, 18, 9),
+        ]
+        param_names = ['bb_window', 'bb_multiplier', 'kc_window', 'kc_multiplier',
+                       'atr_window', 'momentum_window', 'donichan_window', 'entry_version',
+                       'kc_atr_period', 'osc_smoothing_period', 'matype', 'william_vix_period',
+                       'consecutive_neg_threshold']
+        return strategy_params, BreakoutTTMVersion2, param_names
+
     elif strategy_name == "Dual RSI":
         from app.services.strategies.dual_rsi import DualRSI
         strategy_params = [
@@ -332,10 +376,23 @@ def _get_plot_strategy(strategy_name: str):
             "entry_version": "v2",
         }
     elif strategy_name == "Breakout TTM":
-        # args = {'bb_period': 15, 'bb_multiplier': 2.5, 'kc_period': 15, 'kc_atr_period': 10, 'kc_multiplier': 2.5, 'donichan_period': 20}
-        # args = {'bb_period': 10, 'bb_multiplier': 1.8, 'kc_period': 14, 'kc_atr_period': 10, 'kc_multiplier': 1.1, 'donichan_period': 10, 'osc_smoothing_period': 10}
         args = {'bb_period': 10, 'bb_multiplier': 1.2, 'kc_period': 13, 'kc_atr_period': 10, 'kc_multiplier': 1.0, 'donichan_period': 10, 'osc_smoothing_period': 5, 'matype': 3, 'william_vix_period': 25}
         return BreakoutTTMStrategyBT, args
+    elif strategy_name == "Breakout TTM V1":
+        # Best params Trial #453 — Total Return 403%, Sortino 0.995
+        return BreakoutTTMV1StrategyBT, {}
+    elif strategy_name == "Breakout TTM V1b":
+        # V1 + only enter when close > ATR trailing (uptrend confirmed at entry)
+        return BreakoutTTMV1bStrategyBT, {}
+    elif strategy_name == "Breakout TTM V1c":
+        # V1 + SMF Cloud regime filter (bull regime gate + switch_down force exit)
+        return BreakoutTTMV1cStrategyBT, {}
+    elif strategy_name == "Breakout TTM V2":
+        # Best params Trial #493 — Total Return 397%, Sortino 1.001
+        return BreakoutTTMV2StrategyBT, {}
+    elif strategy_name == "Breakout TTM V3":
+        # Best params Trial #238 — Total Return 403%, Sortino 0.981
+        return BreakoutTTMV3StrategyBT, {}
     elif strategy_name == "Williams Vix Fix":
         args = {
             'bb_period': 10,

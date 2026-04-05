@@ -22,6 +22,7 @@ from app.api.v1.routes.isp_alerts import router as isp_alerts_router
 from app.api.v1.routes.price_alerts import router as price_alerts_router
 from app.api.v1.routes.chat import router as chat_router
 from app.api.v1.routes.auth import router as auth_router
+from app.api.v1.routes.future import router as future_router
 
 
 def get_app() -> FastAPI:
@@ -60,22 +61,25 @@ def get_app() -> FastAPI:
     app.include_router(crawler_router, prefix=api_prefix)
     app.include_router(scanner_router, prefix=api_prefix)
     app.include_router(workflows_router, prefix=api_prefix)
-    app.include_router(isp_alerts_router, prefix=f"{api_prefix}/isp", tags=["ISP Alerts"])
+    app.include_router(
+        isp_alerts_router, prefix=f"{api_prefix}/isp", tags=["ISP Alerts"]
+    )
     app.include_router(price_alerts_router, prefix=api_prefix)
     app.include_router(chat_router, prefix=api_prefix)
     app.include_router(auth_router, prefix=api_prefix)
+    app.include_router(future_router, prefix=api_prefix)
 
     # Create a custom cache decorator that logs hits and misses
     def cache_with_logging(**cache_kwargs):
         cache_decorator = cache(**cache_kwargs)
-        
+
         def wrapper(func):
             @wraps(func)
             async def wrapped(*args, **kwargs):
                 # Try to get from cache first
-                cache_key = cache_kwargs.get('key_builder', FastAPICache.get_key_builder())(
-                    func, *args, **kwargs
-                )
+                cache_key = cache_kwargs.get(
+                    "key_builder", FastAPICache.get_key_builder()
+                )(func, *args, **kwargs)
                 try:
                     cached_value = await FastAPICache.get_backend().get(cache_key)
                     if cached_value is not None:
@@ -84,11 +88,12 @@ def get_app() -> FastAPI:
                     logger.info(f"Cache MISS for key: {cache_key}")
                 except Exception as e:
                     logger.error(f"Cache error: {e}")
-                
+
                 # If not in cache, execute function
                 return await cache_decorator(func)(*args, **kwargs)
-            
+
             return wrapped
+
         return wrapper
 
     # Make the custom decorator available globally
@@ -101,9 +106,12 @@ def get_app() -> FastAPI:
         FastAPICache.init(
             backend,
             prefix="fastapi-cache",
-            expire=3600  # Default expiration of 1 hour
+            expire=3600,  # Default expiration of 1 hour
         )
-        logger.info("Cache initialized successfully with backend: {}", backend.__class__.__name__)
+        logger.info(
+            "Cache initialized successfully with backend: {}",
+            backend.__class__.__name__,
+        )
 
     return app
 

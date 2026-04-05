@@ -24,6 +24,8 @@ class ClickHouseClient:
         self.user = user or config.clickhouse.user
         self.password = password or config.clickhouse.password
         self.database = database or config.clickhouse.database
+        self.secure = config.clickhouse.secure
+        self.connect_timeout = config.clickhouse.connect_timeout
         self._client = None
     
     @property
@@ -37,6 +39,8 @@ class ClickHouseClient:
                     username=self.user,
                     password=self.password,
                     database=self.database,
+                    secure=self.secure,
+                    connect_timeout=self.connect_timeout,
                 )
             except Exception as e:
                 print(f"Error connecting to ClickHouse: {e}")

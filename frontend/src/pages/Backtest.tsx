@@ -25,7 +25,15 @@ import type {
 import { useBacktest, type Trade } from '../lib/services/backtest';
 import { format } from 'date-fns';
 
-const STRATEGIES = ["Breakout TTM Version 2", "Squeeze Breakout", "Dual RSI"] as const;
+const STRATEGIES = [
+  "Breakout TTM Version 2",
+  "Breakout TTM V1",
+  "Breakout TTM V1b",
+  "Breakout TTM V2",
+  "Breakout TTM V3",
+  "Squeeze Breakout",
+  "Dual RSI",
+] as const;
 
 const formatMetadata = (metadata: Record<string, any>) => {
   return Object.entries(metadata)
