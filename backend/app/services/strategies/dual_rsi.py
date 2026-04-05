@@ -9,14 +9,16 @@ class DualRSI:
                  rsi_window_high: int = 14,
                  rsi_window_low: int = 5,
                  vwap_window: int = 200,
-                 sl_stop: float = 0.05):
+                 sl_stop: float = 0.05,
+                 donichan_window: int = 10):
         
         self.data = data
         self.rsi_window_high = rsi_window_high
         self.rsi_window_low = rsi_window_low
         self.vwap_window = vwap_window
         self.sl_stop = sl_stop
-
+        self.donichan_window = donichan_window
+        
         self.indicators = {
             'rsi': vbt.IndicatorFactory.from_talib("RSI"),
             'vwap': vbt.IndicatorFactory(
@@ -60,8 +62,11 @@ class DualRSI:
 
     def get_exits(self, entries):
         vwap_highest = self.indicators['vwap'].xs(True, level='avwap_is_highest', axis=1)
-        exits = self.data.high.vbt > vwap_highest.shift(1).vbt
-        return exits
+        exits1 = self.data.high.vbt > vwap_highest.shift(1).vbt
+        
+        lowest_low = self.data.low.vbt.rolling_min(self.donichan_window)
+        exits2 = self.data.close < lowest_low.vbt.fshift(1)
+        return exits1 | exits2
     
     def get_portfolio(self):
         entries = self.get_entries()

@@ -86,6 +86,15 @@ prod-down:
 prod-logs:
 	docker-compose -f docker-compose.prod.yml --env-file prod.env logs -f
 
+prod-build-frontend:
+	docker-compose -f docker-compose.prod.yml --env-file prod.env build frontend --no-cache
+
+prod-build-backend:
+	docker-compose -f docker-compose.prod.yml --env-file prod.env build backend --no-cache
+
+prod-build-workers:
+	docker-compose -f docker-compose.prod.yml --env-file prod.env build workers --no-cache
+
 prod-npm:
 	@echo "Access Nginx Proxy Manager at: http://localhost:81"
 	@echo "Default login: admin@example.com / changeme"

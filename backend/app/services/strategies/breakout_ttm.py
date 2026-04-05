@@ -179,8 +179,10 @@ class BreakoutTTMVersion2:
 
         exit2 = self.data.close.vbt < atr_sl.atr_trailing.vbt
 
-        exists = exit1
-        # exists = exit1
+        lowest_low = self.data.low.vbt.rolling_min(self.donichan_window)
+        exit3 = self.data.close < lowest_low.vbt.fshift(1)
+
+        exists = exit1 | exit3
         return exists
     
     def get_portfolio(self):

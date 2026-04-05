@@ -4,12 +4,12 @@ This guide explains how to set up your portfolio application with custom domains
 
 ## Overview
 
-- **Frontend**: `phuchynh.xyz` (or `www.phuchynh.xyz`)
-- **API**: `api.phuchynh.xyz`
+- **Frontend**: `phuchynh.site` (or `www.phuchynh.site`)
+- **API**: `api.phuchynh.site`
 
 ## Prerequisites
 
-1. **Domain Registration**: Register `phuchynh.xyz` with a domain registrar
+1. **Domain Registration**: Register `phuchynh.site` with a domain registrar
 2. **DNS Access**: Access to configure DNS records for your domain
 3. **Server**: A server with a public IP address where you'll deploy
 
@@ -37,7 +37,7 @@ Edit the `prod.env` file to configure your API URL:
 VITE_API_BASE_URL=/api/v1
 
 # For custom domain
-VITE_API_BASE_URL=https://api.phuchynh.xyz/api/v1
+VITE_API_BASE_URL=https://api.phuchynh.site/api/v1
 
 # For IP-based access
 VITE_API_BASE_URL=http://YOUR_SERVER_IP/api/v1
@@ -47,10 +47,10 @@ VITE_API_BASE_URL=http://YOUR_SERVER_IP/api/v1
 
 ```bash
 # Export environment variable (overrides prod.env)
-export VITE_API_BASE_URL=https://api.phuchynh.xyz/api/v1
+export VITE_API_BASE_URL=https://api.phuchynh.site/api/v1
 
 # Or set it inline with the command
-VITE_API_BASE_URL=https://api.phuchynh.xyz/api/v1 make prod-build
+VITE_API_BASE_URL=https://api.phuchynh.site/api/v1 make prod-build
 ```
 
 ## Deployment Steps
@@ -78,10 +78,10 @@ make prod-up
 
 ### 3. Configure Proxy Hosts
 
-#### For API (api.phuchynh.xyz):
+#### For API (api.phuchynh.site):
 1. Go to "Proxy Hosts" → "Add Proxy Host"
 2. **Details Tab:**
-   - Domain Names: `api.phuchynh.xyz`
+   - Domain Names: `api.phuchynh.site`
    - Scheme: `http`
    - Forward Hostname/IP: `backend`
    - Forward Port: `8000`
@@ -94,10 +94,10 @@ make prod-up
    - Email: your-email@example.com
    - Agree to Let's Encrypt Terms: ✅
 
-#### For Frontend (phuchynh.xyz):
+#### For Frontend (phuchynh.site):
 1. Go to "Proxy Hosts" → "Add Proxy Host"
 2. **Details Tab:**
-   - Domain Names: `phuchynh.xyz`, `www.phuchynh.xyz`
+   - Domain Names: `phuchynh.site`, `www.phuchynh.site`
    - Scheme: `http`
    - Forward Hostname/IP: `frontend`
    - Forward Port: `80`
@@ -112,14 +112,14 @@ make prod-up
 
 ### 4. Test Your Setup
 
-1. **API**: `https://api.phuchynh.xyz/api/v1/health`
-2. **Frontend**: `https://phuchynh.xyz`
+1. **API**: `https://api.phuchynh.site/api/v1/health`
+2. **Frontend**: `https://phuchynh.site`
 
 ## Troubleshooting
 
 ### DNS Propagation
 - DNS changes can take up to 48 hours to propagate
-- Use `dig api.phuchynh.xyz` to check if DNS is resolving correctly
+- Use `dig api.phuchynh.site` to check if DNS is resolving correctly
 
 ### SSL Certificate Issues
 - Ensure ports 80 and 443 are open on your server

@@ -580,6 +580,6 @@ if __name__ == "__main__":
     ).deploy(
         name="create_feature_store",
         work_pool_name="my-worker",
-        # Run at 3:00 AM from Monday to Friday
-        cron="0 8 * * 1-5", ## UTC+0
+        # Run at 3:00 AM and 4:00 AM from Monday to Friday
+        cron="0 8,9 * * 1-5", ## UTC+0
     )
