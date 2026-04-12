@@ -1,28 +1,26 @@
-from datetime import datetime
-from typing import List, Optional, Tuple
-from sqlalchemy.orm import Session
 import os
+import time as time_module
+from datetime import date, datetime, timedelta
 from pathlib import Path
-from deltalake import DeltaTable
-import deltalake
+from typing import List, Optional, Tuple
+
+import clickhouse_connect
+import numpy as np
 import pandas as pd
 import pyarrow as pa
-import numpy as np
-import talib
-import clickhouse_connect
-from loguru import logger
-from .indicators import trailing_sl, avwap, hawkes_BVC, kalman_zscore, calculate_yz_volatility, matrix_series, williams_vix_fix_indicator, squeeze_ttm
-from .utils import convert_nans
-from app.schemas.timeseries import TimeseriesResponse, Indicators, IndicatorParams, IndicatorsOnlyResponse
-from app.schemas.sector import SectorTimeseries, SectorTimeseriesData
 import pyarrow.dataset as ds
-from app.stores.feature_store import FeatureStore
-from datetime import datetime, date, timedelta
+import talib
+from deltalake import DeltaTable
 from fastapi_cache.decorator import cache
+from loguru import logger
+from sqlalchemy.orm import Session
+
 from app.core.settings import settings
-import vectorbt as vbt
-import time as time_module
-import traceback
+from app.schemas.sector import SectorTimeseries, SectorTimeseriesData
+from app.schemas.timeseries import Indicators, IndicatorParams, IndicatorsOnlyResponse, TimeseriesResponse
+
+from .timeseries_indicators import compute_stock_indicators
+from .utils import convert_nans
 
 def _delta_storage_options() -> dict:
     return {
@@ -245,236 +243,8 @@ async def get_stock_timeseries(
         
         if df.empty:
             raise ValueError(f"No data found for symbol {symbol}")
-        
-        # Calculate indicators if requested
-        indicator_data = {}
-        close_prices = df["close"].values
-        high_prices = df["high"].values
-        low_prices = df["low"].values
-        volume_prices = df["volume"].values
-        
 
-                    
-        feature_store = FeatureStore()
-        
-        for ind in indicators:
-            try:
-                if ind.name == "rsi":
-                    timeperiod = ind.params.get("timeperiod", 14)
-                    indicator_data["rsi"] = convert_nans(talib.RSI(close_prices, timeperiod=timeperiod))
-                    indicator_data["rsi_5"] = convert_nans(talib.RSI(close_prices, timeperiod=5))
-                
-                elif ind.name == "macd":
-                    fastperiod = ind.params.get("fastperiod", 12)
-                    slowperiod = ind.params.get("slowperiod", 26)
-                    signalperiod = ind.params.get("signalperiod", 9)
-                    macd_line, signal_line, histogram = talib.MACD(
-                        close_prices,
-                        fastperiod=fastperiod,
-                        slowperiod=slowperiod,
-                        signalperiod=signalperiod
-                    )
-                    indicator_data["macd"] = {
-                        "macd": convert_nans(macd_line),
-                        "signal": convert_nans(signal_line),
-                        "histogram": convert_nans(histogram)
-                    }
-                
-                elif ind.name == "bbands":
-                    timeperiod = ind.params.get("timeperiod", 20)
-                    nbdevup = ind.params.get("nbdevup", 2)
-                    nbdevdn = ind.params.get("nbdevdn", 2)
-                    upper, middle, lower = talib.BBANDS(
-                        close_prices,
-                        timeperiod=timeperiod,
-                        nbdevup=nbdevup,
-                        nbdevdn=nbdevdn
-                    )
-                    indicator_data["bbands"] = {
-                        "upper": convert_nans(upper),
-                        "middle": convert_nans(middle),
-                        "lower": convert_nans(lower)
-                    }
-                
-                elif ind.name == "sma":
-                    timeperiod = ind.params.get("timeperiod", 20)
-                    indicator_data["sma"] = convert_nans(talib.SMA(close_prices, timeperiod=timeperiod))
-                
-                elif ind.name == "ema":
-                    timeperiod = ind.params.get("timeperiod", 20)
-                    indicator_data["ema"] = convert_nans(talib.EMA(close_prices, timeperiod=timeperiod))
-                
-                elif ind.name == "atr_trailing":
-                    timeperiod = ind.params.get("timeperiod", 10)
-                    atr = talib.ATR(high_prices, low_prices, close_prices, timeperiod=timeperiod)
-                    indicator_data["atr_trailing"] = convert_nans(trailing_sl(close_prices, atr))
-                
-                elif ind.name == "vwap":
-                    window = ind.params.get("window", 100)
-                    indicator_data["vwap_highest"] = convert_nans(avwap(
-                        close_prices,
-                        high_prices,
-                        low_prices,
-                        df["volume"].values,
-                        is_highest=True,
-                        window=window
-                    ))
-                    indicator_data["vwap_lowest"] = convert_nans(avwap(
-                        close_prices,
-                        high_prices,
-                        low_prices,
-                        df["volume"].values,
-                        is_highest=False,
-                        window=window
-                    ))
-                
-                elif ind.name == "bvc":
-                    window = ind.params.get("window", 20)
-                    kappa = ind.params.get("kappa", 0.1)
-                    bvc_values = hawkes_BVC(
-                        close_prices,
-                        volume_prices,
-                        window=window,
-                        kappa=kappa
-                    )
-                    indicator_data["bvc"] = convert_nans(bvc_values)
-                
-                elif ind.name == "stoch":
-                    fastk_period = ind.params.get("fastk_period", 14)
-                    slowk_period = ind.params.get("slowk_period", 3)
-                    slowd_period = ind.params.get("slowd_period", 3)
-                    slowk, slowd = talib.STOCH(
-                        high_prices,
-                        low_prices,
-                        close_prices,
-                        fastk_period=fastk_period,
-                        slowk_period=slowk_period,
-                        slowd_period=slowd_period
-                    )
-                    indicator_data["stoch"] = {
-                        "slowk": convert_nans(slowk),
-                        "slowd": convert_nans(slowd)
-                    }
-                
-                elif ind.name == "kalman_zscore":
-                    indicator_data["kalman_zscore"] = kalman_zscore.calculate_kalman_zscore(close_prices, window=window)
-                elif ind.name == "yz_volatility":
-                    window = ind.params.get("window", 30)
-                    periods = ind.params.get("periods", 252)
-                    indicator_data["yz_volatility"] = calculate_yz_volatility(
-                            df["open"].values,
-                            df["high"].values,
-                            df["low"].values,
-                            df["close"].values,
-                            window=window,
-                            periods=periods
-                        )
-                    
-                # elif ind.name == "rs_rating":
-                #     rs_rating = feature_store.get_features(symbol, start=df["date"].min(), end=df["date"].max(), columns=["date", "rs_rating_20", 'rs_rating_50', 'rs_rating_252'])
-                #     # left join with df
-                #     df = df.merge(rs_rating, on="date", how="left")
-
-                #     # Apply EMA smoothing with a fixed short span (10 days) to reduce noise
-                #     # Using the same smoothing period for all ratings for consistency
-                #     ema_span = 10
-                #     df["rs_rating_20_ema"] = df["rs_rating_20"].ewm(span=ema_span, adjust=False).mean().round(2)
-                #     df["rs_rating_50_ema"] = df["rs_rating_50"].ewm(span=ema_span, adjust=False).mean().round(2)
-                #     df["rs_rating_252_ema"] = df["rs_rating_252"].ewm(span=ema_span, adjust=False).mean().round(2)
-
-                #     indicator_data["rs_rating_20"] = convert_nans(df["rs_rating_20"].values)
-                #     indicator_data["rs_rating_50"] = convert_nans(df["rs_rating_50"].values)
-                #     indicator_data["rs_rating_252"] = convert_nans(df["rs_rating_252"].values)
-
-                #     indicator_data["rs_rating_20_ema"] = convert_nans(df["rs_rating_20_ema"].values)
-                #     indicator_data["rs_rating_50_ema"] = convert_nans(df["rs_rating_50_ema"].values)
-                #     indicator_data["rs_rating_252_ema"] = convert_nans(df["rs_rating_252_ema"].values)
-
-                elif ind.name == "matrix_series":
-                    price_period = ind.params.get("price_period", 16)
-                    sup_res_period = ind.params.get("sup_res_period", 30)
-                    sup_res_percentage = ind.params.get("sup_res_percentage", 100)
-                    smoother = ind.params.get("smoother", 5)
-
-                    close_arr = df["close"].to_numpy().reshape(-1, 1)
-                    high_arr = df["high"].to_numpy().reshape(-1, 1)
-                    low_arr = df["low"].to_numpy().reshape(-1, 1)
-
-                    matrix_series_indicator = vbt.IndicatorFactory(
-                        class_name='MatrixSeries',
-                        short_name='matrix_series',
-                        input_names=['close', 'high', 'low'],
-                        param_names=['price_period', 'sup_res_period', 'sup_res_percentage', 'smoother'],
-                        output_names=['hh', 'll', 'support_line', 'resistance_line', 'up_line', 'down_line']
-                    ).from_apply_func(matrix_series)
-
-                    matrix_series_indicator = matrix_series_indicator.run(close_arr, high_arr, low_arr, price_period=price_period, sup_res_period=sup_res_period, sup_res_percentage=sup_res_percentage, smoother=smoother)
-                    indicator_data["matrix_series"] = {
-                        "hh": convert_nans(matrix_series_indicator.hh.to_numpy().reshape(-1)),
-                        "ll": convert_nans(matrix_series_indicator.ll.to_numpy().reshape(-1)),
-                        "support_line": convert_nans(matrix_series_indicator.support_line.to_numpy().reshape(-1)),
-                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1)),
-                        "up_line": convert_nans(matrix_series_indicator.up_line.to_numpy().reshape(-1)),
-                        "down_line": convert_nans(matrix_series_indicator.down_line.to_numpy().reshape(-1))
-                    }
-
-                elif ind.name == "squeeze_ttm":
-                    bb_period = ind.params.get("bb_period", 10)
-                    bb_mult = ind.params.get("bb_mult", 1.2)
-                    bb_matype = ind.params.get("bb_matype", 3)
-                    kc_period = ind.params.get("kc_period", 13)
-                    kc_mult = ind.params.get("kc_mult", 1.0)
-                    donichan_period = ind.params.get("donichan_period", 10)
-                    osc_smoothing_period = ind.params.get("osc_smoothing_period", 10)
-
-                    close_arr = df["close"].to_numpy().reshape(-1, 1)
-                    high_arr = df["high"].to_numpy().reshape(-1, 1)
-                    low_arr = df["low"].to_numpy().reshape(-1, 1)
-
-                    squeeze_diff, ttms = squeeze_ttm(close_arr, high_arr, low_arr, 
-                        bb_period=bb_period, bb_mult=bb_mult, bb_matype=bb_matype, 
-                        kc_period=kc_period, kc_mult=kc_mult, 
-                        donichan_period=donichan_period, osc_smoothing_period=osc_smoothing_period)
-                    diff_arr = squeeze_diff.to_numpy().reshape(-1)
-                    ttms_arr = ttms.to_numpy().reshape(-1)
-                    squeeze_on = np.where(np.isnan(diff_arr), False, diff_arr < 0).tolist()
-
-                    indicator_data["squeeze_ttm"] = {
-                        "histogram": convert_nans(ttms_arr),
-                        "squeeze_on": squeeze_on,
-                    }
-
-                elif ind.name == "williams_vix_fix":
-                    # entry_version: v3, bb_window: 10, bb_multiplier: 1.2, kc_window: 13, kc_multiplier: 1, atr_window: 10, momentum_window: 12, donichan_window: 10, kc_atr_period: 10, osc_smoothing_period: 10, matype: 3, william_vix_period: 20, consecutive_neg_threshold: 7
-                    close_arr = df["close"].to_numpy().reshape(-1, 1)
-                    high_arr = df["high"].to_numpy().reshape(-1, 1)
-                    low_arr = df["low"].to_numpy().reshape(-1, 1)
-                    wvf, range_high, filtered, cond_fe = williams_vix_fix_indicator(
-                        close_arr,
-                        high_arr,
-                        low_arr,
-                        period=ind.params.get("period", 20),
-                        mult=ind.params.get("mult", 1.2),
-                        bbl=ind.params.get("bbl", 10),
-                        lb=20,
-                        ph=0.85,
-                        ltLB=33,
-                        mtLB=14,
-                        strength_str=1
-                    )
-
-                    filtered_list = filtered.reshape(-1)
-                    cond_fe_list = cond_fe.reshape(-1)
-                    indicator_data["williams_vix_fix"] = {
-                        "wvf": convert_nans(wvf.to_numpy().reshape(-1)),
-                        "range_high": convert_nans(range_high.to_numpy().reshape(-1)),
-                        "filtered": convert_nans(filtered_list),
-                        "cond_fe": convert_nans(cond_fe_list),
-                    }
-                    
-            except Exception as e:
-                print(f"Error calculating {ind.name}: {e}")
-                print(traceback.format_exc())
+        indicator_data = compute_stock_indicators(df, indicators)
 
         return TimeseriesResponse(
             symbol=symbol,
@@ -490,7 +260,7 @@ async def get_stock_timeseries(
             indicators=Indicators(**indicator_data) if indicator_data else None
         )
     except Exception as e:
-        print(f"Error getting timeseries data for {symbol}: {e}")
+        logger.error("Error getting timeseries data for {}: {}", symbol, e)
         raise
 
 async def get_stock_indicators(
@@ -517,61 +287,8 @@ async def get_stock_indicators(
         
         if df.empty:
             raise ValueError(f"No data found for symbol {symbol}")
-        
-        # Calculate indicators
-        indicator_data = {}
-                
-        for ind in indicators:
-            try:
-                if ind.name == "matrix_series":
-                    price_period = ind.params.get("price_period", 16)
-                    sup_res_period = ind.params.get("sup_res_period", 30)
-                    sup_res_percentage = ind.params.get("sup_res_percentage", 100)
-                    smoother = ind.params.get("smoother", 5)
 
-                    close_arr = df["close"].to_numpy().reshape(-1, 1)
-                    high_arr = df["high"].to_numpy().reshape(-1, 1)
-                    low_arr = df["low"].to_numpy().reshape(-1, 1)
-
-                    matrix_series_indicator = vbt.IndicatorFactory(
-                        class_name='MatrixSeries',
-                        short_name='matrix_series',
-                        input_names=['close', 'high', 'low'],
-                        param_names=['price_period', 'sup_res_period', 'sup_res_percentage', 'smoother'],
-                        output_names=['hh', 'll', 'support_line', 'resistance_line', 'up_line', 'down_line']
-                    ).from_apply_func(matrix_series)
-
-                    matrix_series_indicator = matrix_series_indicator.run(close_arr, high_arr, low_arr, price_period=price_period, sup_res_period=sup_res_period, sup_res_percentage=sup_res_percentage, smoother=smoother)
-                    indicator_data["matrix_series"] = {
-                        "hh": convert_nans(matrix_series_indicator.hh.to_numpy().reshape(-1)),
-                        "ll": convert_nans(matrix_series_indicator.ll.to_numpy().reshape(-1)),
-                        "support_line": convert_nans(matrix_series_indicator.support_line.to_numpy().reshape(-1)),
-                        "resistance_line": convert_nans(matrix_series_indicator.resistance_line.to_numpy().reshape(-1)),
-                        "up_line": convert_nans(matrix_series_indicator.up_line.to_numpy().reshape(-1)),
-                        "down_line": convert_nans(matrix_series_indicator.down_line.to_numpy().reshape(-1))
-                    }
-
-                elif ind.name == "squeeze_ttm":
-                    period = ind.params.get("period", 20)
-                    mult = ind.params.get("mult", 1.2)
-                    matype = ind.params.get("matype", 3)
-
-                    close_arr = df["close"].to_numpy().reshape(-1, 1)
-                    high_arr = df["high"].to_numpy().reshape(-1, 1)
-                    low_arr = df["low"].to_numpy().reshape(-1, 1)
-
-                    squeeze_diff, ttms = squeeze_ttm(close_arr, high_arr, low_arr, period=period, mult=mult, matype=matype)
-                    diff_arr = squeeze_diff.to_numpy().reshape(-1)
-                    ttms_arr = ttms.to_numpy().reshape(-1)
-                    squeeze_on = np.where(np.isnan(diff_arr), False, diff_arr < 0).tolist()
-
-                    indicator_data["squeeze_ttm"] = {
-                        "histogram": convert_nans(ttms_arr),
-                        "squeeze_on": squeeze_on,
-                    }
-
-            except Exception as e:
-                logger.error(f"Error calculating {ind.name}: {e}")
+        indicator_data = compute_stock_indicators(df, indicators)
 
         return IndicatorsOnlyResponse(
             symbol=symbol,

@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, CircularProgress, Typography } from '@mui/material';
+import { Box, CircularProgress, IconButton, Tooltip, Typography } from '@mui/material';
+import { ShowChart } from '@mui/icons-material';
 import { createChart } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, MouseEventParams, Time, UTCTimestamp } from 'lightweight-charts';
 import {
@@ -14,6 +15,7 @@ import { fetchReports } from '../../lib/services/report';
 import { getPositions, getTransactions, type Position, type Transaction } from '../../lib/services/portfolio';
 
 // Import Panel Components
+import IndicatorManager from './IndicatorManager';
 import PricePanel, { type PositionSeriesMarker } from './panels/PricePanel';
 import RsiPanel from './panels/RsiPanel';
 import BvcPanel from './panels/BvcPanel';
@@ -22,12 +24,124 @@ import VolatilityPanel from './panels/VolatilityPanel';
 import MatrixSeriesPanel from './panels/MatrixSeriesPanel';
 import WilliamsVixFixPanel from './panels/WilliamsVixFixPanel';
 import SqueezeTtmPanel from './panels/SqueezeTtmPanel';
+import SmfPanel from './panels/SmfPanel';
 
 type StockChartProps = {
   symbol: string;
   onReportClick?: (report: Report) => void;
   height?: number;
 };
+
+/** Maps indicator id → the pane index it occupies.
+ *  Overlay indicators (pane 0) are omitted — their pane never collapses. */
+const INDICATOR_PANE_MAP: Record<string, number> = {
+  rsi:              1,
+  bvc:              2,
+  yz_volatility:    3,
+  kalman_zscore:    3,
+  matrix_series:    4,
+  squeeze_ttm:      5,
+  williams_vix_fix: 6,
+};
+
+export interface ParamDef {
+  key: string;
+  label: string;
+  min: number;
+  max: number;
+  step: number;
+}
+
+export interface IndicatorConfig {
+  id: string;
+  name: string;
+  label: string;
+  params: Record<string, number>;
+  visible: boolean;
+  paramDefs: ParamDef[];
+}
+
+const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
+  {
+    id: 'rsi', name: 'rsi', label: 'RSI',
+    params: { period: 14 }, visible: true,
+    paramDefs: [{ key: 'period', label: 'Period', min: 2, max: 200, step: 1 }],
+  },
+  {
+    id: 'atr_trailing', name: 'atr_trailing', label: 'ATR Trailing Stop',
+    params: {}, visible: true, paramDefs: [],
+  },
+  {
+    id: 'vwap', name: 'vwap', label: 'VWAP',
+    params: { window: 200 }, visible: true,
+    paramDefs: [{ key: 'window', label: 'Window', min: 10, max: 1000, step: 10 }],
+  },
+  {
+    id: 'bvc', name: 'bvc', label: 'BVC',
+    params: { window: 20, kappa: 0.1 }, visible: true,
+    paramDefs: [
+      { key: 'window', label: 'Window', min: 5, max: 200, step: 1 },
+      { key: 'kappa', label: 'Kappa', min: 0.01, max: 1, step: 0.01 },
+    ],
+  },
+  {
+    id: 'kalman_zscore', name: 'kalman_zscore', label: 'Kalman Z-Score',
+    params: { window: 20 }, visible: true,
+    paramDefs: [{ key: 'window', label: 'Window', min: 5, max: 200, step: 1 }],
+  },
+  {
+    id: 'yz_volatility', name: 'yz_volatility', label: 'YZ Volatility',
+    params: { window: 30, periods: 252 }, visible: true,
+    paramDefs: [
+      { key: 'window', label: 'Window', min: 5, max: 200, step: 1 },
+      { key: 'periods', label: 'Annual Periods', min: 52, max: 365, step: 1 },
+    ],
+  },
+  {
+    id: 'matrix_series', name: 'matrix_series', label: 'Matrix Series',
+    params: { price_period: 20, sup_res_period: 50, sup_res_percentage: 100, smoother: 5 },
+    visible: true,
+    paramDefs: [
+      { key: 'price_period', label: 'Price Period', min: 5, max: 200, step: 1 },
+      { key: 'sup_res_period', label: 'S/R Period', min: 10, max: 500, step: 5 },
+      { key: 'sup_res_percentage', label: 'S/R %', min: 10, max: 500, step: 10 },
+      { key: 'smoother', label: 'Smoother', min: 1, max: 50, step: 1 },
+    ],
+  },
+  {
+    id: 'williams_vix_fix', name: 'williams_vix_fix', label: 'Williams VIX Fix',
+    params: {}, visible: true, paramDefs: [],
+  },
+  {
+    id: 'squeeze_ttm', name: 'squeeze_ttm', label: 'Squeeze TTM',
+    params: {}, visible: true, paramDefs: [],
+  },
+  {
+    id: 'smart_money_flow', name: 'smart_money_flow', label: 'SMF Cloud',
+    params: {
+      trend_len: 34,
+      basis_type: 1,
+      alma_offset: 0.85,
+      alma_sigma: 6.0,
+      basis_smooth: 3,
+      mf_len: 24,
+      mf_smooth: 5,
+      mf_power: 1.2,
+      atr_len: 14,
+      min_mult: 0.9,
+      max_mult: 2.2,
+    },
+    visible: true,
+    paramDefs: [
+      { key: 'trend_len',  label: 'Trend Length', min: 5,    max: 200,  step: 1    },
+      { key: 'mf_len',     label: 'MF Length',    min: 5,    max: 200,  step: 1    },
+      { key: 'mf_power',   label: 'MF Power',     min: 0.1,  max: 5,    step: 0.1  },
+      { key: 'atr_len',    label: 'ATR Length',   min: 2,    max: 100,  step: 1    },
+      { key: 'min_mult',   label: 'Min Mult',     min: 0.1,  max: 5,    step: 0.1  },
+      { key: 'max_mult',   label: 'Max Mult',     min: 0.5,  max: 10,   step: 0.1  },
+    ],
+  },
+];
 
 export default function StockChart({ symbol, height }: StockChartProps) {
   const [reports, setReports] = useState<Report[]>([]);
@@ -62,6 +176,49 @@ export default function StockChart({ symbol, height }: StockChartProps) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isChartReady, setIsChartReady] = useState(false);
+
+  // Indicator configuration state — persisted to localStorage
+  const [indicatorConfigs, setIndicatorConfigs] = useState<IndicatorConfig[]>(() => {
+    try {
+      const stored = localStorage.getItem('indicatorConfigs');
+      if (!stored) return DEFAULT_INDICATOR_CONFIGS;
+      const parsed: IndicatorConfig[] = JSON.parse(stored);
+      // Merge stored values into defaults so new indicators added later still appear
+      return DEFAULT_INDICATOR_CONFIGS.map((def) => {
+        const saved = parsed.find((s) => s.id === def.id);
+        if (!saved) return def;
+        return { ...def, params: saved.params, visible: saved.visible };
+      });
+    } catch {
+      return DEFAULT_INDICATOR_CONFIGS;
+    }
+  });
+  const [indicatorPanelOpen, setIndicatorPanelOpen] = useState(false);
+
+  // Persist indicator configs whenever they change
+  useEffect(() => {
+    try {
+      localStorage.setItem('indicatorConfigs', JSON.stringify(
+        indicatorConfigs.map(({ id, params, visible }) => ({ id, params, visible })),
+      ));
+    } catch { /* quota exceeded or private browsing — silently ignore */ }
+  }, [indicatorConfigs]);
+
+  // Only changes when params change (not visibility) — gates re-fetch
+  const indicatorParamsKey = useMemo(
+    () => JSON.stringify(indicatorConfigs.map((c) => ({ id: c.id, params: c.params }))),
+    [indicatorConfigs],
+  );
+
+  const handleToggleIndicator = (id: string) => {
+    setIndicatorConfigs((prev) => prev.map((c) => (c.id === id ? { ...c, visible: !c.visible } : c)));
+  };
+
+  const handleChangeParams = (id: string, params: Record<string, number>) => {
+    setIndicatorConfigs((prev) => prev.map((c) => (c.id === id ? { ...c, params } : c)));
+  };
+
+  const getVisible = (id: string) => indicatorConfigs.find((c) => c.id === id)?.visible ?? true;
   const toolTipWidth = 200;
   const legendWidth = 450;
   const markerPopupWidth = 280;
@@ -84,22 +241,28 @@ export default function StockChart({ symbol, height }: StockChartProps) {
     globalScaleMargins: { top: 0.02, bottom: 0.02 },
   };
 
-  // Helper function to apply pane stretch factors
+  // Helper function to apply pane stretch factors, collapsing hidden indicator panes to 0
   const applyPaneHeights = () => {
     if (!chartRef.current) return;
     try {
       const panes = chartRef.current.panes();
-      console.log(`Applying stretch factors to ${panes.length} panes:`, chartConfig.paneStretchFactors);
       panes.forEach((pane: any, index: number) => {
-        if (index < chartConfig.paneStretchFactors.length) {
-          // Use setStretchFactor for relative sizing (workaround for setHeight bug)
-          if (typeof pane.setStretchFactor === 'function') {
-            pane.setStretchFactor(chartConfig.paneStretchFactors[index]);
-            console.log(`Set pane ${index} stretch factor to ${chartConfig.paneStretchFactors[index]}`);
-          } else {
-            console.warn(`pane.setStretchFactor is not a function for pane ${index}`);
-          }
+        if (index >= chartConfig.paneStretchFactors.length) return;
+        if (typeof pane.setStretchFactor !== 'function') return;
+
+        if (index === 0) {
+          // Price pane: always full size
+          pane.setStretchFactor(chartConfig.paneStretchFactors[0]);
+          return;
         }
+
+        // Collapse pane if every indicator that lives on it is hidden
+        const anyVisible = Object.entries(INDICATOR_PANE_MAP).some(
+          ([id, paneIdx]) =>
+            paneIdx === index &&
+            (indicatorConfigs.find((c) => c.id === id)?.visible ?? true),
+        );
+        pane.setStretchFactor(anyVisible ? chartConfig.paneStretchFactors[index] : 0);
       });
     } catch (e) {
       console.warn('Could not set pane stretch factors:', e);
@@ -553,18 +716,10 @@ export default function StockChart({ symbol, height }: StockChartProps) {
         const result = await fetchTimeseries(symbol, {
           interval: "1d",
           ...getDateRange(360 * 5),
-          indicators: [
-            { name: "rsi", params: { period: 14 } },
-            { name: "atr_trailing" },
-            { name: "vwap", params: { window: 200 } },
-            { name: "bvc", params: { window: 20, kappa: 0.1 } },
-            { name: "kalman_zscore", params: { window: 20 } },
-            { name: "yz_volatility", params: { window: 30, periods: 252 } },
-            // { name: "rs_rating" },
-            { name: "matrix_series", params: { price_period: 20, sup_res_period: 50, sup_res_percentage: 100, smoother: 5 } },
-            { name: "williams_vix_fix" },
-            { name: "squeeze_ttm" }
-          ]
+          indicators: indicatorConfigs.map((c) => ({
+            name: c.name,
+            ...(Object.keys(c.params).length > 0 ? { params: c.params } : {}),
+          })),
         });
 
         // Fetch reports after timeseries succeeds (ignore failures)
@@ -617,7 +772,7 @@ export default function StockChart({ symbol, height }: StockChartProps) {
     };
 
     fetchData();
-  }, [symbol, isChartReady]);
+  }, [symbol, isChartReady, indicatorParamsKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!chartRef.current || !timestamps.length) return;
@@ -628,6 +783,12 @@ export default function StockChart({ symbol, height }: StockChartProps) {
     const timeoutId = window.setTimeout(fitChart, 0);
     return () => window.clearTimeout(timeoutId);
   }, [timestamps, isChartReady]);
+
+  // Collapse / restore panes when indicator visibility changes
+  useEffect(() => {
+    if (!isChartReady) return;
+    applyPaneHeights();
+  }, [indicatorConfigs, isChartReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const chart = chartRef.current;
@@ -751,43 +912,54 @@ export default function StockChart({ symbol, height }: StockChartProps) {
             positionMarkers={positionMarkers}
             isChartReady={isChartReady}
             onSeriesReady={(series) => { candlestickSeriesRef.current = series; }}
+            atrVisible={getVisible('atr_trailing')}
+            vwapVisible={getVisible('vwap')}
           />
           <RsiPanel
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
+            visible={getVisible('rsi')}
           />
           <BvcPanel
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
+            visible={getVisible('bvc')}
           />
           <VolatilityPanel
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
+            yzVisible={getVisible('yz_volatility')}
+            kalmanVisible={getVisible('kalman_zscore')}
           />
-          {/* <RsRatingPanel
-            chart={chartRef.current}
-            data={indicatorsData}
-            timestamps={timestamps}
-          /> */}
           <MatrixSeriesPanel
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
+            visible={getVisible('matrix_series')}
           />
           <SqueezeTtmPanel
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
             paneIndex={5}
+            visible={getVisible('squeeze_ttm')}
           />
           <WilliamsVixFixPanel
             chart={chartRef.current}
             data={indicatorsData}
             timestamps={timestamps}
             paneIndex={6}
+            visible={getVisible('williams_vix_fix')}
+          />
+          <SmfPanel
+            chart={chartRef.current}
+            data={indicatorsData}
+            timestamps={timestamps}
+            visible={getVisible('smart_money_flow')}
+            closePrice={timeseriesData?.timeseries?.close}
           />
         </>
       )}
@@ -854,6 +1026,35 @@ export default function StockChart({ symbol, height }: StockChartProps) {
           </Typography>
         </Box>
       )}
+      {/* Indicators toggle button */}
+      <Box sx={{ position: 'absolute', top: 12, right: 12, zIndex: 100 }}>
+        <Tooltip title={indicatorPanelOpen ? 'Close indicators' : 'Indicators'} placement="left">
+          <IconButton
+            size="small"
+            onClick={() => setIndicatorPanelOpen((p) => !p)}
+            sx={{
+              width: 32,
+              height: 32,
+              bgcolor: indicatorPanelOpen ? 'rgba(99,102,241,0.2)' : 'rgba(18,18,28,0.9)',
+              border: `1px solid ${indicatorPanelOpen ? '#6366f1' : 'rgba(99,102,241,0.3)'}`,
+              color: '#a5b4fc',
+              '&:hover': { borderColor: '#6366f1', bgcolor: 'rgba(99,102,241,0.15)' },
+            }}
+          >
+            <ShowChart sx={{ fontSize: 18 }} />
+          </IconButton>
+        </Tooltip>
+      </Box>
+
+      {indicatorPanelOpen && (
+        <IndicatorManager
+          configs={indicatorConfigs}
+          onToggleVisible={handleToggleIndicator}
+          onChangeParams={handleChangeParams}
+          onClose={() => setIndicatorPanelOpen(false)}
+        />
+      )}
+
       {markerPopup && markerPopup.index >= 0 && (
         <Box
           sx={{

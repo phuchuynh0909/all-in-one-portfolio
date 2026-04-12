@@ -26,6 +26,20 @@ class SqueezeTTM(BaseModel):
     histogram: List[Optional[float]]
     squeeze_on: List[bool]
 
+class SmartMoneyFlow(BaseModel):
+    last_signal: List[Optional[int]]
+    switch_up: List[bool]
+    switch_down: List[bool]
+    upper: List[Optional[float]]
+    lower: List[Optional[float]]
+    b_close: List[Optional[float]]
+    b_open: List[Optional[float]]
+    mf_smooth: List[Optional[float]]
+    strength: List[Optional[float]]
+    bull_dot: List[bool]
+    bear_dot: List[bool]
+    strength_signed: List[Optional[float]]
+
 class Indicators(BaseModel):
     rsi: Optional[List[Optional[float]]] = None
     rsi_5: Optional[List[Optional[float]]] = None
@@ -50,6 +64,7 @@ class Indicators(BaseModel):
     matrix_series: Optional[Dict[str, List[Optional[float]]]] = None
     williams_vix_fix: Optional[WilliamsVixFix] = None
     squeeze_ttm: Optional[SqueezeTTM] = None
+    smart_money_flow: Optional[SmartMoneyFlow] = None
 
 class Timeseries(BaseModel):
     open: List[float]

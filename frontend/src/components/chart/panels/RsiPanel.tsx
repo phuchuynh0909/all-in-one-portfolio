@@ -9,9 +9,10 @@ type RsiPanelProps = {
     chart: IChartApi;
     data: any; // Indicators data
     timestamps: string[];
+    visible?: boolean;
 };
 
-export default function RsiPanel({ chart, data, timestamps }: RsiPanelProps) {
+export default function RsiPanel({ chart, data, timestamps, visible }: RsiPanelProps) {
     const rsiSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const rsi5SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const overboughtLineRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -86,6 +87,15 @@ export default function RsiPanel({ chart, data, timestamps }: RsiPanelProps) {
             oversoldLineRef.current = null;
         };
     }, [chart]);
+
+    // Toggle series visibility
+    useEffect(() => {
+        const show = visible !== false;
+        rsiSeriesRef.current?.applyOptions({ visible: show });
+        rsi5SeriesRef.current?.applyOptions({ visible: show });
+        overboughtLineRef.current?.applyOptions({ visible: show });
+        oversoldLineRef.current?.applyOptions({ visible: show });
+    }, [visible]);
 
     // Update data
     useEffect(() => {

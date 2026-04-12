@@ -9,9 +9,10 @@ type BvcPanelProps = {
     chart: IChartApi;
     data: any; // Indicators data
     timestamps: string[];
+    visible?: boolean;
 };
 
-export default function BvcPanel({ chart, data, timestamps }: BvcPanelProps) {
+export default function BvcPanel({ chart, data, timestamps, visible }: BvcPanelProps) {
     const bvcSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const zeroLineRef = useRef<ISeriesApi<"Line"> | null>(null);
 
@@ -60,6 +61,13 @@ export default function BvcPanel({ chart, data, timestamps }: BvcPanelProps) {
             zeroLineRef.current = null;
         };
     }, [chart]);
+
+    // Toggle series visibility
+    useEffect(() => {
+        const show = visible !== false;
+        bvcSeriesRef.current?.applyOptions({ visible: show });
+        zeroLineRef.current?.applyOptions({ visible: show });
+    }, [visible]);
 
     // Update data
     useEffect(() => {

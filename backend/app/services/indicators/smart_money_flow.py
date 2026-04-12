@@ -26,14 +26,52 @@ SMF_DEFAULTS = {
     "alma_offset": 0.85,
     "alma_sigma":  6.0,
     "basis_smooth": 3,
-    "mf_len":      23,
-    "mf_smooth":    3,
-    "mf_power":    1.7,
-    "atr_len":      9,
-    "min_mult":    0.8,
+    "mf_len":      24,
+    "mf_smooth":    5,
+    "mf_power":    1.2,
+    "atr_len":      14,
+    "min_mult":    0.9,
     "max_mult":    2.2,
     "dot_cooldown": 12,
 }
+
+
+def coerce_smf_basis_type(raw: object, default: str | None = None) -> str:
+    """
+    Normalise basis_type for :func:`smart_money_flow`.
+
+    * ``0`` / ``"0"`` / ``"EMA"`` → ``"EMA"``
+    * ``1`` / ``"1"`` / ``"ALMA"`` → ``"ALMA"``
+    """
+    default = default or SMF_DEFAULTS["basis_type"]
+    if isinstance(raw, (int, float)) and not isinstance(raw, bool):
+        return "ALMA" if int(raw) == 1 else "EMA"
+    s = str(raw).strip().upper()
+    if s in ("1", "ALMA"):
+        return "ALMA"
+    if s in ("0", "EMA"):
+        return "EMA"
+    return default
+
+
+def build_smart_money_flow_kwargs(ind_params: dict | None) -> dict:
+    """Merge ``ind_params`` with :data:`SMF_DEFAULTS` and return typed kwargs for :func:`smart_money_flow`."""
+    p = {**SMF_DEFAULTS, **(ind_params or {})}
+    p["basis_type"] = coerce_smf_basis_type(p.get("basis_type"))
+    return {
+        "trend_len": int(p["trend_len"]),
+        "basis_type": p["basis_type"],
+        "alma_offset": float(p["alma_offset"]),
+        "alma_sigma": float(p["alma_sigma"]),
+        "basis_smooth": int(p["basis_smooth"]),
+        "mf_len": int(p["mf_len"]),
+        "mf_smooth": int(p["mf_smooth"]),
+        "mf_power": float(p["mf_power"]),
+        "atr_len": int(p["atr_len"]),
+        "min_mult": float(p["min_mult"]),
+        "max_mult": float(p["max_mult"]),
+        "dot_cooldown": int(p["dot_cooldown"]),
+    }
 
 
 def _alma_1d(series: np.ndarray, period: int, offset: float, sigma: float) -> np.ndarray:
@@ -183,3 +221,99 @@ def smart_money_flow(
         "bear_dot":        bear_dot,
         "strength_signed": str_signed,
     }
+
+
+_BASIS_TYPE_MAP = {0: "EMA", 1: "ALMA"}
+
+
+def smart_money_flow_cloud(
+    open_df:  pd.DataFrame,
+    high_df:  pd.DataFrame,
+    low_df:   pd.DataFrame,
+    close_df: pd.DataFrame,
+    vol_df:   pd.DataFrame,
+    trend_len:    int          = SMF_DEFAULTS["trend_len"],
+    basis_type:   "int | str"  = SMF_DEFAULTS["basis_type"],
+    alma_offset:  float        = SMF_DEFAULTS["alma_offset"],
+    alma_sigma:   float        = SMF_DEFAULTS["alma_sigma"],
+    basis_smooth: int          = SMF_DEFAULTS["basis_smooth"],
+    mf_len:       int          = SMF_DEFAULTS["mf_len"],
+    mf_smooth:    int          = SMF_DEFAULTS["mf_smooth"],
+    mf_power:     float        = SMF_DEFAULTS["mf_power"],
+    atr_len:      int          = SMF_DEFAULTS["atr_len"],
+    min_mult:     float        = SMF_DEFAULTS["min_mult"],
+    max_mult:     float        = SMF_DEFAULTS["max_mult"],
+    dot_cooldown: int          = SMF_DEFAULTS["dot_cooldown"],
+) -> dict:
+    """
+    Compute Smart Money Flow Cloud for multiple symbols.
+
+    Thin multi-symbol wrapper around :func:`smart_money_flow`.
+
+    Parameters
+    ----------
+    open_df, high_df, low_df, close_df, vol_df : pd.DataFrame
+        OHLCV DataFrames aligned on the same DatetimeIndex (rows=time, cols=symbols).
+    basis_type : int or str
+        0 or "EMA" (default) / 1 or "ALMA".
+    All other parameters : see :func:`smart_money_flow`.
+
+    Returns
+    -------
+    dict[str, dict[str, pd.Series]]
+        Outer key = symbol. Inner keys:
+            last_signal, switch_up, switch_down, upper, lower,
+            b_close, b_open, mf_smooth, strength,
+            bull_dot, bear_dot, strength_signed
+    """
+    if isinstance(basis_type, int):
+        basis_type = _BASIS_TYPE_MAP.get(basis_type, "EMA")
+
+    idx = close_df.index
+    results: dict = {}
+
+    for sym in close_df.columns:
+        raw = smart_money_flow(
+            open_=   open_df[sym].values,
+            high=    high_df[sym].values,
+            low=     low_df[sym].values,
+            close=   close_df[sym].values,
+            volume=  vol_df[sym].values,
+            trend_len=trend_len,
+            basis_type=basis_type,
+            alma_offset=alma_offset,
+            alma_sigma=alma_sigma,
+            basis_smooth=basis_smooth,
+            mf_len=mf_len,
+            mf_smooth=mf_smooth,
+            mf_power=mf_power,
+            atr_len=atr_len,
+            min_mult=min_mult,
+            max_mult=max_mult,
+            dot_cooldown=dot_cooldown,
+        )
+        results[sym] = {k: pd.Series(v, index=idx) for k, v in raw.items()}
+
+    return results
+
+
+def smf_regime_masks(smf: dict) -> tuple:
+    """
+    Extract regime boolean DataFrames from :func:`smart_money_flow_cloud` output.
+
+    Parameters
+    ----------
+    smf : dict
+        Return value of :func:`smart_money_flow_cloud`.
+
+    Returns
+    -------
+    bull_regime_df : pd.DataFrame[bool]
+        True on bars where SMF state == +1 (bullish), indexed date × symbol.
+    switch_down_df : pd.DataFrame[bool]
+        True on the bar the regime flips to bearish (force-exit signal).
+    """
+    syms = list(smf.keys())
+    bull = pd.DataFrame({sym: smf[sym]["last_signal"] == 1 for sym in syms})
+    down = pd.DataFrame({sym: smf[sym]["switch_down"]      for sym in syms})
+    return bull, down

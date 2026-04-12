@@ -46,6 +46,20 @@ export interface TimeseriesResponse {
       histogram: (number | null)[];
       squeeze_on: boolean[];
     };
+    smart_money_flow?: {
+      last_signal: (number | null)[];
+      switch_up: boolean[];
+      switch_down: boolean[];
+      upper: (number | null)[];
+      lower: (number | null)[];
+      b_close: (number | null)[];
+      b_open: (number | null)[];
+      mf_smooth: (number | null)[];
+      strength: (number | null)[];
+      bull_dot: boolean[];
+      bear_dot: boolean[];
+      strength_signed: (number | null)[];
+    };
   };
 }
 

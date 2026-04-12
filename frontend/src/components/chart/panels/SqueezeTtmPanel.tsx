@@ -8,6 +8,7 @@ type SqueezeTtmPanelProps = {
   data: any;
   timestamps: string[];
   paneIndex: number;
+  visible?: boolean;
 };
 
 export default function SqueezeTtmPanel({
@@ -15,8 +16,14 @@ export default function SqueezeTtmPanel({
   data,
   timestamps,
   paneIndex,
+  visible,
 }: SqueezeTtmPanelProps) {
   const histogramSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
+
+  // Toggle series visibility
+  useEffect(() => {
+    histogramSeriesRef.current?.applyOptions({ visible: visible !== false });
+  }, [visible]);
 
   useEffect(() => {
     if (!chart) return;

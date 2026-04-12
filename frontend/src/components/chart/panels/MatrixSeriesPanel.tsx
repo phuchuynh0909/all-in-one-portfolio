@@ -15,14 +15,24 @@ type MatrixSeriesPanelProps = {
     chart: IChartApi;
     data: any; // Indicators data
     timestamps: string[];
+    visible?: boolean;
 };
 
-export default function MatrixSeriesPanel({ chart, data, timestamps }: MatrixSeriesPanelProps) {
+export default function MatrixSeriesPanel({ chart, data, timestamps, visible }: MatrixSeriesPanelProps) {
     const matrixSeriesCandleRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const matrixSeriesSupportRef = useRef<ISeriesApi<"Line"> | null>(null);
     const matrixSeriesResistanceRef = useRef<ISeriesApi<"Line"> | null>(null);
     const matrixSeriesMarkerRef = useRef<ISeriesApi<"Line"> | null>(null);
     const matrixSeriesMarkersRef = useRef<any>(null);
+
+    // Toggle series visibility
+    useEffect(() => {
+        const show = visible !== false;
+        matrixSeriesCandleRef.current?.applyOptions({ visible: show });
+        matrixSeriesSupportRef.current?.applyOptions({ visible: show });
+        matrixSeriesResistanceRef.current?.applyOptions({ visible: show });
+        matrixSeriesMarkerRef.current?.applyOptions({ visible: show });
+    }, [visible]);
 
     useEffect(() => {
         if (!chart) return;

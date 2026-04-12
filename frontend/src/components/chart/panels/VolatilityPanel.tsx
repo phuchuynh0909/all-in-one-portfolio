@@ -9,13 +9,28 @@ type VolatilityPanelProps = {
     chart: IChartApi;
     data: any; // Indicators data
     timestamps: string[];
+    yzVisible?: boolean;
+    kalmanVisible?: boolean;
 };
 
-export default function VolatilityPanel({ chart, data, timestamps }: VolatilityPanelProps) {
+export default function VolatilityPanel({ chart, data, timestamps, yzVisible, kalmanVisible }: VolatilityPanelProps) {
     const yzVolatilitySeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const kalmanZscoreSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const kalmanZscoreUpperRef = useRef<ISeriesApi<"Line"> | null>(null);
     const kalmanZscoreLowerRef = useRef<ISeriesApi<"Line"> | null>(null);
+
+    // Toggle YZ Volatility visibility
+    useEffect(() => {
+        yzVolatilitySeriesRef.current?.applyOptions({ visible: yzVisible !== false });
+    }, [yzVisible]);
+
+    // Toggle Kalman Z-Score visibility
+    useEffect(() => {
+        const show = kalmanVisible !== false;
+        kalmanZscoreSeriesRef.current?.applyOptions({ visible: show });
+        kalmanZscoreUpperRef.current?.applyOptions({ visible: show });
+        kalmanZscoreLowerRef.current?.applyOptions({ visible: show });
+    }, [kalmanVisible]);
 
     useEffect(() => {
         if (!chart) return;

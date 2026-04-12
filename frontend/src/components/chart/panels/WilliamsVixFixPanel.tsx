@@ -11,6 +11,7 @@ type WilliamsVixFixPanelProps = {
   data: any;
   timestamps: string[];
   paneIndex: number;
+  visible?: boolean;
 };
 
 export default function WilliamsVixFixPanel({
@@ -18,10 +19,18 @@ export default function WilliamsVixFixPanel({
   data,
   timestamps,
   paneIndex,
+  visible,
 }: WilliamsVixFixPanelProps) {
   const wvfSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const markerSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const markersRef = useRef<any>(null);
+
+  // Toggle series visibility
+  useEffect(() => {
+    const show = visible !== false;
+    wvfSeriesRef.current?.applyOptions({ visible: show });
+    markerSeriesRef.current?.applyOptions({ visible: show });
+  }, [visible]);
 
   useEffect(() => {
     if (!chart) return;

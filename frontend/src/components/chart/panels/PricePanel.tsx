@@ -21,6 +21,8 @@ type PricePanelProps = {
     positionMarkers?: PositionSeriesMarker[];
     isChartReady: boolean;
     onSeriesReady: (series: ISeriesApi<"Candlestick">) => void;
+    atrVisible?: boolean;
+    vwapVisible?: boolean;
 };
 
 type ChartMarker = SeriesMarker<UTCTimestamp>;
@@ -41,7 +43,9 @@ export default function PricePanel({
     reports,
     positionMarkers = [],
     isChartReady,
-    onSeriesReady
+    onSeriesReady,
+    atrVisible,
+    vwapVisible,
 }: PricePanelProps) {
     const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -164,6 +168,18 @@ export default function PricePanel({
             positionMarkersRef.current = null;
         };
     }, [chart]);
+
+    // Toggle ATR Trailing visibility
+    useEffect(() => {
+        atrTrailingRef.current?.applyOptions({ visible: atrVisible !== false });
+    }, [atrVisible]);
+
+    // Toggle VWAP visibility
+    useEffect(() => {
+        const show = vwapVisible !== false;
+        vwapHighestRef.current?.applyOptions({ visible: show });
+        vwapLowestRef.current?.applyOptions({ visible: show });
+    }, [vwapVisible]);
 
     // Update data
     useEffect(() => {

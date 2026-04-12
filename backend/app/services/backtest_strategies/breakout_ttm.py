@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd
 import talib
 from app.services.indicators.trailing_sl import trailing_sl
-from app.services.indicators.smart_money_flow import smart_money_flow, SMF_DEFAULTS
+from app.services.indicators.smart_money_flow import smart_money_flow
+from app.services.indicators.garch_regime_multifeature import ms_regime_multifeature
 
 import numba
 @numba.njit
@@ -101,7 +102,7 @@ def kama_1d(prices, period=10, fast=2, slow=30):
     for i in range(period, n):
         direction  = abs(prices[i] - prices[i - period])
         volatility = 0.0
-        for k in range(1, period + 1):
+        for k in range(period):
             volatility += abs(prices[i - k + 1] - prices[i - k])
         er   = direction / volatility if volatility != 0.0 else 0.0
         sc   = (er * (fast_sc - slow_sc) + slow_sc) ** 2
@@ -127,37 +128,40 @@ def slope_flat_1d(kama, slope_window, flat_threshold_pct):
 class BreakoutTTMV1StrategyBT(Strategy):
     """
     v1 — TTM squeeze + positive momentum breakout, fully gated by KAMA flat slope.
-    Best params (Trial #453): Total Return 403%, Sortino 0.995
+    Best params: Total Return 417.87%, Sortino 1.053
     """
     # BB
-    bb_period             = 14
+    bb_period             = 15
     bb_multiplier         = 1.0
+    matype                = 3
     # Keltner
-    kc_period             = 51
-    kc_multiplier         = 1.2
-    kc_atr_period         = 7
+    kc_period             = 38
+    kc_multiplier         = 1.3
+    kc_atr_period         = 5
     # TTM oscillator
     donichan_period       = 9
     osc_smoothing_period  = 11
     # Exit
-    atr_period            = 11
-    atr_multiplier        = 3.5
-    low_stop_lookback     = 5
+    atr_period            = 6
+    atr_multiplier        = 2.0
+    low_stop_lookback     = 9
     # KAMA slope filter
-    kama_period           = 10
-    kama_fast             = 4
-    kama_slow             = 23
-    kama_slope_win        = 4
-    flat_threshold_pct    = 2.8
+    kama_period           = 8
+    kama_fast             = 5
+    kama_slow             = 41
+    kama_slope_win        = 5
+    flat_threshold_pct    = 2.7
 
     def init(self):
         close = np.asarray(self.data.Close, dtype=np.float64)
         high  = np.asarray(self.data.High,  dtype=np.float64)
         low   = np.asarray(self.data.Low,   dtype=np.float64)
+        open_ = np.asarray(self.data.Open,  dtype=np.float64)
+        vol   = np.asarray(self.data.Volume, dtype=np.float64)
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
-            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=0,
+            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=self.matype,
         )
         kc_atr = talib.ATR(high, low, close, timeperiod=self.kc_atr_period)
         kc_ema = talib.EMA(close, timeperiod=self.kc_period)
@@ -183,9 +187,17 @@ class BreakoutTTMV1StrategyBT(Strategy):
         self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
         self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
 
+        # ── Multi-Feature Regime Detection ───────────────────────────────────
+        regime, regime_prob, regime_features = ms_regime_multifeature(
+            close, open_, high, low, vol,
+            spread_window=21, vol_window=21,
+        )
+
         self.I(_identity, ttms,              name='TTMS',        overlay=False, color='#4fc3f7')
         self.I(_identity, kama,              name='KAMA',        overlay=True,  color='#f7c59f')
-        self.I(_identity, flat.astype(float),name='KAMA Flat',   overlay=False, color='#3ddc84')
+        # self.I(_identity, flat.astype(float),name='KAMA Flat',   overlay=False, color='#3ddc84')
+        self.I(_identity, regime.astype(np.float64), name='MS Regime', overlay=False, color='#ff7043')
+        self.I(_identity, regime_prob,       name='MS Regime Prob', overlay=False, color='#9c27b0')
         self.I(_identity, self.buy_signal.astype(float), name='Buy Signal', overlay=False, color='blue')
         self.I(_identity, self.atr_trail,    name='ATR Trail',   overlay=True,  color='red')
 
@@ -213,37 +225,40 @@ class BreakoutTTMV1bStrategyBT(Strategy):
     """
     v1b — Identical to V1 but adds: only enter when close > ATR trailing stop
     (price is above the trailing line, confirming uptrend at entry).
-    Best params: same as V1 (Trial #453).
+    TTM/BB/KC/KAMA/exit params match V1 (same optimization sweep).
     """
     # BB
-    bb_period             = 14
-    bb_multiplier         = 1.0
+    bb_period             = 23
+    bb_multiplier         = 1.2
+    matype                = 3
     # Keltner
-    kc_period             = 51
+    kc_period             = 46
     kc_multiplier         = 1.2
-    kc_atr_period         = 7
+    kc_atr_period         = 19
     # TTM oscillator
-    donichan_period       = 9
-    osc_smoothing_period  = 11
+    donichan_period       = 10
+    osc_smoothing_period  = 5
     # Exit
-    atr_period            = 11
-    atr_multiplier        = 3.5
-    low_stop_lookback     = 5
+    atr_period            = 12
+    atr_multiplier        = 2.7
+    low_stop_lookback     = 7
     # KAMA slope filter
-    kama_period           = 10
-    kama_fast             = 4
-    kama_slow             = 23
-    kama_slope_win        = 4
-    flat_threshold_pct    = 2.8
+    kama_period           = 14
+    kama_fast             = 3
+    kama_slow             = 36
+    kama_slope_win        = 6
+    flat_threshold_pct    = 2.6
 
     def init(self):
         close = np.asarray(self.data.Close, dtype=np.float64)
         high  = np.asarray(self.data.High,  dtype=np.float64)
         low   = np.asarray(self.data.Low,   dtype=np.float64)
+        open_ = np.asarray(self.data.Open,  dtype=np.float64)
+        vol   = np.asarray(self.data.Volume, dtype=np.float64)
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
-            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=0,
+            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=self.matype,
         )
         kc_atr = talib.ATR(high, low, close, timeperiod=self.kc_atr_period)
         kc_ema = talib.EMA(close, timeperiod=self.kc_period)
@@ -267,6 +282,12 @@ class BreakoutTTMV1bStrategyBT(Strategy):
         self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
         self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
 
+        # ── Multi-Feature Regime Detection (same windows as V1) ─────────────
+        regime, regime_prob, regime_features = ms_regime_multifeature(
+            close, open_, high, low, vol,
+            spread_window=21, vol_window=21,
+        )
+
         # Entry: same as V1 + price must be above ATR trailing (uptrend confirmed)
         above_trail = close > self.atr_trail
         above_kama = close > kama
@@ -274,8 +295,10 @@ class BreakoutTTMV1bStrategyBT(Strategy):
 
         self.I(_identity, ttms,               name='TTMS',       overlay=False, color='#4fc3f7')
         self.I(_identity, kama,               name='KAMA',       overlay=True,  color='#f7c59f')
-        self.I(_identity, flat.astype(float), name='KAMA Flat',  overlay=False, color='#3ddc84')
-        self.I(_identity, above_trail.astype(float), name='Above ATR Trail', overlay=False, color='#b39ddb')
+        # self.I(_identity, flat.astype(float), name='KAMA Flat',  overlay=False, color='#3ddc84')
+        # self.I(_identity, above_trail.astype(float), name='Above ATR Trail', overlay=False, color='#b39ddb')
+        self.I(_identity, regime.astype(np.float64), name='MS Regime', overlay=False, color='#ff7043')
+        self.I(_identity, regime_prob,        name='MS Regime Prob', overlay=False, color='#9c27b0')
         self.I(_identity, self.buy_signal.astype(float), name='Buy Signal',  overlay=False, color='blue')
         self.I(_identity, self.atr_trail,     name='ATR Trail',  overlay=True,  color='red')
 
@@ -299,33 +322,178 @@ class BreakoutTTMV1bStrategyBT(Strategy):
                 self.position.close()
 
 
+class BreakoutTTMV1cStrategyBT(Strategy):
+    """
+    V1c — TTM Breakout V1 gated by SMF Cloud regime filter.
+
+    Entry: same as V1 (no_squeeze & TTM > 0 & KAMA flat)
+           AND SMF last_signal == +1 (bull regime)
+    Exit:  ATR trailing cross OR lowest-low SL
+           OR SMF switch_down (regime turns bearish → force exit)
+
+    TTM/BB/KC/KAMA/exit params match V1; SMF params from same optimization sweep.
+    """
+    # BB
+    bb_period             = 23
+    bb_multiplier         = 1.2
+    matype                = 3
+    # Keltner
+    kc_period             = 46
+    kc_multiplier         = 1.2
+    kc_atr_period         = 19
+    # TTM oscillator
+    donichan_period       = 10
+    osc_smoothing_period  = 5
+    # Exit
+    atr_period            = 12
+    atr_multiplier        = 2.7
+    low_stop_lookback     = 7
+    # KAMA slope filter
+    kama_period           = 14
+    kama_fast             = 3
+    kama_slow             = 36
+    kama_slope_win        = 6
+    flat_threshold_pct    = 2.6
+    # SMF regime params (sweep)
+    smf_trend_len         = 13
+    smf_mf_len            = 39
+    smf_mf_smooth         = 8
+    smf_mf_power          = 2.3
+    smf_atr_len           = 7
+    smf_min_mult          = 0.5
+    smf_max_mult          = 2.9
+    smf_basis_type        = 'ALMA'
+
+    def init(self):
+        close = np.asarray(self.data.Close, dtype=np.float64)
+        high  = np.asarray(self.data.High,  dtype=np.float64)
+        low   = np.asarray(self.data.Low,   dtype=np.float64)
+        open_ = np.asarray(self.data.Open,  dtype=np.float64)
+        vol   = np.asarray(self.data.Volume, dtype=np.float64)
+
+        # ── TTM Breakout V1 signals ───────────────────────────────────────────
+        bb_upper, _, bb_lower = talib.BBANDS(
+            close, timeperiod=self.bb_period,
+            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=self.matype,
+        )
+        kc_atr   = talib.ATR(high, low, close, timeperiod=self.kc_atr_period)
+        kc_ema   = talib.EMA(close, timeperiod=self.kc_period)
+        kc_upper = kc_ema + self.kc_multiplier * kc_atr
+        kc_lower = kc_ema - self.kc_multiplier * kc_atr
+
+        hh  = talib.MAX(high, timeperiod=self.donichan_period)
+        ll  = talib.MIN(low,  timeperiod=self.donichan_period)
+        sma = talib.SMA(close, timeperiod=self.donichan_period)
+        osc = close - ((hh + ll) / 2.0 + sma) / 2.0
+        ttms = talib.LINEARREG(osc, timeperiod=self.osc_smoothing_period)
+
+        sqz_on  = (bb_upper < kc_upper) & (bb_lower > kc_lower)
+        sqz_off = (bb_upper > kc_upper) & (bb_lower < kc_lower)
+        no_sqz  = (~sqz_on) & (~sqz_off)
+
+        kama = kama_1d(close, self.kama_period, self.kama_fast, self.kama_slow)
+        flat = slope_flat_1d(kama, self.kama_slope_win, self.flat_threshold_pct)
+
+        ttm_signal = no_sqz & (ttms > 0) & flat
+
+        # ── SMF Cloud regime ──────────────────────────────────────────────────
+        smf = smart_money_flow(
+            open_, high, low, close, vol,
+            trend_len    = self.smf_trend_len,
+            mf_len       = self.smf_mf_len,
+            mf_smooth    = self.smf_mf_smooth,
+            mf_power     = self.smf_mf_power,
+            atr_len      = self.smf_atr_len,
+            min_mult     = self.smf_min_mult,
+            max_mult     = self.smf_max_mult,
+            basis_type   = self.smf_basis_type,
+        )
+        bull_regime       = smf["last_signal"] == 1
+        self.switch_down  = smf["switch_down"]
+        smf_basis         = smf["b_close"]
+        smf_upper         = smf["upper"]
+        smf_lower         = smf["lower"]
+
+        # ── Combined entry: TTM V1 AND bull regime ────────────────────────────
+        self.buy_signal = ttm_signal & bull_regime
+
+        # ── Exits ─────────────────────────────────────────────────────────────
+        atr_exit       = talib.ATR(high, low, close, timeperiod=self.atr_period)
+        self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
+        self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
+
+        # ── Multi-Feature Regime Detection ───────────────────────────────────
+        regime, regime_prob, regime_features = ms_regime_multifeature(
+            close, open_, high, low, vol,
+            spread_window=21, vol_window=21,
+        )
+
+        # ── Chart indicators ──────────────────────────────────────────────────
+        self.I(_identity, ttms,                     name='TTMS',        overlay=False, color='#4fc3f7')
+        self.I(_identity, kama,                     name='KAMA',        overlay=True,  color='#f7c59f')
+        self.I(_identity, flat.astype(float),       name='KAMA Flat',   overlay=False, color='#3ddc84')
+        self.I(_identity, bull_regime.astype(float),name='SMF Regime',  overlay=False, color='#a855f7')
+        self.I(_identity, smf_basis,                name='SMF Basis',   overlay=True,  color='#f39c12')
+        self.I(_identity, smf_upper,                name='SMF Upper',   overlay=True,  color='#3498db')
+        self.I(_identity, smf_lower,                name='SMF Lower',   overlay=True,  color='#e74c3c')
+        self.I(_identity, regime.astype(np.float64), name='MS Regime', overlay=False, color='#ff7043')
+        self.I(_identity, regime_prob,              name='MS Regime Prob', overlay=False, color='#9c27b0')
+        self.I(_identity, regime_features[:, 1],   name='Spread (GMM)',   overlay=False, color='#ff9800')
+        self.I(_identity, self.buy_signal.astype(float), name='Buy Signal', overlay=False, color='blue')
+        self.I(_identity, self.atr_trail,           name='ATR Trail',   overlay=True,  color='red')
+
+    def next(self):
+        idx = len(self.data.Close) - 1
+        if idx < 1:
+            return
+        close = self.data.Close[idx]
+        if not self.position and self.buy_signal[idx]:
+            sl = float(self.low_sl[idx - 1])
+            if np.isnan(sl) or sl >= close:
+                sl = close * 0.95
+            self.buy(sl=sl)
+            return
+        if self.position:
+            # Force exit when SMF regime flips to bearish
+            if self.switch_down[idx]:
+                self.position.close()
+                return
+            if close < self.low_sl[idx - 1]:
+                self.position.close()
+                return
+            if (self.data.Close[idx - 1] >= self.atr_trail[idx - 1]
+                    and close < self.atr_trail[idx]):
+                self.position.close()
+
+
 class BreakoutTTMV2StrategyBT(Strategy):
     """
     v2 — Momentum zero-cross breakout, fully gated by KAMA flat slope.
-    Best params (Trial #493): Total Return 397%, Sortino 1.001
+    Best params: Total Return 441.00%, Sortino 0.997
     """
     # BB
-    bb_period             = 18
-    bb_multiplier         = 1.2
+    bb_period             = 15
+    bb_multiplier         = 1.3
+    matype                = 0
     # Keltner
-    kc_period             = 53
-    kc_multiplier         = 1.5
-    kc_atr_period         = 5
+    kc_period             = 52
+    kc_multiplier         = 1.2
+    kc_atr_period         = 14
     # TTM oscillator
     donichan_period       = 9
-    osc_smoothing_period  = 11
+    osc_smoothing_period  = 13
     # Exit
-    atr_period            = 5
-    atr_multiplier        = 2.5
-    low_stop_lookback     = 7
+    atr_period            = 7
+    atr_multiplier        = 2.6
+    low_stop_lookback     = 3
     # WVF (not used for v2 entry, kept for chart)
-    william_vix_period    = 27
+    william_vix_period    = 18
     # KAMA slope filter
-    kama_period           = 9
-    kama_fast             = 3
-    kama_slow             = 25
-    kama_slope_win        = 3
-    flat_threshold_pct    = 2.8
+    kama_period           = 11
+    kama_fast             = 2
+    kama_slow             = 36
+    kama_slope_win        = 5
+    flat_threshold_pct    = 2.5
 
     def init(self):
         close = np.asarray(self.data.Close, dtype=np.float64)
@@ -334,7 +502,7 @@ class BreakoutTTMV2StrategyBT(Strategy):
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
-            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=0,
+            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=self.matype,
         )
         kc_atr   = talib.ATR(high, low, close, timeperiod=self.kc_atr_period)
         kc_ema   = talib.EMA(close, timeperiod=self.kc_period)
@@ -402,32 +570,33 @@ class BreakoutTTMV3StrategyBT(Strategy):
       entry_1 (breakout on squeeze release) — gated by KAMA flat slope
       entry_2 (bottom fishing: extended neg momentum) — no KAMA filter
       WVF (volatility spike / contrarian) — no KAMA filter
-    Best params (Trial #238): Total Return 403%, Sortino 0.981
+    Best params: Total Return 422.02%, Sortino 1.028
     """
     # BB
-    bb_period             = 11
-    bb_multiplier         = 1.1
+    bb_period             = 10
+    bb_multiplier         = 1.2
+    matype                = 3
     # Keltner
-    kc_period             = 30
-    kc_multiplier         = 1.5
-    kc_atr_period         = 7
+    kc_period             = 39
+    kc_multiplier         = 1.6
+    kc_atr_period         = 6
     # TTM oscillator
-    donichan_period       = 20
+    donichan_period       = 14
     osc_smoothing_period  = 15
     # Exit
-    atr_period            = 5
-    atr_multiplier        = 2.9
-    low_stop_lookback     = 8
+    atr_period            = 11
+    atr_multiplier        = 2.6
+    low_stop_lookback     = 5
     # entry_2 threshold
-    consecutive_neg_threshold = 9
+    consecutive_neg_threshold = 4
     # WVF
-    william_vix_period    = 18
+    william_vix_period    = 17
     # KAMA slope filter (entry_1 only)
-    kama_period           = 20
-    kama_fast             = 4
-    kama_slow             = 47
-    kama_slope_win        = 14
-    flat_threshold_pct    = 1.6
+    kama_period           = 16
+    kama_fast             = 5
+    kama_slow             = 39
+    kama_slope_win        = 5
+    flat_threshold_pct    = 1.8
 
     def init(self):
         close = np.asarray(self.data.Close, dtype=np.float64)
@@ -436,7 +605,7 @@ class BreakoutTTMV3StrategyBT(Strategy):
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
-            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=0,
+            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=self.matype,
         )
         kc_atr   = talib.ATR(high, low, close, timeperiod=self.kc_atr_period)
         kc_ema   = talib.EMA(close, timeperiod=self.kc_period)
@@ -508,141 +677,6 @@ class BreakoutTTMV3StrategyBT(Strategy):
                     and close < self.atr_trail[idx]):
                 self.position.close()
 
-
-class BreakoutTTMV1cStrategyBT(Strategy):
-    """
-    V1c — TTM Breakout V1 gated by SMF Cloud regime filter.
-
-    Entry: same as V1 (no_squeeze & TTM > 0 & KAMA flat)
-           AND SMF last_signal == +1 (bull regime)
-    Exit:  ATR trailing cross OR lowest-low SL
-           OR SMF switch_down (regime turns bearish → force exit)
-
-    SMF default params: optimised from backtest_005b study.
-    """
-    # BB
-    bb_period             = 14
-    bb_multiplier         = 1.0
-    # Keltner
-    kc_period             = 51
-    kc_multiplier         = 1.2
-    kc_atr_period         = 7
-    # TTM oscillator
-    donichan_period       = 9
-    osc_smoothing_period  = 11
-    # Exit
-    atr_period            = 11
-    atr_multiplier        = 3.5
-    low_stop_lookback     = 5
-    # KAMA slope filter
-    kama_period           = 10
-    kama_fast             = 4
-    kama_slow             = 23
-    kama_slope_win        = 4
-    flat_threshold_pct    = 2.8
-    # SMF regime params (optimised defaults)
-    smf_trend_len         = SMF_DEFAULTS["trend_len"]
-    smf_mf_len            = SMF_DEFAULTS["mf_len"]
-    smf_mf_smooth         = SMF_DEFAULTS["mf_smooth"]
-    smf_mf_power          = SMF_DEFAULTS["mf_power"]
-    smf_atr_len           = SMF_DEFAULTS["atr_len"]
-    smf_min_mult          = SMF_DEFAULTS["min_mult"]
-    smf_max_mult          = SMF_DEFAULTS["max_mult"]
-    smf_basis_type        = 'ALMA'
-
-    def init(self):
-        close = np.asarray(self.data.Close, dtype=np.float64)
-        high  = np.asarray(self.data.High,  dtype=np.float64)
-        low   = np.asarray(self.data.Low,   dtype=np.float64)
-        open_ = np.asarray(self.data.Open,  dtype=np.float64)
-        vol   = np.asarray(self.data.Volume, dtype=np.float64)
-
-        # ── TTM Breakout V1 signals ───────────────────────────────────────────
-        bb_upper, _, bb_lower = talib.BBANDS(
-            close, timeperiod=self.bb_period,
-            nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=0,
-        )
-        kc_atr   = talib.ATR(high, low, close, timeperiod=self.kc_atr_period)
-        kc_ema   = talib.EMA(close, timeperiod=self.kc_period)
-        kc_upper = kc_ema + self.kc_multiplier * kc_atr
-        kc_lower = kc_ema - self.kc_multiplier * kc_atr
-
-        hh  = talib.MAX(high, timeperiod=self.donichan_period)
-        ll  = talib.MIN(low,  timeperiod=self.donichan_period)
-        sma = talib.SMA(close, timeperiod=self.donichan_period)
-        osc = close - ((hh + ll) / 2.0 + sma) / 2.0
-        ttms = talib.LINEARREG(osc, timeperiod=self.osc_smoothing_period)
-
-        sqz_on  = (bb_upper < kc_upper) & (bb_lower > kc_lower)
-        sqz_off = (bb_upper > kc_upper) & (bb_lower < kc_lower)
-        no_sqz  = (~sqz_on) & (~sqz_off)
-
-        kama = kama_1d(close, self.kama_period, self.kama_fast, self.kama_slow)
-        flat = slope_flat_1d(kama, self.kama_slope_win, self.flat_threshold_pct)
-
-        ttm_signal = no_sqz & (ttms > 0) & flat
-
-        # ── SMF Cloud regime ──────────────────────────────────────────────────
-        smf = smart_money_flow(
-            open_, high, low, close, vol,
-            trend_len    = self.smf_trend_len,
-            mf_len       = self.smf_mf_len,
-            mf_smooth    = self.smf_mf_smooth,
-            mf_power     = self.smf_mf_power,
-            atr_len      = self.smf_atr_len,
-            min_mult     = self.smf_min_mult,
-            max_mult     = self.smf_max_mult,
-            basis_type   = self.smf_basis_type,
-        )
-        bull_regime       = smf["last_signal"] == 1
-        self.switch_down  = smf["switch_down"]
-        smf_basis         = smf["b_close"]
-        smf_upper         = smf["upper"]
-        smf_lower         = smf["lower"]
-
-        # ── Combined entry: TTM V1 AND bull regime ────────────────────────────
-        self.buy_signal = ttm_signal & bull_regime
-
-        # ── Exits ─────────────────────────────────────────────────────────────
-        atr_exit       = talib.ATR(high, low, close, timeperiod=self.atr_period)
-        self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
-        self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
-
-        # ── Chart indicators ──────────────────────────────────────────────────
-        self.I(_identity, ttms,                     name='TTMS',        overlay=False, color='#4fc3f7')
-        self.I(_identity, kama,                     name='KAMA',        overlay=True,  color='#f7c59f')
-        self.I(_identity, flat.astype(float),       name='KAMA Flat',   overlay=False, color='#3ddc84')
-        self.I(_identity, bull_regime.astype(float),name='SMF Regime',  overlay=False, color='#a855f7')
-        self.I(_identity, smf_basis,                name='SMF Basis',   overlay=True,  color='#f39c12')
-        self.I(_identity, smf_upper,                name='SMF Upper',   overlay=True,  color='#3498db')
-        self.I(_identity, smf_lower,                name='SMF Lower',   overlay=True,  color='#e74c3c')
-        self.I(_identity, self.buy_signal.astype(float), name='Buy Signal', overlay=False, color='blue')
-        self.I(_identity, self.atr_trail,           name='ATR Trail',   overlay=True,  color='red')
-
-    def next(self):
-        idx = len(self.data.Close) - 1
-        if idx < 1:
-            return
-        close = self.data.Close[idx]
-        if not self.position and self.buy_signal[idx]:
-            sl = float(self.low_sl[idx - 1])
-            if np.isnan(sl) or sl >= close:
-                sl = close * 0.95
-            self.buy(sl=sl)
-            return
-        if self.position:
-            # Force exit when SMF regime flips to bearish
-            if self.switch_down[idx]:
-                self.position.close()
-                return
-            if close < self.low_sl[idx - 1]:
-                self.position.close()
-                return
-            if (self.data.Close[idx - 1] >= self.atr_trail[idx - 1]
-                    and close < self.atr_trail[idx]):
-                self.position.close()
-
-
 # ── Legacy class (kept for backward compatibility) ────────────────────────────
 class BreakoutTTMStrategyBT(Strategy):
     bb_period = 10
@@ -660,6 +694,8 @@ class BreakoutTTMStrategyBT(Strategy):
         close = np.asarray(self.data.Close.round(2), dtype=np.float64)
         high = np.asarray(self.data.High.round(2), dtype=np.float64)
         low = np.asarray(self.data.Low.round(2), dtype=np.float64)
+        open_ = np.asarray(self.data.Open, dtype=np.float64)
+        vol = np.asarray(self.data.Volume, dtype=np.float64)
 
         ## Squeeze
         bb_indicator = talib.BBANDS(close, timeperiod=self.bb_period, nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=self.matype)
@@ -693,6 +729,12 @@ class BreakoutTTMStrategyBT(Strategy):
         atr_trailing_real = talib.ATR(high, low, close, timeperiod=10)
         self.atr_trailing = trailing_sl(close, atr_trailing_real, atr_multiplier=1.9)
 
+        # Multi-Feature Regime Detection
+        regime, regime_prob, regime_features = ms_regime_multifeature(
+            close, open_, high, low, vol,
+            spread_window=21, vol_window=21,
+        )
+
         self.I(
             lambda: (ttms,),
             overlay=False,
@@ -714,6 +756,12 @@ class BreakoutTTMStrategyBT(Strategy):
         )
         self.I(_identity, entry_3, name='Entry 3', overlay=False, color='orange')
         self.I(_identity, squeeze_diff_np > 0, name='Squeeze Diff', overlay=False, color='green')
+        self.I(_identity, regime.astype(np.float64), name='MS Regime', overlay=False, color='#ff7043')
+        self.I(_identity, regime_prob, name='MS Regime Prob', overlay=False, color='#9c27b0')
+        self.I(_identity, regime_features[:, 1], name='Spread (GMM)', overlay=False, color='#ff9800')
+        self.I(_identity, regime_features[:, 2], name='Volume Ratio', overlay=False, color='#03a9f4')
+        self.I(_identity, regime_features[:, 3], name='Realized Vol', overlay=False, color='#e91e63')
+        self.I(_identity, regime_features[:, 4], name='Abs Ret MA', overlay=False, color='#4caf50')
         self.I(_identity, self.buy_signal, name='Buy Signal', overlay=False, color='blue')
         self.I(_identity, self.atr_trailing, name='ATR Trailing Stop', overlay=True, color='red')
 
