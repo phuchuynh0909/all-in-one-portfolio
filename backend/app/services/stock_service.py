@@ -1,15 +1,12 @@
 import os
 import time as time_module
-from datetime import date, datetime, timedelta
-from pathlib import Path
-from typing import List, Optional, Tuple
+from datetime import datetime, timedelta
+from typing import List, Optional
 
 import clickhouse_connect
-import numpy as np
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
-import talib
 from deltalake import DeltaTable
 from fastapi_cache.decorator import cache
 from loguru import logger
@@ -36,9 +33,19 @@ def _delta_storage_options() -> dict:
 # Cached DeltaTable instances with TTL
 _delta_table_cache: dict = {}
 _CACHE_TTL_SECONDS = 300  # 5 minutes
-_PARQUET_CACHE_TTL_SECONDS = 6 * 60 * 60  # 6 hours
 
 DEFAULT_STOCK_COLUMNS = ["date", "open", "high", "low", "close", "volume", "symbol"]
+
+
+def _clickhouse_client():
+    return clickhouse_connect.get_client(
+        host=settings.clickhouse_host,
+        port=settings.clickhouse_port,
+        username=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+        database=settings.clickhouse_db,
+    )
+
 
 def _get_cached_delta_table(table_path: str) -> DeltaTable:
     """Get a cached DeltaTable instance, refreshing if expired."""
@@ -76,16 +83,6 @@ def _build_filter(symbols: list | None, start: datetime | None, end: datetime | 
     except Exception:
         return None
     return expr
-
-
-def _get_parquet_cache_path() -> Path:
-    cache_path = os.getenv("STOCKS_PARQUET_CACHE")
-    if cache_path:
-        return Path(cache_path)
-    base_dir = Path(__file__).resolve().parents[2]
-    data_dir = base_dir / "data"
-    data_dir.mkdir(parents=True, exist_ok=True)
-    return data_dir / "stocks_cache.parquet"
 
 
 def _load_delta_stocks(
@@ -132,13 +129,7 @@ def _load_delta_stocks(
     sql = f"SELECT {', '.join(selected_cols)} FROM {settings.clickhouse_db}.{table_name} FINAL {where_clause} {order_clause}"
     logger.debug(f"[PERF] clickhouse query: {sql}")
     t0 = time.perf_counter()
-    client = clickhouse_connect.get_client(
-        host=settings.clickhouse_host,
-        port=settings.clickhouse_port,
-        username=settings.clickhouse_user,
-        password=settings.clickhouse_password,
-        database=settings.clickhouse_db,
-    )
+    client = _clickhouse_client()
     try:
         result = client.query(sql)
         pdf = pd.DataFrame(result.result_rows, columns=result.column_names)
@@ -189,33 +180,29 @@ def _load_feature_store(
 
 @cache(expire=300)  # Cache for 5 minutes
 async def get_current_price(ticker: str) -> Optional[float]:
-    """Get the most recent price for a ticker."""
+    """Latest EOD close for ``ticker`` from ClickHouse ``ohlc_eod`` (or ``CLICKHOUSE_OHLC_EOD_TABLE``)."""
+    if not ticker or not str(ticker).strip():
+        return None
+    sym = str(ticker).strip().replace("'", "''")
+    table_name = os.getenv("CLICKHOUSE_OHLC_EOD_TABLE", "ohlc_eod")
+    sql = (
+        f"SELECT close FROM {settings.clickhouse_db}.{table_name} FINAL "
+        f"WHERE symbol = '{sym}' ORDER BY date DESC LIMIT 1"
+    )
     try:
-        now = datetime.now()
-        
-        # Fetch from Delta Lake
-        current_date = date(now.year, now.month, now.day)
-        start_date = current_date - timedelta(days=3)
-        
-        # Use cached DeltaTable with predicate pushdown for filtering
-        dt = _get_cached_delta_table(settings.stocks_delta_table)
-        stocks = dt.to_pandas(
-            columns=["date", "close"],
-            filters=[
-                ("symbol", "==", ticker),
-                ("date", ">=", start_date),
-                ("date", "<=", current_date),
-            ]
-        )
-        
-        if stocks.empty:
-            return None
-
-        # Get the latest price by sorting in pandas
-        latest_price = float(stocks.sort_values("date", ascending=False)["close"].iloc[0])
-        return latest_price
+        client = _clickhouse_client()
+        try:
+            result = client.query(sql)
+            if not result.result_rows:
+                return None
+            val = result.result_rows[0][0]
+            if val is None:
+                return None
+            return float(val)
+        finally:
+            client.close()
     except Exception as e:
-        print(f"Error getting current price for {ticker}: {e}")
+        logger.warning("Error getting current price for {} from ClickHouse: {}", ticker, e)
         return None
 
 async def get_stock_timeseries(
@@ -299,27 +286,6 @@ async def get_stock_indicators(
     except Exception as e:
         logger.error(f"Error getting indicators for {symbol}: {e}")
         raise
-
-
-def calculate_rsi(prices: np.ndarray, period: int = 14) -> List[float]:
-    """Calculate RSI indicator using TA-Lib."""
-    rsi = talib.RSI(prices, timeperiod=period)
-    return convert_nans(rsi)
-
-def calculate_macd(
-    prices: np.ndarray,
-    fast_period: int = 12,
-    slow_period: int = 26,
-    signal_period: int = 9
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Calculate MACD indicator using TA-Lib."""
-    macd_line, signal_line, histogram = talib.MACD(
-        prices,
-        fastperiod=fast_period,
-        slowperiod=slow_period,
-        signalperiod=signal_period
-    )
-    return map(convert_nans, (macd_line, signal_line, histogram))
 
 
 def _create_empty_sector_timeseries(sector_level: str) -> SectorTimeseries:
