@@ -1,8 +1,13 @@
 version: "3.9"
 
-# Load environment variables from prod.env file
-# You can override these by setting environment variables directly
-# or by modifying the prod.env file
+# prod.env must sit next to this file (repo root). Paths are resolved relative to the compose file.
+#
+# Compose substitution (${VAR} in this YAML) uses the shell env + the file passed to the CLI:
+#   docker compose --env-file prod.env -f docker-compose.prod.yml ...
+# (see Makefile prod-* targets). It does NOT read prod.env for ${VAR} unless you pass --env-file.
+#
+# Service-level env_file: loads KEY=VALUE into the container from disk. Do not duplicate those keys
+# in `environment:` as KEY=${KEY:-default} — empty host env overrides env_file with the default.
 
 services:
   backend:
@@ -16,7 +21,8 @@ services:
       - ./backend/models:/app/models
       - ./backend/portfolio.db:/app/app/portfolio.db
     env_file:
-      - prod.env
+      - path: ./prod.env
+        required: true
     environment:
       - APP_ENVIRONMENT=production
       - APP_PROJECT_NAME=Investment Tracker API
@@ -50,14 +56,8 @@ services:
       - ./backend/portfolio.db:/app/portfolio.db
       - worker_state:/app/state_dir
     env_file:
-      - prod.env
-    environment:
-      # ClickHouse Configuration
-      - CLICKHOUSE_HOST=clickhouse
-      - CLICKHOUSE_PORT=8123
-      - CLICKHOUSE_USER=${CLICKHOUSE_USER:-myuser}
-      - CLICKHOUSE_PASSWORD=${CLICKHOUSE_PASSWORD:-mypassword}
-      - CLICKHOUSE_DB=${CLICKHOUSE_DB:-default}
+      - path: ./prod.env
+        required: true
     networks:
       - appnet
       - shared_network
