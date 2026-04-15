@@ -194,33 +194,37 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
     df["key"] = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
     df = df[["key", "symbol", "date", "open", "high", "low", "close", "volume"]]
 
-    # Bound the target scan to only files that can contain the incoming dates.
-    # Without this, Delta reads the entire table into memory to resolve the key
-    # join — the main cause of OOM when the table grows beyond a few GB.
-    min_date = df["date"].min().strftime("%Y-%m-%d")
+    df["key"]   = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
+    df["month"] = df["date"].dt.to_period("M").astype(str)
+    df = df[["key", "symbol", "date", "month", "open", "high", "low", "close", "volume"]]
 
     storage_options = _get_delta_storage_options()
     dt = DeltaTable(destination, storage_options=storage_options)
-    result = (
-        dt.merge(
-            df,
-            predicate=f"target.key == source.key AND target.date >= '{min_date}'",
-            source_alias="source",
-            target_alias="target",
-        )
-        .when_not_matched_insert_all()
-        .when_matched_update_all(
-            # Outer join already guarantees key equality; only update rows
-            # where the data actually changed (volume OR close revised).
-            predicate="target.volume != source.volume OR target.close != source.close"
-        )
-        .execute()
-    )
-    print(result)
 
-    # Drop merge inputs before optional heavy maintenance so peak RSS stays lower.
+    months = sorted(df["month"].unique())
+    print(f"Merging {len(months)} month(s) into Delta …")
+
+    for month in months:
+        month_df = df[df["month"] == month].copy()
+
+        result = (
+            dt.merge(
+                month_df,
+                predicate=f"target.key == source.key AND target.month = '{month}'",
+                source_alias="source",
+                target_alias="target",
+            )
+            .when_not_matched_insert_all()
+            .when_matched_update_all(
+                predicate="target.volume != source.volume OR target.close != source.close"
+            )
+            .execute()
+        )
+        print(f"  {month}: {result}")
+        del month_df, result
+        gc.collect()
+
     del df
-    del result
     gc.collect()
 
     run_vacuum = _env_flag("DELTA_SYNC_RUN_VACUUM", "false")
@@ -397,7 +401,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
 @flow(log_prints=True)
 def sync_ticker_delta_table_pipeline(destination: str = "s3://delta-table-storage/stocks") -> None:
     """Flow: ETL for syncing tickers"""
-     
+
     # Task 1: Collect data from MetaStock files
     df = convert_metastock_to_df()
 

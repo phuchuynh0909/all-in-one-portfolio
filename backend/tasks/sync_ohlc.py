@@ -211,33 +211,54 @@ def convert_metastock_to_df() -> pd.DataFrame:
 
 
 def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
+    """Merge OHLC upserts into a month-partitioned Delta table.
+
+    Merges one month at a time. Because the table is partitioned by `month`,
+    Delta resolves each merge predicate (`target.month = '{month}'`) via the
+    transaction log — only that month's partition files are loaded, not the
+    full table. This eliminates the OOM that occurred with an unpartitioned table.
+
+    Requires the table to be partitioned by `month` (run migrate_to_partitioned.py
+    once to convert an existing unpartitioned table).
+    """
     try:
         df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
     except ValueError:
         df["date"] = pd.to_datetime(df["date"])
 
-    df["key"] = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
-    df = df[["key", "symbol", "date", "open", "high", "low", "close", "volume"]]
+    df["key"]   = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
+    df["month"] = df["date"].dt.to_period("M").astype(str)   # e.g. "2026-04"
+    df = df[["key", "symbol", "date", "month", "open", "high", "low", "close", "volume"]]
 
-    min_date = df["date"].min().strftime("%Y-%m-%d")
+    storage_options = _get_delta_storage_options()
+    dt = DeltaTable(destination, storage_options=storage_options)
 
-    dt = DeltaTable(destination, storage_options=_get_delta_storage_options())
-    result = (
-        dt.merge(
-            df,
-            predicate=f"target.key == source.key AND target.date >= '{min_date}'",
-            source_alias="source",
-            target_alias="target",
+    months = sorted(df["month"].unique())
+    print(f"Merging {len(months)} month(s) into Delta …")
+
+    for month in months:
+        month_df = df[df["month"] == month].copy()
+
+        result = (
+            dt.merge(
+                month_df,
+                # Partition predicate prunes all files outside this month's
+                # partition directory — only ~N_symbols rows are loaded.
+                predicate=f"target.key == source.key AND target.month = '{month}'",
+                source_alias="source",
+                target_alias="target",
+            )
+            .when_not_matched_insert_all()
+            .when_matched_update_all(
+                predicate="target.volume != source.volume OR target.close != source.close"
+            )
+            .execute()
         )
-        .when_not_matched_insert_all()
-        .when_matched_update_all(
-            predicate="target.volume != source.volume OR target.close != source.close"
-        )
-        .execute()
-    )
-    print(result)
+        print(f"  {month}: {result}")
+        del month_df, result
+        gc.collect()
 
-    del df, result
+    del df
     gc.collect()
 
     if _env_flag("DELTA_SYNC_RUN_VACUUM"):
