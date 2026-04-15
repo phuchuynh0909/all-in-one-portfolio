@@ -48,11 +48,19 @@ def _get_env(name: str, default: str) -> str:
 
 def _get_ch_client() -> Client:
     host = _get_env("CLICKHOUSE_HOST", "localhost")
-    port = int(_get_env("CLICKHOUSE_PORT", "9010"))
-    username = _get_env("CLICKHOUSE_USER", "kyostyle1")
+    port = int(_get_env("CLICKHOUSE_PORT", "9000"))   # native TCP port (not HTTP 8123)
+    user = _get_env("CLICKHOUSE_USER", "kyostyle1")
     password = _get_env("CLICKHOUSE_PASSWORD", "kyostyle1")
     database = _get_env("CLICKHOUSE_DB", "default")
-    return Client(host=host, port=port, user=username, password=password, database=database)
+    try:
+        return Client(host=host, port=port, user=user, password=password, database=database)
+    except Exception as e:
+        raise RuntimeError(
+            f"ClickHouse connection failed at {host}:{port}. "
+            f"Override with CLICKHOUSE_HOST / CLICKHOUSE_PORT env vars. "
+            f"Port must be the native TCP port (default 9000), not HTTP (8123). "
+            f"Error: {e}"
+        ) from e
 
 def _get_delta_storage_options() -> dict[str, str]:
     return {

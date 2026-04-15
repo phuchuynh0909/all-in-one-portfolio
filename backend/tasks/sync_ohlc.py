@@ -41,13 +41,25 @@ def _get_delta_storage_options() -> dict[str, str]:
     }
 
 def _get_ch_client() -> Client:
-    return Client(
-        host     = _get_env("CLICKHOUSE_HOST",     "localhost"),
-        port     = int(_get_env("CLICKHOUSE_PORT", "9010")),
-        user     = _get_env("CLICKHOUSE_USER",     "kyostyle1"),
-        password = _get_env("CLICKHOUSE_PASSWORD", "kyostyle1"),
-        database = _get_env("CLICKHOUSE_DB",       "default"),
-    )
+    # clickhouse_driver uses the native binary protocol — must point at the
+    # native TCP port (default 9000, here 9010). Port 8123 is HTTP-only and
+    # will cause EOFError on the handshake.
+    host = _get_env("CLICKHOUSE_HOST", "localhost")
+    port = int(_get_env("CLICKHOUSE_PORT", "9000"))   # native TCP port (not HTTP 8123)
+    try:
+        return Client(
+            host     = host,
+            port     = port,
+            user     = _get_env("CLICKHOUSE_USER",     "kyostyle1"),
+            password = _get_env("CLICKHOUSE_PASSWORD", "kyostyle1"),
+            database = _get_env("CLICKHOUSE_DB",       "default"),
+        )
+    except Exception as e:
+        raise RuntimeError(
+            f"Cannot connect to ClickHouse at {host}:{port} — "
+            f"verify the server is running and CLICKHOUSE_PORT points to the "
+            f"native TCP port (not the HTTP port 8123). Error: {e}"
+        ) from e
 
 def _load_sync_state(state_path: str) -> dict[str, Any]:
     if not os.path.exists(state_path):
@@ -89,7 +101,14 @@ def _normalize_cdf_to_ohlc_df(cdf_df: pd.DataFrame) -> pd.DataFrame:
     return normalized.dropna(subset=required_cols)
 
 def _ensure_ohlc_table_exists(client: Client, database: str, table: str) -> None:
-    client.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
+    try:
+        client.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
+    except EOFError as e:
+        raise RuntimeError(
+            f"ClickHouse handshake failed — wrong port? "
+            f"Set CLICKHOUSE_PORT to the native TCP port (default 9000/9010, not HTTP 8123). "
+            f"Original error: {e}"
+        ) from e
     client.execute(
         f"""
         CREATE TABLE IF NOT EXISTS {database}.{table} (
