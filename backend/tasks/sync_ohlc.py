@@ -145,6 +145,7 @@ def _delta_table_to_dataframe(dt: DeltaTable) -> pd.DataFrame:
 
 def convert_metastock_to_df() -> pd.DataFrame:
     max_days = 20
+    cutoff   = pd.Timestamp.today().normalize() - pd.Timedelta(days=max_days)
 
     with open(r"D:\Projects\trading_toolbox\watchlist.csv", "r") as f:
         watchlist: list[str] = list(chain.from_iterable(csv.reader(f)))
@@ -163,7 +164,8 @@ def convert_metastock_to_df() -> pd.DataFrame:
             filename = filename.iloc[0]
         try:
             tick = metastock_read(filename, extra_buffer=50)
-            tick = tick.sort_index().tail(max_days).reset_index(names="date")
+            tick = tick.sort_index()
+            tick = tick[tick.index >= cutoff].reset_index(names="date")
             tick["symbol"] = row["symbol"]
             frames.append(tick)
         except Exception as e:
@@ -177,7 +179,8 @@ def convert_metastock_to_df() -> pd.DataFrame:
         try:
             print("Processing", row["symbol"], "…")
             tick = metastock_read(row["filename"], extra_buffer=50)
-            tick = tick.sort_index().tail(50).reset_index(names="date")
+            tick = tick.sort_index()
+            tick = tick[tick.index >= cutoff].reset_index(names="date")
             tick["symbol"] = row["symbol"]
             frames.append(tick)
         except Exception as e:
@@ -193,7 +196,8 @@ def convert_metastock_to_df() -> pd.DataFrame:
         try:
             print("Processing", row["symbol"], "…")
             tick = metastock_read(row["filename"], extra_buffer=50)
-            tick = tick.sort_index().tail(50).reset_index(names="date")
+            tick = tick.sort_index()
+            tick = tick[tick.index >= cutoff].reset_index(names="date")
             tick["symbol"] = row["symbol"]
             frames.append(tick)
         except Exception as e:
@@ -211,14 +215,14 @@ def convert_metastock_to_df() -> pd.DataFrame:
 
 
 def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
-    """Merge OHLC upserts into a month-partitioned Delta table.
+    """Merge OHLC upserts into a year-partitioned Delta table.
 
-    Merges one month at a time. Because the table is partitioned by `month`,
-    Delta resolves each merge predicate (`target.month = '{month}'`) via the
-    transaction log — only that month's partition files are loaded, not the
+    Merges one year at a time. Because the table is partitioned by `year`,
+    Delta resolves each merge predicate (`target.year = '{year}'`) via the
+    transaction log — only that year's partition files are loaded, not the
     full table. This eliminates the OOM that occurred with an unpartitioned table.
 
-    Requires the table to be partitioned by `month` (run migrate_to_partitioned.py
+    Requires the table to be partitioned by `year` (run migrate_to_partitioned.py
     once to convert an existing unpartitioned table).
     """
     try:
@@ -227,24 +231,24 @@ def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
         df["date"] = pd.to_datetime(df["date"])
 
     df["key"]   = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
-    df["month"] = df["date"].dt.to_period("M").astype(str)   # e.g. "2026-04"
-    df = df[["key", "symbol", "date", "month", "open", "high", "low", "close", "volume"]]
+    df["year"] = df["date"].dt.year.astype(str)   # e.g. "2026"
+    df = df[["key", "symbol", "date", "year", "open", "high", "low", "close", "volume"]]
 
     storage_options = _get_delta_storage_options()
     dt = DeltaTable(destination, storage_options=storage_options)
 
-    months = sorted(df["month"].unique())
-    print(f"Merging {len(months)} month(s) into Delta …")
+    years = sorted(df["year"].unique())
+    print(f"Merging {len(years)} year(s) into Delta …")
 
-    for month in months:
-        month_df = df[df["month"] == month].copy()
+    for year in years:
+        year_df = df[df["year"] == year].copy()
 
         result = (
             dt.merge(
-                month_df,
-                # Partition predicate prunes all files outside this month's
+                year_df,
+                # Partition predicate prunes all files outside this year's
                 # partition directory — only ~N_symbols rows are loaded.
-                predicate=f"target.key == source.key AND target.month = '{month}'",
+                predicate=f"target.key == source.key AND target.year = '{year}'",
                 source_alias="source",
                 target_alias="target",
             )
@@ -254,8 +258,8 @@ def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
             )
             .execute()
         )
-        print(f"  {month}: {result}")
-        del month_df, result
+        print(f"  {year}: {result}")
+        del year_df, result
         gc.collect()
 
     del df

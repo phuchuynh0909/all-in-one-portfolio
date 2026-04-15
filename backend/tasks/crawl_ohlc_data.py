@@ -195,22 +195,22 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
     df = df[["key", "symbol", "date", "open", "high", "low", "close", "volume"]]
 
     df["key"]   = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
-    df["month"] = df["date"].dt.to_period("M").astype(str)
-    df = df[["key", "symbol", "date", "month", "open", "high", "low", "close", "volume"]]
+    df["year"] = df["date"].dt.year.astype(str)
+    df = df[["key", "symbol", "date", "year", "open", "high", "low", "close", "volume"]]
 
     storage_options = _get_delta_storage_options()
     dt = DeltaTable(destination, storage_options=storage_options)
 
-    months = sorted(df["month"].unique())
-    print(f"Merging {len(months)} month(s) into Delta …")
+    years = sorted(df["year"].unique())
+    print(f"Merging {len(years)} year(s) into Delta …")
 
-    for month in months:
-        month_df = df[df["month"] == month].copy()
+    for year in years:
+        year_df = df[df["year"] == year].copy()
 
         result = (
             dt.merge(
-                month_df,
-                predicate=f"target.key == source.key AND target.month = '{month}'",
+                year_df,
+                predicate=f"target.key == source.key AND target.year = '{year}'",
                 source_alias="source",
                 target_alias="target",
             )
@@ -220,8 +220,8 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
             )
             .execute()
         )
-        print(f"  {month}: {result}")
-        del month_df, result
+        print(f"  {year}: {result}")
+        del year_df, result
         gc.collect()
 
     del df
@@ -329,7 +329,8 @@ def convert_metastock_to_df() -> pd.DataFrame:
     """Convert a MetaStock file to a DataFrame."""
 
     max_days = 20
-    
+    cutoff   = pd.Timestamp.today().normalize() - pd.Timedelta(days=max_days)
+
     ## Get watchlist stock symbols
     with open(f"D:\\Projects\\trading_toolbox\\watchlist.csv", "r") as f:
         reader = csv.reader(f)
@@ -348,7 +349,8 @@ def convert_metastock_to_df() -> pd.DataFrame:
             fileName = row["filename"].iloc[0]
         try:
             tickDf = metastock_read(fileName, extra_buffer=50)
-            tickDf = tickDf.sort_index().tail(max_days).reset_index(names='date')
+            tickDf = tickDf.sort_index()
+            tickDf = tickDf[tickDf.index >= cutoff].reset_index(names='date')
             tickDf['symbol'] = row['symbol']
             frames.append(tickDf)
         except Exception as e:
@@ -363,7 +365,8 @@ def convert_metastock_to_df() -> pd.DataFrame:
         try:
             print("Processing " , row["symbol"], " ...")
             tickDf = metastock_read(row["filename"], extra_buffer=50)
-            tickDf = tickDf.sort_index().tail(50).reset_index(names='date')
+            tickDf = tickDf.sort_index()
+            tickDf = tickDf[tickDf.index >= cutoff].reset_index(names='date')
             tickDf['symbol'] = row['symbol']
             frames.append(tickDf)
         except Exception as e:
@@ -381,7 +384,8 @@ def convert_metastock_to_df() -> pd.DataFrame:
                 continue
             print("Processing " , row["symbol"], " ...")
             tickDf = metastock_read(row["filename"], extra_buffer=50)
-            tickDf = tickDf.sort_index().tail(50).reset_index(names='date')
+            tickDf = tickDf.sort_index()
+            tickDf = tickDf[tickDf.index >= cutoff].reset_index(names='date')
             tickDf['symbol'] = row['symbol']
             frames.append(tickDf)
         except Exception as e:

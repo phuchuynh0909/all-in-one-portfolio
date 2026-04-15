@@ -1,7 +1,7 @@
-"""One-time migration: rewrite existing Delta table with month partitioning.
+"""One-time migration: rewrite existing Delta table with year partitioning.
 
 Reads the existing unpartitioned table in batches of N rows to avoid OOM,
-then writes each batch to a new month-partitioned table.
+then writes each batch to a new year-partitioned table.
 
 After migration, point crawl_ohlc_data.py / sync_ohlc.py at the new path.
 
@@ -59,13 +59,13 @@ def migrate(src: str, dst: str, batch_size: int = 50_000) -> None:
         df = df.dropna(subset=["date"])
 
         # Add partition column
-        df["month"] = df["date"].dt.to_period("M").astype(str)   # "2024-04"
+        df["year"] = df["date"].dt.year.astype(str)   # "2024"
 
         # Ensure key column exists
         if "key" not in df.columns:
             df["key"] = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
 
-        cols = [c for c in ["key", "symbol", "date", "month", "open", "high", "low", "close", "volume"]
+        cols = [c for c in ["key", "symbol", "date", "year", "open", "high", "low", "close", "volume"]
                 if c in df.columns]
         df = df[cols]
 
@@ -76,7 +76,7 @@ def migrate(src: str, dst: str, batch_size: int = 50_000) -> None:
             dst,
             arrow_table,
             mode="overwrite" if first_write else "append",
-            partition_by=["month"],
+            partition_by=["year"],
             storage_options=storage_options,
             engine="rust",
             schema_mode="merge",
@@ -98,12 +98,12 @@ def migrate(src: str, dst: str, batch_size: int = 50_000) -> None:
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Migrate Delta table to month partitioning")
+    parser = argparse.ArgumentParser(description="Migrate Delta table to year partitioning")
     parser.add_argument("--src", default="s3://delta-table-storage/stocks",
                         help="Source (unpartitioned) Delta table path")
     parser.add_argument("--dst", default="s3://delta-table-storage/stocks-partitioned",
-                        help="Destination (month-partitioned) Delta table path")
-    parser.add_argument("--batch-size", type=int, default=50_000,
+                        help="Destination (year-partitioned) Delta table path")
+    parser.add_argument("--batch-size", type=int, default=1_000_000,
                         help="Rows per read batch (lower = less RAM, more batches)")
     args = parser.parse_args()
 
