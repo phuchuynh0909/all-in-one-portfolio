@@ -268,6 +268,7 @@ def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
             partition_by=["year"],
             storage_options=storage_options,
             engine="rust",
+            configuration={"delta.enableChangeDataFeed": "true"},
         )
         print(f"  Table created: {len(arrow_table):,} rows, partitions: {years}")
         del arrow_table
@@ -317,9 +318,12 @@ def sync_delta_cdf_to_clickhouse(
         == "true"
     )
     if not cdf_enabled:
-        raise RuntimeError(
-            "Delta CDF not enabled. Set 'delta.enableChangeDataFeed=true' on the table first."
-        )
+        print("CDF not enabled — enabling now and bookmarking current version.")
+        dt.alter.set_table_properties({"delta.enableChangeDataFeed": "true"})
+        # No CDF history exists before this point, so bookmark current version
+        # and let the next run pick up changes from here onwards.
+        _save_sync_state(state_path, {"last_synced_version": int(dt.version())})
+        return 0
 
     latest_version     = dt.version()
     state              = _load_sync_state(state_path)

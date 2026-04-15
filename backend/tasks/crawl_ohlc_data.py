@@ -219,6 +219,7 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
             partition_by=["year"],
             storage_options=storage_options,
             engine="rust",
+            configuration={"delta.enableChangeDataFeed": "true"},
         )
         print(f"  Table created: {len(arrow_table):,} rows, partitions: {years}")
         del arrow_table
@@ -270,9 +271,10 @@ def sync_delta_cdf_to_clickhouse(
     metadata = dt.metadata()
     cdf_enabled = str(metadata.configuration.get("delta.enableChangeDataFeed", "false")).lower() == "true"
     if not cdf_enabled:
-        raise RuntimeError(
-            "Delta CDF is not enabled. Set table property 'delta.enableChangeDataFeed=true' before using incremental sync."
-        )
+        print("CDF not enabled — enabling now and bookmarking current version.")
+        dt.alter.set_table_properties({"delta.enableChangeDataFeed": "true"})
+        _save_sync_state(state_path, {"last_synced_version": int(dt.version())})
+        return 0
 
     latest_version = dt.version()
     state = _load_sync_state(state_path)
