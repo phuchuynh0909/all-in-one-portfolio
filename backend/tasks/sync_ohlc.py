@@ -238,6 +238,9 @@ def convert_metastock_to_df(full_refresh: bool = False) -> pd.DataFrame:
     del frames
     gc.collect()
     result["volume"] = result["volume"].astype("float64")
+    for col in ("open", "high", "low", "close"):
+        if col in result.columns:
+            result[col] = pd.to_numeric(result[col], errors="coerce").round(2)
     return result
 
 

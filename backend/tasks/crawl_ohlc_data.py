@@ -346,7 +346,6 @@ def sync_to_clickhouse(df: pd.DataFrame) -> int:
     return inserted
 
 @task
-@task
 def convert_metastock_to_df(full_refresh: bool = False) -> pd.DataFrame:
     """Convert MetaStock files to a DataFrame.
 
@@ -434,6 +433,11 @@ def convert_metastock_to_df(full_refresh: bool = False) -> pd.DataFrame:
     gc.collect()
 
     all_symbol_ticker_df['volume'] = all_symbol_ticker_df['volume'].astype('float64')
+    for col in ('open', 'high', 'low', 'close'):
+        if col in all_symbol_ticker_df.columns:
+            all_symbol_ticker_df[col] = pd.to_numeric(
+                all_symbol_ticker_df[col], errors='coerce'
+            ).round(2)
     return all_symbol_ticker_df
 
 @flow(log_prints=True)
