@@ -1,5 +1,6 @@
-from typing import Any, Generator, Sequence
+from typing import Any
 from pathlib import Path
+import gc
 from prefect import flow, task
 # from metastock2pd import metastock_read, metastock_read_master, metastock_emaster
 from custom_metastock2pd import metastock_read, metastock_read_master, metastock_emaster, metastock_xmaster
@@ -7,7 +8,6 @@ from custom_metastock2pd import metastock_read, metastock_read_master, metastock
 import os
 import pandas as pd
 import csv
-import math
 import json
 from itertools import chain
 from os.path import isfile, join
@@ -31,15 +31,17 @@ def get_dir_list(dir_path):
 
 def get_df_emaster(dir_path) -> pd.DataFrame:
     list_dir = get_dir_list(dir_path)
-    df = pd.DataFrame()
+    parts: list[pd.DataFrame] = []
     for folder in list_dir:
         folder_path = os.path.join(dir_path, folder)
         if os.path.isdir(folder_path):
-            dfTmp = metastock_read_master(folder_path, encoding='latin1')
-            df = pd.concat([df, dfTmp])
+            df_tmp = metastock_read_master(folder_path, encoding='latin1')
+            parts.append(df_tmp)
         else:
             print("Not a folder: ", folder_path)
-    return df
+    if not parts:
+        return pd.DataFrame()
+    return pd.concat(parts, ignore_index=True)
 
 def _get_env(name: str, default: str) -> str:
     return os.getenv(name, default)
@@ -75,54 +77,58 @@ def _save_sync_state(state_path: str, state: dict[str, Any]) -> None:
         json.dump(state, f)
 
 def _normalize_cdf_to_ohlc_df(cdf_df: pd.DataFrame) -> pd.DataFrame:
-    normalized_input = pd.DataFrame(cdf_df).copy()
-    if normalized_input.empty:
-        return normalized_input
+    if cdf_df.empty:
+        return cdf_df
 
+    normalized_input = cdf_df
     if "_change_type" in normalized_input.columns:
         normalized_input = normalized_input[
             normalized_input["_change_type"].isin(["insert", "update_postimage"])
-        ].copy()
+        ]
 
     required_cols = ["date", "symbol", "open", "high", "low", "close", "volume"]
     missing = [col for col in required_cols if col not in normalized_input.columns]
     if missing:
         raise ValueError(f"CDF output missing required columns: {missing}")
 
-    normalized = pd.DataFrame(normalized_input[required_cols]).copy()
+    normalized = normalized_input[required_cols].copy()
     normalized["date"] = pd.to_datetime(normalized["date"], errors="coerce")
     for col in ["open", "high", "low", "close", "volume"]:
         normalized[col] = pd.to_numeric(normalized[col], errors="coerce")
     normalized = normalized.dropna(subset=required_cols)
     return normalized
 
-def _insert_ohlc_df_to_clickhouse(df: pd.DataFrame) -> int:
+def _insert_ohlc_df_to_clickhouse(df: pd.DataFrame, batch_size: int = 50000) -> int:
+    """Insert OHLC rows without materializing the full table as a Python tuple list."""
     database = _get_env("CLICKHOUSE_DB", "default")
     table = _get_env("CLICKHOUSE_OHLC_EOD_TABLE", "ohlc_eod")
     client = _get_ch_client()
     _ensure_ohlc_table_exists(client, database, table)
 
-    rows: list[tuple] = [
-        (
-            pd.to_datetime(r[0]).date(),
-            str(r[1]),
-            float(r[2]),
-            float(r[3]),
-            float(r[4]),
-            float(r[5]),
-            float(r[6]),
-        )
-        for r in df.itertuples(index=False, name=None)
-    ]
-
     inserted = 0
-    for batch in _iter_batches(rows, batch_size=50000) or []:
+    n = len(df)
+    for start in range(0, n, batch_size):
+        chunk = df.iloc[start : start + batch_size]
+        rows = [
+            (
+                pd.to_datetime(r[0]).date(),
+                str(r[1]),
+                float(r[2]),
+                float(r[3]),
+                float(r[4]),
+                float(r[5]),
+                float(r[6]),
+            )
+            for r in chunk.itertuples(index=False, name=None)
+        ]
+        if not rows:
+            continue
         client.execute(
             f"INSERT INTO {database}.{table} (date, symbol, open, high, low, close, volume) VALUES",
-            batch,
+            rows,
             types_check=False,
         )
-        inserted += len(batch)
+        inserted += len(rows)
     return inserted
 
 def _delta_table_to_dataframe(dt: DeltaTable) -> pd.DataFrame:
@@ -131,16 +137,6 @@ def _delta_table_to_dataframe(dt: DeltaTable) -> pd.DataFrame:
     if callable(to_pandas_fn):
         return pd.DataFrame(to_pandas_fn())
     return pd.DataFrame(arrow_table)
-
-def _iter_batches(rows: Sequence[tuple], batch_size: int = 50000) -> Generator[list[tuple], None, None]:
-    total = len(rows)
-    if total == 0:
-        return
-    num_batches = math.ceil(total / batch_size)
-    for i in range(num_batches):
-        start = i * batch_size
-        end = min(start + batch_size, total)
-        yield list(rows[start:end])
 
 def _normalize_ohlc_df(df: pd.DataFrame) -> pd.DataFrame:
     normalized = df.copy()
@@ -176,45 +172,73 @@ def _ensure_ohlc_table_exists(client: Client, database: str, table: str) -> None
         """
     )
 
+def _env_flag(name: str, default: str = "false") -> bool:
+    return _get_env(name, default).lower() in {"1", "true", "yes", "y"}
+
+
 @task
 def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storage/stocks") -> None:
-    """Sync data to Delta table"""
+    """Merge OHLC upserts into Delta.
+
+    Vacuum + optimize.compact() are **off by default**: they rewrite large parts of the table and
+    routinely OOM incremental syncs. Enable with DELTA_SYNC_RUN_VACUUM / DELTA_SYNC_RUN_OPTIMIZE,
+    or run maintenance in a separate scheduled job.
+    """
 
     # Transform date column to datetime
-    # Parse date with explicit format for YYYYMMDD
     try:
-        df['date'] = pd.to_datetime(df['date'], format='%Y%m%d')
+        df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
     except ValueError:
-        # Fallback to automatic parsing if format doesn't match
-        df['date'] = pd.to_datetime(df['date'])
+        df["date"] = pd.to_datetime(df["date"])
 
-    df['key'] = df["symbol"] + "_" + df['date'].dt.strftime('%Y-%m-%d')
-    # Create a new column 'key' by concatenating 'symbol' and formatted 'date']
-
-    ## select only the columns we need
-    df = pd.DataFrame(df[["key", "symbol", "date", "open", "high", "low", "close", "volume"]]).copy()
+    df["key"] = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
+    df = df[
+        ["key", "symbol", "date", "open", "high", "low", "close", "volume"]
+    ].copy()
 
     storage_options = _get_delta_storage_options()
-
-    # print(destination)
     dt = DeltaTable(destination, storage_options=storage_options)
-    result = dt.merge(df, 
+    result = (
+        dt.merge(
+            df,
             predicate="target.key == source.key",
             source_alias="source",
-            target_alias="target"
-    ) \
-        .when_not_matched_insert_all() \
-        .when_matched_update_all(predicate="target.key == source.key " \
-            "AND target.volume != source.volume AND target.close != source.close")\
+            target_alias="target",
+        )
+        .when_not_matched_insert_all()
+        .when_matched_update_all(
+            predicate="target.key == source.key "
+            "AND target.volume != source.volume AND target.close != source.close"
+        )
         .execute()
+    )
     print(result)
 
-    ## vacuum the table
-    vacum_result = dt.vacuum(retention_hours=24, dry_run=False, enforce_retention_duration=False)
-    print(vacum_result)
+    # Drop merge inputs before optional heavy maintenance so peak RSS stays lower.
+    del df
+    del result
+    gc.collect()
 
-    compact = dt.optimize.compact()
-    print(compact)
+    run_vacuum = _env_flag("DELTA_SYNC_RUN_VACUUM", "false")
+    run_optimize = _env_flag("DELTA_SYNC_RUN_OPTIMIZE", "false")
+
+    if run_vacuum:
+        vacum_result = dt.vacuum(
+            retention_hours=24, dry_run=False, enforce_retention_duration=False
+        )
+        print(vacum_result)
+        gc.collect()
+
+    if run_optimize:
+        compact = dt.optimize.compact()
+        print(compact)
+        gc.collect()
+
+    if not run_vacuum and not run_optimize:
+        print(
+            "Delta vacuum/optimize skipped (default). Set DELTA_SYNC_RUN_VACUUM=true "
+            "and/or DELTA_SYNC_RUN_OPTIMIZE=true if you need maintenance this run."
+        )
 
 @task(log_prints=True)
 def sync_delta_cdf_to_clickhouse(
@@ -241,7 +265,10 @@ def sync_delta_cdf_to_clickhouse(
     if last_synced_version is None and full_load_on_first_run:
         snapshot_df = _delta_table_to_dataframe(dt)
         normalized_snapshot = _normalize_ohlc_df(snapshot_df)
+        del snapshot_df
         inserted = _insert_ohlc_df_to_clickhouse(normalized_snapshot)
+        del normalized_snapshot
+        gc.collect()
         _save_sync_state(state_path, {"last_synced_version": int(latest_version)})
         print(
             f"First run full load enabled. Inserted {inserted} rows and set last_synced_version={latest_version}"
@@ -263,7 +290,9 @@ def sync_delta_cdf_to_clickhouse(
             cdf_df = pd.DataFrame(to_pandas_fn())
         else:
             cdf_df = pd.DataFrame(cdf_arrow)
+    del cdf_arrow, cdf_reader
     normalized = _normalize_cdf_to_ohlc_df(cdf_df)
+    del cdf_df
 
     if normalized.empty:
         _save_sync_state(state_path, {"last_synced_version": int(latest_version)})
@@ -271,6 +300,8 @@ def sync_delta_cdf_to_clickhouse(
         return 0
 
     inserted = _insert_ohlc_df_to_clickhouse(normalized)
+    del normalized
+    gc.collect()
 
     _save_sync_state(state_path, {"last_synced_version": int(latest_version)})
     print(f"Synced Delta CDF versions {start_version}..{latest_version} into ClickHouse: {inserted} rows")
@@ -278,33 +309,10 @@ def sync_delta_cdf_to_clickhouse(
 
 @task(log_prints=True)
 def sync_to_clickhouse(df: pd.DataFrame) -> int:
+    normalized = _normalize_ohlc_df(df)
+    inserted = _insert_ohlc_df_to_clickhouse(normalized)
     database = _get_env("CLICKHOUSE_DB", "default")
     table = _get_env("CLICKHOUSE_OHLC_EOD_TABLE", "ohlc_eod")
-    client = _get_ch_client()
-    _ensure_ohlc_table_exists(client, database, table)
-
-    normalized = _normalize_ohlc_df(df)
-    rows: list[tuple] = [
-        (
-            pd.to_datetime(r[0]).date(),
-            str(r[1]),
-            float(r[2]),
-            float(r[3]),
-            float(r[4]),
-            float(r[5]),
-            float(r[6]),
-        )
-        for r in normalized.itertuples(index=False, name=None)
-    ]
-
-    inserted = 0
-    for batch in _iter_batches(rows, batch_size=50000) or []:
-        client.execute(
-            f"INSERT INTO {database}.{table} (date, symbol, open, high, low, close, volume) VALUES",
-            batch,
-            types_check=False,
-        )
-        inserted += len(batch)
     print(f"Inserted {inserted} rows into ClickHouse table {database}.{table}")
     return inserted
 
@@ -317,12 +325,14 @@ def convert_metastock_to_df() -> pd.DataFrame:
     with open(f"D:\\Projects\\trading_toolbox\\watchlist.csv", "r") as f:
         reader = csv.reader(f)
         watchlist = list(chain.from_iterable(reader))
-    all_symbol_ticker_df = pd.DataFrame()
+    # Append per-symbol frames then concat once — repeated pd.concat in a loop copies O(n²) data.
+    frames: list[pd.DataFrame] = []
 
     DNSE_STOCK_DIR = "D:\\dnse\\eod\\stock"
     emaster_df = get_df_emaster(DNSE_STOCK_DIR)
     df = emaster_df.query('symbol in @watchlist')
-    for index, row in df.iterrows():
+    del emaster_df
+    for _, row in df.iterrows():
         print("Processing " , row["symbol"], " ...")
         fileName = row["filename"]
         if isinstance(fileName, pd.Series):
@@ -331,29 +341,31 @@ def convert_metastock_to_df() -> pd.DataFrame:
             tickDf = metastock_read(fileName, extra_buffer=50)
             tickDf = tickDf.sort_index().tail(50).reset_index(names='date')
             tickDf['symbol'] = row['symbol']
-            all_symbol_ticker_df = pd.concat([all_symbol_ticker_df, tickDf])
+            frames.append(tickDf)
         except Exception as e:
             print(e)
             print("Cannot read file: ", fileName)
+    del df
 
     # Convert index data
     DNSE_INDEX_DIR = "D:\\dnse\\eod\\index"
     emaster_index_df = metastock_emaster(DNSE_INDEX_DIR)
-    for index, row in emaster_index_df.iterrows():
+    for _, row in emaster_index_df.iterrows():
         try:
             print("Processing " , row["symbol"], " ...")
             tickDf = metastock_read(row["filename"], extra_buffer=50)
             tickDf = tickDf.sort_index().tail(50).reset_index(names='date')
             tickDf['symbol'] = row['symbol']
-            all_symbol_ticker_df = pd.concat([all_symbol_ticker_df, tickDf])
+            frames.append(tickDf)
         except Exception as e:
             print(e)
             print("Cannot read file: ", row["filename"])
+    del emaster_index_df
 
     # Get Index data from Fdata
     FDATA_INDEX_DIR = "D:\\fdata_ami\\MetaStock\\EOD\\Chi so"
     emaster_index_df = metastock_read_master(FDATA_INDEX_DIR)
-    for index, row in emaster_index_df.iterrows():
+    for _, row in emaster_index_df.iterrows():
         try:
             # skip specific index symbols
             if row["symbol"] in ["VNINDEX", "VN30"]:
@@ -362,10 +374,17 @@ def convert_metastock_to_df() -> pd.DataFrame:
             tickDf = metastock_read(row["filename"], extra_buffer=50)
             tickDf = tickDf.sort_index().tail(50).reset_index(names='date')
             tickDf['symbol'] = row['symbol']
-            all_symbol_ticker_df = pd.concat([all_symbol_ticker_df, tickDf])
+            frames.append(tickDf)
         except Exception as e:
             print(e)
             print("Cannot read file: ", row["filename"])
+    del emaster_index_df
+
+    if not frames:
+        return pd.DataFrame()
+    all_symbol_ticker_df = pd.concat(frames, ignore_index=True)
+    del frames
+    gc.collect()
 
     all_symbol_ticker_df['volume'] = all_symbol_ticker_df['volume'].astype('float64')
     return all_symbol_ticker_df
