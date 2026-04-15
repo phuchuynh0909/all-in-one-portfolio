@@ -29,6 +29,17 @@ def _get_env(name: str, default: str) -> str:
 def _env_flag(name: str, default: str = "false") -> bool:
     return _get_env(name, default).lower() in {"1", "true", "yes", "y"}
 
+
+def _delta_merge_update_predicate_sql() -> str:
+    """Float != stays true after Parquet round-trip; use abs thresholds for updates."""
+    eps_c = float(_get_env("DELTA_MERGE_CLOSE_EPSILON", "1e-4"))
+    eps_v = float(_get_env("DELTA_MERGE_VOLUME_EPSILON", "1.0"))
+    return (
+        f"(abs(target.close - source.close) > {eps_c}) OR "
+        f"(abs(target.volume - source.volume) > {eps_v})"
+    )
+
+
 def _get_delta_storage_options() -> dict[str, str]:
     return {
         "AWS_ACCESS_KEY_ID":        "CzOwnLkEDXQy951AOqes",
@@ -254,6 +265,9 @@ def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
 
     Requires the table to be partitioned by `year` (run migrate_to_partitioned.py
     once to convert an existing unpartitioned table).
+
+    Updates use epsilon compares (``DELTA_MERGE_CLOSE_EPSILON``, ``DELTA_MERGE_VOLUME_EPSILON``)
+    so repeated merges do not rewrite rows for floating-point noise.
     """
     try:
         df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
@@ -307,9 +321,7 @@ def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
                     target_alias="target",
                 )
                 .when_not_matched_insert_all()
-                .when_matched_update_all(
-                    predicate="target.volume != source.volume OR target.close != source.close"
-                )
+                .when_matched_update_all(predicate=_delta_merge_update_predicate_sql())
                 .execute()
             )
             print(f"  {year}: {result}")

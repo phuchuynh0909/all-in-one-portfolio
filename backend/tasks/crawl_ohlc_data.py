@@ -48,7 +48,7 @@ def _get_env(name: str, default: str) -> str:
 
 def _get_ch_client() -> Client:
     host = _get_env("CLICKHOUSE_HOST", "localhost")
-    port = int(_get_env("CLICKHOUSE_PORT", "9000"))   # native TCP port (not HTTP 8123)
+    port = int(_get_env("CLICKHOUSE_PORT", "9010"))   # native TCP port (not HTTP 8123)
     user = _get_env("CLICKHOUSE_USER", "kyostyle1")
     password = _get_env("CLICKHOUSE_PASSWORD", "kyostyle1")
     database = _get_env("CLICKHOUSE_DB", "default")
@@ -184,9 +184,28 @@ def _env_flag(name: str, default: str = "false") -> bool:
     return _get_env(name, default).lower() in {"1", "true", "yes", "y"}
 
 
+def _delta_merge_update_predicate_sql() -> str:
+    """Predicate for when_matched_update_all.
+
+    Strict ``!=`` on float columns is almost never false after Parquet/Delta round-trip, so the
+    same run keeps updating thousands of rows. Only ``open/high/low/close`` are rounded at load;
+    ``volume`` is especially noisy. Use abs-diff thresholds (override via env).
+    """
+    eps_c = float(_get_env("DELTA_MERGE_CLOSE_EPSILON", "1e-4"))
+    eps_v = float(_get_env("DELTA_MERGE_VOLUME_EPSILON", "1.0"))
+    return (
+        f"(abs(target.close - source.close) > {eps_c}) OR "
+        f"(abs(target.volume - source.volume) > {eps_v})"
+    )
+
+
 @task
 def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storage/stocks") -> None:
     """Merge OHLC upserts into Delta.
+
+    Matched-row updates use ``_delta_merge_update_predicate_sql()`` (epsilon compares) so
+    repeat runs do not rewrite rows for float bit noise. Tune ``DELTA_MERGE_CLOSE_EPSILON`` /
+    ``DELTA_MERGE_VOLUME_EPSILON``.
 
     Vacuum + optimize.compact() are **off by default**: they rewrite large parts of the table and
     routinely OOM incremental syncs. Enable with DELTA_SYNC_RUN_VACUUM / DELTA_SYNC_RUN_OPTIMIZE,
@@ -244,9 +263,7 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
                     target_alias="target",
                 )
                 .when_not_matched_insert_all()
-                .when_matched_update_all(
-                    predicate="target.volume != source.volume OR target.close != source.close"
-                )
+                .when_matched_update_all(predicate=_delta_merge_update_predicate_sql())
                 .execute()
             )
             print(f"  {year}: {result}")
