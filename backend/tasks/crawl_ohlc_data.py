@@ -192,9 +192,7 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
         df["date"] = pd.to_datetime(df["date"])
 
     df["key"] = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
-    df = df[
-        ["key", "symbol", "date", "open", "high", "low", "close", "volume"]
-    ].copy()
+    df = df[["key", "symbol", "date", "open", "high", "low", "close", "volume"]]
 
     storage_options = _get_delta_storage_options()
     dt = DeltaTable(destination, storage_options=storage_options)
@@ -319,12 +317,13 @@ def sync_to_clickhouse(df: pd.DataFrame) -> int:
 @task
 def convert_metastock_to_df() -> pd.DataFrame:
     """Convert a MetaStock file to a DataFrame."""
+
+    max_days = 20
     
     ## Get watchlist stock symbols
-    watchlist = []
     with open(f"D:\\Projects\\trading_toolbox\\watchlist.csv", "r") as f:
         reader = csv.reader(f)
-        watchlist = list(chain.from_iterable(reader))
+        watchlist: list[str] = list(chain.from_iterable(reader))
     # Append per-symbol frames then concat once — repeated pd.concat in a loop copies O(n²) data.
     frames: list[pd.DataFrame] = []
 
@@ -339,7 +338,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
             fileName = row["filename"].iloc[0]
         try:
             tickDf = metastock_read(fileName, extra_buffer=50)
-            tickDf = tickDf.sort_index().tail(50).reset_index(names='date')
+            tickDf = tickDf.sort_index().tail(max_days).reset_index(names='date')
             tickDf['symbol'] = row['symbol']
             frames.append(tickDf)
         except Exception as e:
@@ -396,8 +395,11 @@ def sync_ticker_delta_table_pipeline(destination: str = "s3://delta-table-storag
     # Task 1: Collect data from MetaStock files
     df = convert_metastock_to_df()
 
-    # Task 2: Sync data to Delta table
+    # Task 2: Sync data to Delta table — release df immediately after so merge
+    # buffers don't overlap with the original frame in memory.
     sync_to_delta_table(df=df, destination=destination)
+    del df
+    gc.collect()
 
     # Task 3: Sync only Delta CDF changes to ClickHouse
     sync_delta_cdf_to_clickhouse(destination=destination)
