@@ -207,6 +207,9 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
     repeat runs do not rewrite rows for float bit noise. Tune ``DELTA_MERGE_CLOSE_EPSILON`` /
     ``DELTA_MERGE_VOLUME_EPSILON``.
 
+    Reload ``DeltaTable`` each year and dedupe source on ``key`` — reusing one handle after
+    ``execute()`` can insert duplicate keys and inflate merge metrics across runs.
+
     Vacuum + optimize.compact() are **off by default**: they rewrite large parts of the table and
     routinely OOM incremental syncs. Enable with DELTA_SYNC_RUN_VACUUM / DELTA_SYNC_RUN_OPTIMIZE,
     or run maintenance in a separate scheduled job.
@@ -253,7 +256,13 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
     else:
         print(f"Merging {len(years)} year(s) into Delta …")
         for year in years:
-            year_df = df[df["year"] == year].copy()
+            # Reload after each execute() — stale handles cause duplicate-key inserts on later merges.
+            dt = DeltaTable(destination, storage_options=storage_options)
+            year_df = df.loc[df["year"] == year].copy()
+            n_before = len(year_df)
+            year_df = year_df.drop_duplicates(subset=["key"], keep="last")
+            if len(year_df) < n_before:
+                print(f"  {year}: dropped {n_before - len(year_df)} duplicate key row(s) in source")
 
             result = (
                 dt.merge(
@@ -267,7 +276,7 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
                 .execute()
             )
             print(f"  {year}: {result}")
-            del year_df, result
+            del year_df, result, dt
             gc.collect()
 
     del df

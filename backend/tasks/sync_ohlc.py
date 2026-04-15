@@ -268,6 +268,10 @@ def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
 
     Updates use epsilon compares (``DELTA_MERGE_CLOSE_EPSILON``, ``DELTA_MERGE_VOLUME_EPSILON``)
     so repeated merges do not rewrite rows for floating-point noise.
+
+    Each year reloads ``DeltaTable`` after the previous ``execute()``; reusing one handle makes the
+    next merge see an old snapshot and can insert duplicate keys (``num_target_rows_updated`` /
+    ``num_output_rows`` ballooning ~2× per run). Source rows are ``drop_duplicates`` on ``key``.
     """
     try:
         df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
@@ -311,7 +315,15 @@ def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
     else:
         print(f"Merging {len(years)} year(s) into Delta …")
         for year in years:
-            year_df = df[df["year"] == year].copy()
+            # Reload table each iteration — stale DeltaTable handles after execute() can see an old
+            # snapshot; the next merge may insert rows that already exist → duplicate keys and metrics
+            # that grow ~2x every run (when_not_matched_insert_all fires incorrectly).
+            dt = DeltaTable(destination, storage_options=storage_options)
+            year_df = df.loc[df["year"] == year].copy()
+            n_before = len(year_df)
+            year_df = year_df.drop_duplicates(subset=["key"], keep="last")
+            if len(year_df) < n_before:
+                print(f"  {year}: dropped {n_before - len(year_df)} duplicate key row(s) in source")
 
             result = (
                 dt.merge(
@@ -325,7 +337,7 @@ def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
                 .execute()
             )
             print(f"  {year}: {result}")
-            del year_df, result
+            del year_df, result, dt
             gc.collect()
 
     del df
