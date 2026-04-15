@@ -143,14 +143,25 @@ def _delta_table_to_dataframe(dt: DeltaTable) -> pd.DataFrame:
 
 # ── pipeline steps ────────────────────────────────────────────────────────────
 
-def convert_metastock_to_df() -> pd.DataFrame:
+def convert_metastock_to_df(full_refresh: bool = False) -> pd.DataFrame:
     max_days = 20
-    cutoff   = pd.Timestamp.today().normalize() - pd.Timedelta(days=max_days)
+    cutoff   = None if full_refresh else pd.Timestamp.today().normalize() - pd.Timedelta(days=max_days)
+
+    if full_refresh:
+        print("Full refresh — loading all available history (no cutoff)")
+    else:
+        print(f"Incremental — loading from {cutoff.date()} onwards")
 
     with open(r"D:\Projects\trading_toolbox\watchlist.csv", "r") as f:
         watchlist: list[str] = list(chain.from_iterable(csv.reader(f)))
 
     frames: list[pd.DataFrame] = []
+
+    def _apply_cutoff(tick: pd.DataFrame) -> pd.DataFrame:
+        tick = tick.sort_index()
+        if cutoff is not None:
+            tick = tick[tick.index >= cutoff]
+        return tick.reset_index(names="date")
 
     # DNSE stocks
     DNSE_STOCK_DIR = r"D:\dnse\eod\stock"
@@ -164,8 +175,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
             filename = filename.iloc[0]
         try:
             tick = metastock_read(filename, extra_buffer=50)
-            tick = tick.sort_index()
-            tick = tick[tick.index >= cutoff].reset_index(names="date")
+            tick = _apply_cutoff(tick)
             tick["symbol"] = row["symbol"]
             frames.append(tick)
         except Exception as e:
@@ -179,8 +189,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
         try:
             print("Processing", row["symbol"], "…")
             tick = metastock_read(row["filename"], extra_buffer=50)
-            tick = tick.sort_index()
-            tick = tick[tick.index >= cutoff].reset_index(names="date")
+            tick = _apply_cutoff(tick)
             tick["symbol"] = row["symbol"]
             frames.append(tick)
         except Exception as e:
@@ -196,8 +205,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
         try:
             print("Processing", row["symbol"], "…")
             tick = metastock_read(row["filename"], extra_buffer=50)
-            tick = tick.sort_index()
-            tick = tick[tick.index >= cutoff].reset_index(names="date")
+            tick = _apply_cutoff(tick)
             tick["symbol"] = row["symbol"]
             frames.append(tick)
         except Exception as e:
@@ -234,44 +242,68 @@ def sync_to_delta_table(df: pd.DataFrame, destination: str) -> None:
     df["year"] = df["date"].dt.year.astype(str)   # e.g. "2026"
     df = df[["key", "symbol", "date", "year", "open", "high", "low", "close", "volume"]]
 
+    import pyarrow as pa
+    from deltalake.writer import write_deltalake
+    from deltalake.exceptions import TableNotFoundError
+
     storage_options = _get_delta_storage_options()
-    dt = DeltaTable(destination, storage_options=storage_options)
+
+    try:
+        dt = DeltaTable(destination, storage_options=storage_options)
+        table_exists = True
+    except TableNotFoundError:
+        table_exists = False
+        print(f"Table not found at {destination} — will create on first write.")
 
     years = sorted(df["year"].unique())
-    print(f"Merging {len(years)} year(s) into Delta …")
 
-    for year in years:
-        year_df = df[df["year"] == year].copy()
-
-        result = (
-            dt.merge(
-                year_df,
-                # Partition predicate prunes all files outside this year's
-                # partition directory — only ~N_symbols rows are loaded.
-                predicate=f"target.key == source.key AND target.year = '{year}'",
-                source_alias="source",
-                target_alias="target",
-            )
-            .when_not_matched_insert_all()
-            .when_matched_update_all(
-                predicate="target.volume != source.volume OR target.close != source.close"
-            )
-            .execute()
+    if not table_exists:
+        # Table doesn't exist yet: create it with year partitioning in one shot.
+        print(f"Creating year-partitioned table with {len(df):,} rows …")
+        arrow_table = pa.Table.from_pandas(df, preserve_index=False)
+        write_deltalake(
+            destination,
+            arrow_table,
+            mode="overwrite",
+            partition_by=["year"],
+            storage_options=storage_options,
+            engine="rust",
         )
-        print(f"  {year}: {result}")
-        del year_df, result
-        gc.collect()
+        print(f"  Table created: {len(arrow_table):,} rows, partitions: {years}")
+        del arrow_table
+    else:
+        print(f"Merging {len(years)} year(s) into Delta …")
+        for year in years:
+            year_df = df[df["year"] == year].copy()
+
+            result = (
+                dt.merge(
+                    year_df,
+                    predicate=f"target.key == source.key AND target.year = '{year}'",
+                    source_alias="source",
+                    target_alias="target",
+                )
+                .when_not_matched_insert_all()
+                .when_matched_update_all(
+                    predicate="target.volume != source.volume OR target.close != source.close"
+                )
+                .execute()
+            )
+            print(f"  {year}: {result}")
+            del year_df, result
+            gc.collect()
 
     del df
     gc.collect()
 
-    if _env_flag("DELTA_SYNC_RUN_VACUUM"):
-        print(dt.vacuum(retention_hours=24, dry_run=False, enforce_retention_duration=False))
-        gc.collect()
-
-    if _env_flag("DELTA_SYNC_RUN_OPTIMIZE"):
-        print(dt.optimize.compact())
-        gc.collect()
+    if _env_flag("DELTA_SYNC_RUN_VACUUM") or _env_flag("DELTA_SYNC_RUN_OPTIMIZE"):
+        dt = DeltaTable(destination, storage_options=storage_options)
+        if _env_flag("DELTA_SYNC_RUN_VACUUM"):
+            print(dt.vacuum(retention_hours=24, dry_run=False, enforce_retention_duration=False))
+            gc.collect()
+        if _env_flag("DELTA_SYNC_RUN_OPTIMIZE"):
+            print(dt.optimize.compact())
+            gc.collect()
 
 
 def sync_delta_cdf_to_clickhouse(
@@ -349,9 +381,9 @@ def _get_df_emaster(dir_path: str) -> pd.DataFrame:
 
 # ── main ──────────────────────────────────────────────────────────────────────
 
-def main(destination: str = "s3://delta-table-storage/stocks") -> None:
+def main(destination: str = "s3://delta-table-storage/stocks", full_refresh: bool = False) -> None:
     print(f"=== Step 1: Read MetaStock files ===")
-    df = convert_metastock_to_df()
+    df = convert_metastock_to_df(full_refresh=full_refresh)
     print(f"Loaded {len(df):,} rows")
 
     print(f"\n=== Step 2: Merge into Delta table ({destination}) ===")
@@ -370,5 +402,10 @@ if __name__ == "__main__":
         default="s3://delta-table-storage/stocks",
         help="Delta table S3 path",
     )
+    parser.add_argument(
+        "--full-refresh",
+        action="store_true",
+        help="Load all available history instead of the last max_days",
+    )
     args = parser.parse_args()
-    main(destination=args.destination)
+    main(destination=args.destination, full_refresh=args.full_refresh)

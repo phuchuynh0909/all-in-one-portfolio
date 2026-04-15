@@ -185,68 +185,79 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
     or run maintenance in a separate scheduled job.
     """
 
-    # Transform date column to datetime
+    import pyarrow as pa
+    from deltalake.writer import write_deltalake
+    from deltalake.exceptions import TableNotFoundError
+
     try:
         df["date"] = pd.to_datetime(df["date"], format="%Y%m%d")
     except ValueError:
         df["date"] = pd.to_datetime(df["date"])
 
-    df["key"] = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
-    df = df[["key", "symbol", "date", "open", "high", "low", "close", "volume"]]
-
-    df["key"]   = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
+    df["key"]  = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
     df["year"] = df["date"].dt.year.astype(str)
     df = df[["key", "symbol", "date", "year", "open", "high", "low", "close", "volume"]]
 
     storage_options = _get_delta_storage_options()
-    dt = DeltaTable(destination, storage_options=storage_options)
+
+    try:
+        dt = DeltaTable(destination, storage_options=storage_options)
+        table_exists = True
+    except TableNotFoundError:
+        table_exists = False
+        print(f"Table not found at {destination} — will create on first write.")
 
     years = sorted(df["year"].unique())
-    print(f"Merging {len(years)} year(s) into Delta …")
 
-    for year in years:
-        year_df = df[df["year"] == year].copy()
-
-        result = (
-            dt.merge(
-                year_df,
-                predicate=f"target.key == source.key AND target.year = '{year}'",
-                source_alias="source",
-                target_alias="target",
-            )
-            .when_not_matched_insert_all()
-            .when_matched_update_all(
-                predicate="target.volume != source.volume OR target.close != source.close"
-            )
-            .execute()
+    if not table_exists:
+        print(f"Creating year-partitioned table with {len(df):,} rows …")
+        arrow_table = pa.Table.from_pandas(df, preserve_index=False)
+        write_deltalake(
+            destination,
+            arrow_table,
+            mode="overwrite",
+            partition_by=["year"],
+            storage_options=storage_options,
+            engine="rust",
         )
-        print(f"  {year}: {result}")
-        del year_df, result
-        gc.collect()
+        print(f"  Table created: {len(arrow_table):,} rows, partitions: {years}")
+        del arrow_table
+    else:
+        print(f"Merging {len(years)} year(s) into Delta …")
+        for year in years:
+            year_df = df[df["year"] == year].copy()
+
+            result = (
+                dt.merge(
+                    year_df,
+                    predicate=f"target.key == source.key AND target.year = '{year}'",
+                    source_alias="source",
+                    target_alias="target",
+                )
+                .when_not_matched_insert_all()
+                .when_matched_update_all(
+                    predicate="target.volume != source.volume OR target.close != source.close"
+                )
+                .execute()
+            )
+            print(f"  {year}: {result}")
+            del year_df, result
+            gc.collect()
 
     del df
     gc.collect()
 
-    run_vacuum = _env_flag("DELTA_SYNC_RUN_VACUUM", "false")
+    run_vacuum  = _env_flag("DELTA_SYNC_RUN_VACUUM",  "false")
     run_optimize = _env_flag("DELTA_SYNC_RUN_OPTIMIZE", "false")
 
-    if run_vacuum:
-        vacum_result = dt.vacuum(
-            retention_hours=24, dry_run=False, enforce_retention_duration=False
-        )
-        print(vacum_result)
-        gc.collect()
-
-    if run_optimize:
-        compact = dt.optimize.compact()
-        print(compact)
-        gc.collect()
-
-    if not run_vacuum and not run_optimize:
-        print(
-            "Delta vacuum/optimize skipped (default). Set DELTA_SYNC_RUN_VACUUM=true "
-            "and/or DELTA_SYNC_RUN_OPTIMIZE=true if you need maintenance this run."
-        )
+    if run_vacuum or run_optimize:
+        dt = DeltaTable(destination, storage_options=storage_options)
+        if run_vacuum:
+            print(dt.vacuum(retention_hours=24, dry_run=False, enforce_retention_duration=False))
+            gc.collect()
+        if run_optimize:
+            print(dt.optimize.compact())
+            gc.collect()
 
 @task(log_prints=True)
 def sync_delta_cdf_to_clickhouse(
@@ -325,11 +336,21 @@ def sync_to_clickhouse(df: pd.DataFrame) -> int:
     return inserted
 
 @task
-def convert_metastock_to_df() -> pd.DataFrame:
-    """Convert a MetaStock file to a DataFrame."""
+@task
+def convert_metastock_to_df(full_refresh: bool = False) -> pd.DataFrame:
+    """Convert MetaStock files to a DataFrame.
 
+    Args:
+        full_refresh: When True, load all available history with no date cutoff.
+                      When False (default), load only the last max_days of data.
+    """
     max_days = 20
-    cutoff   = pd.Timestamp.today().normalize() - pd.Timedelta(days=max_days)
+    cutoff   = None if full_refresh else pd.Timestamp.today().normalize() - pd.Timedelta(days=max_days)
+
+    if full_refresh:
+        print("Full refresh — loading all available history (no cutoff)")
+    else:
+        print(f"Incremental — loading from {cutoff.date()} onwards")
 
     ## Get watchlist stock symbols
     with open(f"D:\\Projects\\trading_toolbox\\watchlist.csv", "r") as f:
@@ -337,6 +358,12 @@ def convert_metastock_to_df() -> pd.DataFrame:
         watchlist: list[str] = list(chain.from_iterable(reader))
     # Append per-symbol frames then concat once — repeated pd.concat in a loop copies O(n²) data.
     frames: list[pd.DataFrame] = []
+
+    def _apply_cutoff(tick: pd.DataFrame) -> pd.DataFrame:
+        tick = tick.sort_index()
+        if cutoff is not None:
+            tick = tick[tick.index >= cutoff]
+        return tick.reset_index(names='date')
 
     DNSE_STOCK_DIR = "D:\\dnse\\eod\\stock"
     emaster_df = get_df_emaster(DNSE_STOCK_DIR)
@@ -349,8 +376,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
             fileName = row["filename"].iloc[0]
         try:
             tickDf = metastock_read(fileName, extra_buffer=50)
-            tickDf = tickDf.sort_index()
-            tickDf = tickDf[tickDf.index >= cutoff].reset_index(names='date')
+            tickDf = _apply_cutoff(tickDf)
             tickDf['symbol'] = row['symbol']
             frames.append(tickDf)
         except Exception as e:
@@ -365,8 +391,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
         try:
             print("Processing " , row["symbol"], " ...")
             tickDf = metastock_read(row["filename"], extra_buffer=50)
-            tickDf = tickDf.sort_index()
-            tickDf = tickDf[tickDf.index >= cutoff].reset_index(names='date')
+            tickDf = _apply_cutoff(tickDf)
             tickDf['symbol'] = row['symbol']
             frames.append(tickDf)
         except Exception as e:
@@ -384,8 +409,7 @@ def convert_metastock_to_df() -> pd.DataFrame:
                 continue
             print("Processing " , row["symbol"], " ...")
             tickDf = metastock_read(row["filename"], extra_buffer=50)
-            tickDf = tickDf.sort_index()
-            tickDf = tickDf[tickDf.index >= cutoff].reset_index(names='date')
+            tickDf = _apply_cutoff(tickDf)
             tickDf['symbol'] = row['symbol']
             frames.append(tickDf)
         except Exception as e:
@@ -403,11 +427,14 @@ def convert_metastock_to_df() -> pd.DataFrame:
     return all_symbol_ticker_df
 
 @flow(log_prints=True)
-def sync_ticker_delta_table_pipeline(destination: str = "s3://delta-table-storage/stocks") -> None:
+def sync_ticker_delta_table_pipeline(
+    destination: str = "s3://delta-table-storage/stocks",
+    full_refresh: bool = False,
+) -> None:
     """Flow: ETL for syncing tickers"""
 
     # Task 1: Collect data from MetaStock files
-    df = convert_metastock_to_df()
+    df = convert_metastock_to_df(full_refresh=full_refresh)
 
     # Task 2: Sync data to Delta table — release df immediately after so merge
     # buffers don't overlap with the original frame in memory.
