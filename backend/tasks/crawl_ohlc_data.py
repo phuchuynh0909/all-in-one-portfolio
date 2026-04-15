@@ -194,19 +194,25 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
     df["key"] = df["symbol"] + "_" + df["date"].dt.strftime("%Y-%m-%d")
     df = df[["key", "symbol", "date", "open", "high", "low", "close", "volume"]]
 
+    # Bound the target scan to only files that can contain the incoming dates.
+    # Without this, Delta reads the entire table into memory to resolve the key
+    # join — the main cause of OOM when the table grows beyond a few GB.
+    min_date = df["date"].min().strftime("%Y-%m-%d")
+
     storage_options = _get_delta_storage_options()
     dt = DeltaTable(destination, storage_options=storage_options)
     result = (
         dt.merge(
             df,
-            predicate="target.key == source.key",
+            predicate=f"target.key == source.key AND target.date >= '{min_date}'",
             source_alias="source",
             target_alias="target",
         )
         .when_not_matched_insert_all()
         .when_matched_update_all(
-            predicate="target.key == source.key "
-            "AND target.volume != source.volume AND target.close != source.close"
+            # Outer join already guarantees key equality; only update rows
+            # where the data actually changed (volume OR close revised).
+            predicate="target.volume != source.volume OR target.close != source.close"
         )
         .execute()
     )
