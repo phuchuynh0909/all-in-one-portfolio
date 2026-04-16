@@ -100,16 +100,13 @@ def read_delta_by_date(
     storage_options = _get_delta_storage_options()
     dt = DeltaTable(src, storage_options=storage_options)
 
-    from_str = str(from_date)
-    to_str   = str(to_date)
-
     print(f"Reading Delta: {src}")
-    print(f"  Date range : {from_str} → {to_str}")
+    print(f"  Date range : {from_date} → {to_date}")
 
     df = dt.to_pandas(
         filters=[
-            ("date", ">=", from_str),
-            ("date", "<=", to_str),
+            ("date", ">=", pd.Timestamp(from_date)),
+            ("date", "<=", pd.Timestamp(to_date)),
         ],
         columns=["date", "symbol", "open", "high", "low", "close", "volume"],
     )
