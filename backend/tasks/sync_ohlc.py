@@ -53,10 +53,10 @@ def _get_delta_storage_options() -> dict[str, str]:
 
 def _get_ch_client() -> Client:
     # clickhouse_driver uses the native binary protocol — must point at the
-    # native TCP port (default 9000, here 9010). Port 8123 is HTTP-only and
+    # native TCP port (default 9010, here 9010). Port 8123 is HTTP-only and
     # will cause EOFError on the handshake.
     host = _get_env("CLICKHOUSE_HOST", "localhost")
-    port = int(_get_env("CLICKHOUSE_PORT", "9000"))   # native TCP port (not HTTP 8123)
+    port = int(_get_env("CLICKHOUSE_PORT", "9010"))   # native TCP port (not HTTP 8123)
     try:
         return Client(
             host     = host,
