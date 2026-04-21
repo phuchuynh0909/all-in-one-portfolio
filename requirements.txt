@@ -17,6 +17,7 @@ protobuf>=4.25.0
 # Data processing
 pandas>=2.1.0
 numpy>=1.24.0
+statsmodels>=0.14.6
 
 # Background tasks
 fastapi-cache2[redis]>=0.2.1

@@ -45,6 +45,7 @@ fastapi-cache2>=0.2.1
 # Portfolio optimization
 PyPortfolioOpt>=1.5.4
 scipy>=1.10.0
+statsmodels>=0.14.6
 
 # Task orchestration
 prefect>=2.14.0

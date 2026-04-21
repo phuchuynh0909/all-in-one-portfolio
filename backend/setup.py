@@ -12,5 +12,6 @@ setup(
         "pandas>=2.2.1",
         "deltalake>=0.15.3",
         "pycryptodome>=3.19.0",
+        "statsmodels>=0.14.1",
     ],
 )

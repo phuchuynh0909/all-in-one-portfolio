@@ -20,6 +20,7 @@ from .smart_money_flow import (
 from .garch_regime import garch_volatility, ms_garch_regime, garch_volatility_nb
 from .spread_gmm import ohlc_gmm_spread, rolling_ohlc_gmm_spread, ohlc_gmm_spread_nb
 from .garch_regime_multifeature import ms_regime_multifeature, regime_multifeature_nb
+from .markov_kama_regime import markov_kama_regime, markov_kama_regime_table
 
 __all__ = ['avwap', 'trailing_sl', 'hawkes_BVC',
            'calculate_kalman_zscore', 'calculate_yz_volatility', 'avwap_func_nb',
@@ -30,4 +31,5 @@ __all__ = ['avwap', 'trailing_sl', 'hawkes_BVC',
            'coerce_smf_basis_type', 'build_smart_money_flow_kwargs',
            'garch_volatility', 'ms_garch_regime', 'garch_volatility_nb',
            'ohlc_gmm_spread', 'rolling_ohlc_gmm_spread', 'ohlc_gmm_spread_nb',
-           'ms_regime_multifeature', 'regime_multifeature_nb']
+           'ms_regime_multifeature', 'regime_multifeature_nb',
+           'markov_kama_regime', 'markov_kama_regime_table']

@@ -23,6 +23,7 @@ from app.api.v1.routes.price_alerts import router as price_alerts_router
 from app.api.v1.routes.chat import router as chat_router
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.future import router as future_router
+from app.api.v1.routes.cw import router as cw_router
 
 
 def get_app() -> FastAPI:
@@ -68,6 +69,7 @@ def get_app() -> FastAPI:
     app.include_router(chat_router, prefix=api_prefix)
     app.include_router(auth_router, prefix=api_prefix)
     app.include_router(future_router, prefix=api_prefix)
+    app.include_router(cw_router, prefix=api_prefix)
 
     # Create a custom cache decorator that logs hits and misses
     def cache_with_logging(**cache_kwargs):

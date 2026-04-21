@@ -28,6 +28,7 @@ import Live from './pages/Live';
 import Alerts from './pages/Alerts';
 import ChatAgents from './pages/ChatAgents';
 import Future from './pages/Future';
+import CW from './pages/CW';
 
 const theme = createTheme({
   palette: {
@@ -61,6 +62,7 @@ const navItems = [
   { path: '/scanner', label: 'Scanner' },
   { path: '/live', label: '🔴 Live' },
   { path: '/future', label: '⚡ Future' },
+  { path: '/cw', label: 'CW' },
   { path: '/alerts', label: '🔔 Alerts' },
   { path: '/chat', label: '🤖 Chat' },
 ];
@@ -130,6 +132,7 @@ export default function App() {
               <Route path="/scanner" element={<Scanner />} />
               <Route path="/live" element={<Live />} />
               <Route path="/future" element={<Future />} />
+              <Route path="/cw" element={<CW />} />
               <Route path="/alerts" element={<Alerts />} />
               <Route
                 path="/chat"

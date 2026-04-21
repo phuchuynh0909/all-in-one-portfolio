@@ -46,26 +46,6 @@ export default function BacktestVisualization() {
 
   return (
     <Container maxWidth="xl" sx={{ py: 4 }}>
-      <Box sx={{ mb: 4 }}>
-        <Typography
-          variant="h4"
-          sx={{
-            fontWeight: 700,
-            background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 50%, #a855f7 100%)',
-            backgroundClip: 'text',
-            WebkitBackgroundClip: 'text',
-            WebkitTextFillColor: 'transparent',
-            mb: 1,
-          }}
-        >
-          Backtest Visualization
-        </Typography>
-        <Typography variant="body2" sx={{ color: 'text.secondary' }}>
-          Backtesting.py interactive chart
-          {symbols.length > 0 && ` • ${symbols.length} symbols available`}
-        </Typography>
-      </Box>
-
       <Paper
         sx={{
           p: 2,
@@ -145,7 +125,7 @@ export default function BacktestVisualization() {
             <iframe
               title={`Backtest plot for ${data.symbol}`}
               srcDoc={data.html}
-              style={{ width: '100%', height: 720, border: 'none' }}
+              style={{ width: '100%', height: 900, border: 'none' }}
               sandbox="allow-scripts allow-same-origin"
             />
           </Box>

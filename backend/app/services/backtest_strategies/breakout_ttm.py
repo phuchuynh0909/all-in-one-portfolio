@@ -4,7 +4,7 @@ import pandas as pd
 import talib
 from app.services.indicators.trailing_sl import trailing_sl
 from app.services.indicators.smart_money_flow import smart_money_flow
-from app.services.indicators.garch_regime_multifeature import ms_regime_multifeature
+from app.services.indicators.markov_kama_regime import markov_kama_regime
 
 import numba
 @numba.njit
@@ -156,8 +156,6 @@ class BreakoutTTMV1StrategyBT(Strategy):
         close = np.asarray(self.data.Close, dtype=np.float64)
         high  = np.asarray(self.data.High,  dtype=np.float64)
         low   = np.asarray(self.data.Low,   dtype=np.float64)
-        open_ = np.asarray(self.data.Open,  dtype=np.float64)
-        vol   = np.asarray(self.data.Volume, dtype=np.float64)
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
@@ -187,17 +185,15 @@ class BreakoutTTMV1StrategyBT(Strategy):
         self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
         self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
 
-        # ── Multi-Feature Regime Detection ───────────────────────────────────
-        regime, regime_prob, regime_features = ms_regime_multifeature(
-            close, open_, high, low, vol,
-            spread_window=21, vol_window=21,
-        )
+        regime, low_var_prob, high_var_prob, regime_trend, _ = markov_kama_regime(close)
 
         self.I(_identity, ttms,              name='TTMS',        overlay=False, color='#4fc3f7')
         self.I(_identity, kama,              name='KAMA',        overlay=True,  color='#f7c59f')
         # self.I(_identity, flat.astype(float),name='KAMA Flat',   overlay=False, color='#3ddc84')
-        self.I(_identity, regime.astype(np.float64), name='MS Regime', overlay=False, color='#ff7043')
-        self.I(_identity, regime_prob,       name='MS Regime Prob', overlay=False, color='#9c27b0')
+        self.I(_identity, regime.astype(np.float64), name='MK Regime', overlay=False, color='#ff7043')
+        # self.I(_identity, low_var_prob,      name='MK Low Var Prob', overlay=False, color='#22c55e')
+        # self.I(_identity, high_var_prob,     name='MK High Var Prob', overlay=False, color='#ef4444')
+        # self.I(_identity, regime_trend,      name='MK Trend', overlay=False, color='#9c27b0')
         self.I(_identity, self.buy_signal.astype(float), name='Buy Signal', overlay=False, color='blue')
         self.I(_identity, self.atr_trail,    name='ATR Trail',   overlay=True,  color='red')
 
@@ -253,8 +249,6 @@ class BreakoutTTMV1bStrategyBT(Strategy):
         close = np.asarray(self.data.Close, dtype=np.float64)
         high  = np.asarray(self.data.High,  dtype=np.float64)
         low   = np.asarray(self.data.Low,   dtype=np.float64)
-        open_ = np.asarray(self.data.Open,  dtype=np.float64)
-        vol   = np.asarray(self.data.Volume, dtype=np.float64)
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
@@ -282,11 +276,7 @@ class BreakoutTTMV1bStrategyBT(Strategy):
         self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
         self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
 
-        # ── Multi-Feature Regime Detection (same windows as V1) ─────────────
-        regime, regime_prob, regime_features = ms_regime_multifeature(
-            close, open_, high, low, vol,
-            spread_window=21, vol_window=21,
-        )
+        regime, low_var_prob, high_var_prob, regime_trend, _ = markov_kama_regime(close)
 
         # Entry: same as V1 + price must be above ATR trailing (uptrend confirmed)
         above_trail = close > self.atr_trail
@@ -297,8 +287,10 @@ class BreakoutTTMV1bStrategyBT(Strategy):
         self.I(_identity, kama,               name='KAMA',       overlay=True,  color='#f7c59f')
         # self.I(_identity, flat.astype(float), name='KAMA Flat',  overlay=False, color='#3ddc84')
         # self.I(_identity, above_trail.astype(float), name='Above ATR Trail', overlay=False, color='#b39ddb')
-        self.I(_identity, regime.astype(np.float64), name='MS Regime', overlay=False, color='#ff7043')
-        self.I(_identity, regime_prob,        name='MS Regime Prob', overlay=False, color='#9c27b0')
+        self.I(_identity, regime.astype(np.float64), name='MK Regime', overlay=False, color='#ff7043')
+        # self.I(_identity, low_var_prob,       name='MK Low Var Prob', overlay=False, color='#22c55e')
+        # self.I(_identity, high_var_prob,      name='MK High Var Prob', overlay=False, color='#ef4444')
+        # self.I(_identity, regime_trend,       name='MK Trend', overlay=False, color='#9c27b0')
         self.I(_identity, self.buy_signal.astype(float), name='Buy Signal',  overlay=False, color='blue')
         self.I(_identity, self.atr_trail,     name='ATR Trail',  overlay=True,  color='red')
 
@@ -422,11 +414,7 @@ class BreakoutTTMV1cStrategyBT(Strategy):
         self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
         self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
 
-        # ── Multi-Feature Regime Detection ───────────────────────────────────
-        regime, regime_prob, regime_features = ms_regime_multifeature(
-            close, open_, high, low, vol,
-            spread_window=21, vol_window=21,
-        )
+        regime, low_var_prob, high_var_prob, regime_trend, _ = markov_kama_regime(close)
 
         # ── Chart indicators ──────────────────────────────────────────────────
         self.I(_identity, ttms,                     name='TTMS',        overlay=False, color='#4fc3f7')
@@ -436,9 +424,10 @@ class BreakoutTTMV1cStrategyBT(Strategy):
         self.I(_identity, smf_basis,                name='SMF Basis',   overlay=True,  color='#f39c12')
         self.I(_identity, smf_upper,                name='SMF Upper',   overlay=True,  color='#3498db')
         self.I(_identity, smf_lower,                name='SMF Lower',   overlay=True,  color='#e74c3c')
-        self.I(_identity, regime.astype(np.float64), name='MS Regime', overlay=False, color='#ff7043')
-        self.I(_identity, regime_prob,              name='MS Regime Prob', overlay=False, color='#9c27b0')
-        self.I(_identity, regime_features[:, 1],   name='Spread (GMM)',   overlay=False, color='#ff9800')
+        self.I(_identity, regime.astype(np.float64), name='MK Regime', overlay=False, color='#ff7043')
+        # self.I(_identity, low_var_prob,             name='MK Low Var Prob', overlay=False, color='#22c55e')
+        # self.I(_identity, high_var_prob,            name='MK High Var Prob', overlay=False, color='#ef4444')
+        # self.I(_identity, regime_trend,             name='MK Trend', overlay=False, color='#9c27b0')
         self.I(_identity, self.buy_signal.astype(float), name='Buy Signal', overlay=False, color='blue')
         self.I(_identity, self.atr_trail,           name='ATR Trail',   overlay=True,  color='red')
 
@@ -694,8 +683,6 @@ class BreakoutTTMStrategyBT(Strategy):
         close = np.asarray(self.data.Close.round(2), dtype=np.float64)
         high = np.asarray(self.data.High.round(2), dtype=np.float64)
         low = np.asarray(self.data.Low.round(2), dtype=np.float64)
-        open_ = np.asarray(self.data.Open, dtype=np.float64)
-        vol = np.asarray(self.data.Volume, dtype=np.float64)
 
         ## Squeeze
         bb_indicator = talib.BBANDS(close, timeperiod=self.bb_period, nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=self.matype)
@@ -729,11 +716,7 @@ class BreakoutTTMStrategyBT(Strategy):
         atr_trailing_real = talib.ATR(high, low, close, timeperiod=10)
         self.atr_trailing = trailing_sl(close, atr_trailing_real, atr_multiplier=1.9)
 
-        # Multi-Feature Regime Detection
-        regime, regime_prob, regime_features = ms_regime_multifeature(
-            close, open_, high, low, vol,
-            spread_window=21, vol_window=21,
-        )
+        regime, low_var_prob, high_var_prob, regime_trend, _ = markov_kama_regime(close)
 
         self.I(
             lambda: (ttms,),
@@ -756,12 +739,10 @@ class BreakoutTTMStrategyBT(Strategy):
         )
         self.I(_identity, entry_3, name='Entry 3', overlay=False, color='orange')
         self.I(_identity, squeeze_diff_np > 0, name='Squeeze Diff', overlay=False, color='green')
-        self.I(_identity, regime.astype(np.float64), name='MS Regime', overlay=False, color='#ff7043')
-        self.I(_identity, regime_prob, name='MS Regime Prob', overlay=False, color='#9c27b0')
-        self.I(_identity, regime_features[:, 1], name='Spread (GMM)', overlay=False, color='#ff9800')
-        self.I(_identity, regime_features[:, 2], name='Volume Ratio', overlay=False, color='#03a9f4')
-        self.I(_identity, regime_features[:, 3], name='Realized Vol', overlay=False, color='#e91e63')
-        self.I(_identity, regime_features[:, 4], name='Abs Ret MA', overlay=False, color='#4caf50')
+        self.I(_identity, regime.astype(np.float64), name='MK Regime', overlay=False, color='#ff7043')
+        # self.I(_identity, low_var_prob, name='MK Low Var Prob', overlay=False, color='#22c55e')
+        # self.I(_identity, high_var_prob, name='MK High Var Prob', overlay=False, color='#ef4444')
+        # self.I(_identity, regime_trend, name='MK Trend', overlay=False, color='#9c27b0')
         self.I(_identity, self.buy_signal, name='Buy Signal', overlay=False, color='blue')
         self.I(_identity, self.atr_trailing, name='ATR Trailing Stop', overlay=True, color='red')
 
