@@ -82,7 +82,7 @@ services:
     build:
       context: ./worker
       dockerfile: Dockerfile
-    command: ["python", "workers/hawkes_signal_worker.py"]
+    command: ["python", "-m", "workers.hawkes_signal_worker"]
     volumes:
       - worker_state:/app/state_dir
     env_file:

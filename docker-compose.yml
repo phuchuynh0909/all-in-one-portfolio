@@ -74,7 +74,7 @@ services:
 
   worker-hawkes:
     build: ./worker
-    command: ["python", "workers/hawkes_signal_worker.py"]
+    command: ["python", "-m", "workers.hawkes_signal_worker"]
     volumes:
       - ./worker:/app
       - worker_state:/app/state_dir
