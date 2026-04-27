@@ -29,3 +29,4 @@ paho-mqtt>=1.6.0
 # Optional: Development and testing
 # pytest>=7.4.0
 # pytest-asyncio>=0.21.0
+vectorbt>=0.26.2
