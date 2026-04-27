@@ -11,16 +11,16 @@ This pipeline uses two workers to sync tick data. The `tick_ingest.py` script ru
 cd worker
 
 # 1. Create ClickHouse table (one-time setup — skip if table already exists)
-python -c "from config import config; from clickhouse_client import get_clickhouse_client; from model import TICKS_CREATE_TABLE_DDL; c = get_clickhouse_client(); c.query(TICKS_CREATE_TABLE_DDL.format(database=config.clickhouse.database))"
+python -c "from config import config; from infra.clickhouse_client import get_clickhouse_client; from model import TICKS_CREATE_TABLE_DDL; c = get_clickhouse_client(); c.query(TICKS_CREATE_TABLE_DDL.format(database=config.clickhouse.database))"
 
 # 2. Start stream ingestor (keep running in background)
-python -m bytewax.run tick_ingest:flow
+python -m bytewax.run workers.tick_ingest:flow
 
 # 3. Run reconciler (at or after 15:00 ICT)
-python reconciler.py
+python workers/reconciler.py
 
 # 4. Run full pipeline with audit (recommended)
-python run_pipeline.py
+python scripts/run_pipeline.py
 ```
 
 ## Normal Daily Operations
@@ -29,20 +29,20 @@ The stream ingestor runs continuously during the trading session. Run the reconc
 All scripts must be run from inside the `worker/` directory (or with `PYTHONPATH=worker`).
 
 Cron example:
-`0 8 * * 1-5 cd /path/to/worker && python reconciler.py` (08:00 UTC = 15:00 ICT)
+`0 8 * * 1-5 cd /path/to/worker && python workers/reconciler.py` (08:00 UTC = 15:00 ICT)
 
 ## Rerun and Recovery
 ```bash
 cd worker
 
 # Rerun reconciler for today (force bypass schedule guard)
-python reconciler.py --force
+python workers/reconciler.py --force
 
 # Rerun for a specific past date
-python reconciler.py --date 2026-03-25 --force
+python workers/reconciler.py --date 2026-03-25 --force
 
 # Preview what reconciler would do (no writes)
-python reconciler.py --dry-run --force
+python workers/reconciler.py --dry-run --force
 ```
 
 ## Audit and Monitoring
@@ -50,13 +50,13 @@ python reconciler.py --dry-run --force
 cd worker
 
 # Check for duplicates and merge health
-python run_audit.py --date 2026-03-26
+python scripts/run_audit.py --date 2026-03-26
 
 # Save evidence to file
-python run_audit.py --date 2026-03-26 --output ../.sisyphus/evidence/task-11-audit-happy.txt
+python scripts/run_audit.py --date 2026-03-26 --output ../.sisyphus/evidence/task-11-audit-happy.txt
 
 # Full pipeline with audit
-python run_pipeline.py --date 2026-03-26
+python scripts/run_pipeline.py --date 2026-03-26
 ```
 
 ## Rollback and Disable

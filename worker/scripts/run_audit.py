@@ -11,8 +11,8 @@ import logging
 import sys
 from datetime import date
 
-from audit_queries import run_duplicate_audit, run_merge_health
-from clickhouse_client import get_clickhouse_client
+from infra.audit_queries import run_duplicate_audit, run_merge_health
+from infra.clickhouse_client import get_clickhouse_client
 from config import config
 
 

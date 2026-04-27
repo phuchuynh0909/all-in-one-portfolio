@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 
 # State file path: worker/state_dir/reconciler_run_state.json
-STATE_FILE = Path(__file__).parent / "state_dir" / "reconciler_run_state.json"
+STATE_FILE = Path(__file__).parent.parent / "state_dir" / "reconciler_run_state.json"
 
 
 def _ensure_state_dir() -> None:

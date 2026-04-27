@@ -17,10 +17,10 @@ import orjson
 from bytewax.dataflow import Dataflow
 import bytewax.operators as op
 
-from mqtt_input import MqttSource
-from mock_clickhouse import MockClickHouseSource
+from infra.mqtt_input import MqttSource
+from infra.mock_clickhouse import MockClickHouseSource
 from config import config
-from telegram_notifier import AlertNotification, send_alert_sync
+from infra.telegram_notifier import AlertNotification, send_alert_sync
 
 
 @dataclass

@@ -1,6 +1,6 @@
 """Quick test script for Telegram notifications."""
 import asyncio
-from telegram_notifier import AlertNotification, send_alert_notification
+from infra.telegram_notifier import AlertNotification, send_alert_notification
 
 async def test():
     alert = AlertNotification(

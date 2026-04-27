@@ -8,15 +8,15 @@ from zoneinfo import ZoneInfo
 
 import requests
 
-from audit_queries import ReconcilerMetrics, print_metrics
-from clickhouse_client import get_clickhouse_client
+from infra.audit_queries import ReconcilerMetrics, print_metrics
+from infra.clickhouse_client import get_clickhouse_client
 from config import config
-from dnse_client import DNSEClient
+from infra.dnse_client import DNSEClient
 from model import TICKS_CLICKHOUSE_TABLE
 from prefect import flow, task
-from reconciler_schedule import mark_run_done, should_run_today
-from tick_contract import normalize_tick, to_clickhouse_tuple
-from vn30f_symbol import symbol_for_date
+from infra.reconciler_schedule import mark_run_done, should_run_today
+from core.tick_contract import normalize_tick, to_clickhouse_tuple
+from core.vn30f_symbol import symbol_for_date
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
@@ -334,8 +334,8 @@ if __name__ == "__main__":
         main()
     else:
         reconciler_pipeline.from_source(
-            source=str(Path(__file__).parent),
-            entrypoint="reconciler.py:reconciler_pipeline",
+            source=str(Path(__file__).parent.parent),
+            entrypoint="workers/reconciler.py:reconciler_pipeline",
         ).deploy(
             name="tick-reconciler-daily",
             work_pool_name="my-worker",
@@ -343,8 +343,8 @@ if __name__ == "__main__":
         )
 
         backfill_pipeline.from_source(
-            source=str(Path(__file__).parent),
-            entrypoint="reconciler.py:backfill_pipeline",
+            source=str(Path(__file__).parent.parent),
+            entrypoint="workers/reconciler.py:backfill_pipeline",
         ).deploy(
             name="tick-reconciler-backfill",
             work_pool_name="my-worker",

@@ -19,11 +19,11 @@ import logging
 import sys
 from datetime import date
 
-from audit_queries import run_duplicate_audit, run_merge_health
-from clickhouse_client import get_clickhouse_client
+from infra.audit_queries import run_duplicate_audit, run_merge_health
+from infra.clickhouse_client import get_clickhouse_client
 from config import config
-from reconciler import run_reconciler
-from reconciler_schedule import get_last_run_date, should_run_today
+from workers.reconciler import run_reconciler
+from infra.reconciler_schedule import get_last_run_date, should_run_today
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"

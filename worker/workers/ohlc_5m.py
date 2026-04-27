@@ -28,10 +28,10 @@ def _get_env(name: str, default: str) -> str:
 
 
 def _get_ch_client():
-    host = _get_env("CLICKHOUSE_HOST", "localhost")
-    port = int(_get_env("CLICKHOUSE_PORT", "9010"))
-    username = _get_env("CLICKHOUSE_USER", "myuser")
-    password = _get_env("CLICKHOUSE_PASSWORD", "mypassword")
+    host = _get_env("CLICKHOUSE_HOST", "192.168.1.30")
+    port = int(_get_env("CLICKHOUSE_PORT", "8123"))
+    username = _get_env("CLICKHOUSE_USER", "kyostyle1")
+    password = _get_env("CLICKHOUSE_PASSWORD", "kyostyle1")
     database = _get_env("CLICKHOUSE_DB", "default")
     return clickhouse_connect.get_client(
         host=host,
@@ -176,7 +176,7 @@ def aggregate_ticks_to_ohlc_5m(
 
 @task(log_prints=True)
 def aggregate_session_to_ohlc_5m(session_date: str | None = None) -> int:
-    from vn30f_symbol import symbol_for_date as _sym
+    from core.vn30f_symbol import symbol_for_date as _sym
 
     if session_date is None:
         session_date = date.today().isoformat()
@@ -238,8 +238,8 @@ def _run_cli() -> None:
         from pathlib import Path
 
         tick_to_ohlc_5m_pipeline.from_source(
-            source=str(Path(__file__).parent),
-            entrypoint="ohlc_5m.py:tick_to_ohlc_5m_pipeline",
+            source=str(Path(__file__).parent.parent),
+            entrypoint="workers/ohlc_5m.py:tick_to_ohlc_5m_pipeline",
         ).deploy(
             name="vn30f1m-ohlc-5m",
             work_pool_name="my-worker",

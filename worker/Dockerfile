@@ -59,4 +59,4 @@ RUN mkdir -p /app/state_dir && chown -R appuser:appuser /app/state_dir
 USER appuser
 
 # Default command (can be overridden in docker-compose)
-CMD ["python", "-m", "bytewax.run", "price_alerts"]
+CMD ["python", "-m", "bytewax.run", "workers.price_alerts:flow"]
