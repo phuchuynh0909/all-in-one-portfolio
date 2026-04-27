@@ -1,7 +1,6 @@
 from datetime import datetime, timedelta
 from typing import Optional
 
-import math
 import numpy as np
 import pandas as pd
 from fastapi import APIRouter, Depends, Query
@@ -12,87 +11,48 @@ from app.db.clickhouse import get_clickhouse_client
 router = APIRouter(prefix="/future", tags=["future"])
 
 
-def _roofing_filter(
-    series: np.ndarray,
-    hp_period: int = 48,
-    lp_period: int = 2,
-) -> np.ndarray:
-    """
-    John Ehlers' Roofing Filter (Cycle Analytics for Traders, 2013)
-
-    Stage 1 – High-Pass (2-pole): removes cycles LONGER than hp_period
-    Stage 2 – Super Smoother (2-pole Butterworth): removes cycles SHORTER than lp_period
-    """
-    n = len(series)
-
-    angle_hp = math.radians(0.707 * 360 / hp_period)
-    alpha1 = (math.cos(angle_hp) + math.sin(angle_hp) - 1) / math.cos(angle_hp)
-    k1, k2, k3 = (1 - alpha1 / 2) ** 2, 2 * (1 - alpha1), (1 - alpha1) ** 2
-
-    hp = np.zeros(n)
-    for i in range(2, n):
-        hp[i] = (
-            k1 * (series[i] - 2 * series[i - 1] + series[i - 2])
-            + k2 * hp[i - 1]
-            - k3 * hp[i - 2]
-        )
-
-    a1 = math.exp(-math.sqrt(2) * math.pi / lp_period)
-    b1 = 2 * a1 * math.cos(math.radians(math.sqrt(2) * 180 / lp_period))
-    c2, c3 = b1, -(a1**2)
-    c1 = 1 - c2 - c3
-
-    ss = np.zeros(n)
-    for i in range(2, n):
-        ss[i] = c1 * (hp[i] + hp[i - 1]) / 2 + c2 * ss[i - 1] + c3 * ss[i - 2]
-
-    return ss
-
-
 def _compute_bsi(
     buy_vol: np.ndarray,
     sell_vol: np.ndarray,
     kappa: float,
-    hp_period: int,
-    lp_period: int,
-    min_periods: int = 10,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Compute BSI, roofing-filtered BSI, and expanding Z-score normalized BSI.
-
-    1. BSI[i]      = BSI[i-1]*exp(-kappa) + (buy_volume[i] - sell_volume[i])
-    2. bsi_rf[i]   = roofing_filter(BSI)  — detrended + smoothed
-    3. bsi_norm[i] = expanding Z-score of bsi_rf (NaN during warmup)
-
-    Returns (bsi, bsi_rf, bsi_norm).
-    """
+) -> np.ndarray:
+    """Hawkes BSI: BSI[i] = BSI[i-1]*exp(-kappa) + (buy_volume[i] - sell_volume[i])"""
     decay = np.exp(-kappa)
     dv = buy_vol.astype(float) - sell_vol.astype(float)
-
     bsi = np.empty_like(dv)
     val = 0.0
     for i in range(len(dv)):
         val = val * decay + dv[i]
         bsi[i] = val
-
-    bsi_rf = _roofing_filter(bsi, hp_period=hp_period, lp_period=lp_period)
-
-    s = pd.Series(bsi_rf)
-    exp_mean = s.expanding(min_periods=min_periods).mean()
-    exp_std = s.expanding(min_periods=min_periods).std()
-    bsi_norm = ((s - exp_mean) / exp_std).to_numpy()
-
-    return bsi, bsi_rf, bsi_norm
+    return bsi
 
 
-def _compute_kama(prices: np.ndarray, period: int) -> np.ndarray:
+def _compute_quantile_bands(
+    bsi: np.ndarray,
+    lookback: int = 200,
+    q_lo_pct: float = 5.0,
+    q_hi_pct: float = 95.0,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Rolling quantile bands (no lookahead) over the last `lookback` bars."""
+    s = pd.Series(bsi)
+    q_lo = s.rolling(lookback, min_periods=2).quantile(q_lo_pct / 100.0).to_numpy()
+    q_hi = s.rolling(lookback, min_periods=2).quantile(q_hi_pct / 100.0).to_numpy()
+    return q_lo, q_hi
+
+
+def _compute_kama(
+    prices: np.ndarray,
+    period: int = 10,
+    fast: int = 2,
+    slow: int = 30,
+) -> np.ndarray:
     n = len(prices)
     kama = np.full(n, np.nan)
     if n <= period:
         return kama
 
-    fast_sc = 2.0 / (2 + 1)
-    slow_sc = 2.0 / (30 + 1)
+    fast_sc = 2.0 / (fast + 1)
+    slow_sc = 2.0 / (slow + 1)
 
     kama[period - 1] = prices[period - 1]
     for i in range(period, n):
@@ -110,13 +70,15 @@ async def get_ohlc_5m(
     symbol: str,
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
-    kappa: float = Query(0.1),
-    hp_period: int = Query(48),
-    lp_period: int = Query(2),
+    kappa: float = Query(0.2),
+    quantile_lookback: int = Query(50),
+    q_lo_pct: float = Query(5.0),
+    q_hi_pct: float = Query(95.0),
+    kama_period: int = Query(20),
     ch: Client = Depends(get_clickhouse_client),
 ):
     """
-    Get 5-minute OHLC data with BSI indicators for a futures symbol.
+    Get 5-minute OHLC data with Hawkes BSI + rolling quantile bands for a futures symbol.
     """
     start_clause = ""
     end_clause = ""
@@ -148,7 +110,7 @@ async def get_ohlc_5m(
             "timestamps": [],
             "ohlc": {"open": [], "high": [], "low": [], "close": []},
             "volume": {"total": [], "buy": [], "sell": []},
-            "indicators": {"bsi": [], "bsi_rf": [], "bsi_norm": []},
+            "indicators": {"bsi": [], "q_lo": [], "q_hi": [], "kama": []},
         }
 
     timestamps = [r[0] for r in rows]
@@ -160,17 +122,16 @@ async def get_ohlc_5m(
     buy_vols = np.array([r[6] for r in rows], dtype=float)
     sell_vols = np.array([r[7] for r in rows], dtype=float)
 
-    bsi, bsi_rf, bsi_norm = _compute_bsi(
-        buy_vols,
-        sell_vols,
-        kappa=kappa,
-        hp_period=hp_period,
-        lp_period=lp_period,
+    bsi = _compute_bsi(buy_vols, sell_vols, kappa=kappa)
+    q_lo, q_hi = _compute_quantile_bands(
+        bsi,
+        lookback=quantile_lookback,
+        q_lo_pct=q_lo_pct,
+        q_hi_pct=q_hi_pct,
     )
 
     close_arr = np.array(closes, dtype=float)
-    kama_21 = _compute_kama(close_arr, period=21)
-    kama_200 = _compute_kama(close_arr, period=200)
+    kama = _compute_kama(close_arr, period=kama_period)
 
     def _safe(arr: np.ndarray) -> list:
         return [None if np.isnan(v) else float(v) for v in arr]
@@ -186,9 +147,8 @@ async def get_ohlc_5m(
         },
         "indicators": {
             "bsi": _safe(bsi),
-            "bsi_rf": _safe(bsi_rf),
-            "bsi_norm": _safe(bsi_norm),
-            "kama_21": _safe(kama_21),
-            "kama_200": _safe(kama_200),
+            "q_lo": _safe(q_lo),
+            "q_hi": _safe(q_hi),
+            "kama": _safe(kama),
         },
     }

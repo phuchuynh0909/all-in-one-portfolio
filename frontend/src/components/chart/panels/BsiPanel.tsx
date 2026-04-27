@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { LineSeries } from 'lightweight-charts';
+import { LineSeries, LineStyle } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { FutureOhlcResponse } from '../../../lib/services/future';
 
@@ -9,78 +9,88 @@ type BsiPanelProps = {
 };
 
 export default function BsiPanel({ chart, data }: BsiPanelProps) {
-    const bsiRfSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
-    const zeroLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const bsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+    const qLoSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+    const qHiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+    const zeroLineRef  = useRef<ISeriesApi<'Line'> | null>(null);
 
     useEffect(() => {
         if (!chart) return;
 
-        const bsiRfSeries = chart.addSeries(LineSeries, {
-            color: '#10a4f4',
-            lineWidth: 2,
-            priceFormat: {
-                type: 'custom',
-                formatter: (price: number) => price.toFixed(2),
-            },
-            title: 'BSI',
+        const sharedScale = {
             priceScaleId: 'right',
-        }, 1);
-        bsiRfSeriesRef.current = bsiRfSeries;
-
-        const defaultFixedLineConfig = {
-            priceScaleId: 'right',
-            priceLineVisible: true,
+            priceLineVisible: false,
             lastValueVisible: false,
             crosshairMarkerVisible: false,
         } as const;
 
+        const qHiSeries = chart.addSeries(LineSeries, {
+            ...sharedScale,
+            color: '#ef5350',
+            lineWidth: 2,
+            lineStyle: LineStyle.Dashed,
+            title: 'q_hi 95%',
+        }, 1);
+        qHiSeriesRef.current = qHiSeries;
+
+        const qLoSeries = chart.addSeries(LineSeries, {
+            ...sharedScale,
+            color: '#26a69a',
+            lineWidth: 2,
+            lineStyle: LineStyle.Dashed,
+            title: 'q_lo 5%',
+        }, 1);
+        qLoSeriesRef.current = qLoSeries;
+
+        const bsiSeries = chart.addSeries(LineSeries, {
+            color: '#10a4f4',
+            lineWidth: 2,
+            priceFormat: { type: 'custom', formatter: (p: number) => p.toFixed(0) },
+            title: 'Hawkes BSI',
+            priceScaleId: 'right',
+        }, 1);
+        bsiSeriesRef.current = bsiSeries;
+
         const zeroLine = chart.addSeries(LineSeries, {
-            color: 'rgba(156, 163, 175, 0.3)',
+            ...sharedScale,
+            color: 'rgba(156, 163, 175, 0.4)',
             lineWidth: 1,
-            ...defaultFixedLineConfig,
         }, 1);
         zeroLineRef.current = zeroLine;
 
         return () => {
             if (chart) {
-                try {
-                    if (bsiRfSeriesRef.current) {
-                        chart.removeSeries(bsiRfSeriesRef.current);
-                    }
-                    if (zeroLineRef.current) {
-                        chart.removeSeries(zeroLineRef.current);
-                    }
-                } catch (e) {
-                    console.warn('Error removing series:', e);
-                }
+                try { chart.removeSeries(bsiSeries);  } catch (_) {}
+                try { chart.removeSeries(qHiSeries);  } catch (_) {}
+                try { chart.removeSeries(qLoSeries);  } catch (_) {}
+                try { chart.removeSeries(zeroLine);   } catch (_) {}
             }
-            bsiRfSeriesRef.current = null;
-            zeroLineRef.current = null;
+            bsiSeriesRef.current = null;
+            qHiSeriesRef.current = null;
+            qLoSeriesRef.current = null;
+            zeroLineRef.current  = null;
         };
     }, [chart]);
 
     useEffect(() => {
-        if (!data || !data.timestamps) return;
+        if (!data?.timestamps) return;
 
-        const bsiRfData = data.timestamps
-            .map((ts, i) => {
-                const value = data.indicators.bsi[i];
-                if (value === null || value === undefined) return null;
-                return {
-                    time: (new Date(ts).getTime() / 1000) as UTCTimestamp,
-                    value: value,
-                };
-            })
-            .filter((item): item is { time: UTCTimestamp; value: number } => item !== null);
+        const toPoints = (values: (number | null)[]) =>
+            data.timestamps
+                .map((ts, i) => {
+                    const v = values[i];
+                    if (v === null || v === undefined) return null;
+                    return { time: (new Date(ts).getTime() / 1000) as UTCTimestamp, value: v };
+                })
+                .filter((p): p is { time: UTCTimestamp; value: number } => p !== null);
 
-        bsiRfSeriesRef.current?.setData(bsiRfData);
+        const bsiPoints = toPoints(data.indicators.bsi);
+        bsiSeriesRef.current?.setData(bsiPoints);
+        qHiSeriesRef.current?.setData(toPoints(data.indicators.q_hi));
+        qLoSeriesRef.current?.setData(toPoints(data.indicators.q_lo));
 
-        if (bsiRfData.length > 0) {
-            const zeroLineData = bsiRfData.map(item => ({
-                time: item.time,
-                value: 0,
-            }));
-            zeroLineRef.current?.setData(zeroLineData);
+        if (bsiPoints.length > 0) {
+            zeroLineRef.current?.setData(bsiPoints.map(p => ({ time: p.time, value: 0 })));
         }
     }, [data]);
 

@@ -9,56 +9,41 @@ type KamaPanelProps = {
 };
 
 export default function KamaPanel({ chart, data }: KamaPanelProps) {
-    const kama21Ref  = useRef<ISeriesApi<'Line'> | null>(null);
-    const kama200Ref = useRef<ISeriesApi<'Line'> | null>(null);
+    const kamaRef = useRef<ISeriesApi<'Line'> | null>(null);
 
     useEffect(() => {
         if (!chart) return;
 
-        const kama21 = chart.addSeries(LineSeries, {
+        const kama = chart.addSeries(LineSeries, {
             color: '#f97316',
             lineWidth: 1,
-            title: 'KAMA 21',
+            title: 'KAMA',
             priceScaleId: 'right',
             lastValueVisible: true,
             priceLineVisible: false,
         }, 0);
-        kama21Ref.current = kama21;
-
-        const kama200 = chart.addSeries(LineSeries, {
-            color: '#a78bfa',
-            lineWidth: 2,
-            title: 'KAMA 200',
-            priceScaleId: 'right',
-            lastValueVisible: true,
-            priceLineVisible: false,
-        }, 0);
-        kama200Ref.current = kama200;
+        kamaRef.current = kama;
 
         return () => {
             if (chart) {
-                try { chart.removeSeries(kama21);  } catch (_) { }
-                try { chart.removeSeries(kama200); } catch (_) { }
+                try { chart.removeSeries(kama); } catch (_) {}
             }
-            kama21Ref.current  = null;
-            kama200Ref.current = null;
+            kamaRef.current = null;
         };
     }, [chart]);
 
     useEffect(() => {
         if (!data?.timestamps) return;
 
-        const toPoints = (values: (number | null)[]) =>
-            data.timestamps
-                .map((ts, i) => {
-                    const v = values[i];
-                    if (v === null || v === undefined) return null;
-                    return { time: (new Date(ts).getTime() / 1000) as UTCTimestamp, value: v };
-                })
-                .filter((p): p is { time: UTCTimestamp; value: number } => p !== null);
+        const points = data.timestamps
+            .map((ts, i) => {
+                const v = data.indicators.kama[i];
+                if (v === null || v === undefined) return null;
+                return { time: (new Date(ts).getTime() / 1000) as UTCTimestamp, value: v };
+            })
+            .filter((p): p is { time: UTCTimestamp; value: number } => p !== null);
 
-        kama21Ref.current?.setData(toPoints(data.indicators.kama_21));
-        kama200Ref.current?.setData(toPoints(data.indicators.kama_200));
+        kamaRef.current?.setData(points);
     }, [data]);
 
     return null;

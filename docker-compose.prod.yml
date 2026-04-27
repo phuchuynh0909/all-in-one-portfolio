@@ -47,17 +47,50 @@ services:
       - appnet
     restart: unless-stopped
 
-  worker:
+  worker-tick-ingest:
     build:
       context: ./worker
       dockerfile: Dockerfile
-    command: ["python", "-m", "bytewax.run", "price_alerts"]
+    command: ["python", "-m", "bytewax.run", "workers.tick_ingest:flow"]
+    volumes:
+      - worker_state:/app/state_dir
+    env_file:
+      - path: ./prod.env
+        required: true
+    networks:
+      - appnet
+      - shared_network
+    restart: unless-stopped
+
+  worker-price-alerts:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    command: ["python", "-m", "bytewax.run", "workers.price_alerts:flow"]
     volumes:
       - ./backend/portfolio.db:/app/portfolio.db
       - worker_state:/app/state_dir
     env_file:
       - path: ./prod.env
         required: true
+    networks:
+      - appnet
+      - shared_network
+    restart: unless-stopped
+
+  worker-hawkes:
+    build:
+      context: ./worker
+      dockerfile: Dockerfile
+    command: ["python", "workers/hawkes_signal_worker.py"]
+    volumes:
+      - worker_state:/app/state_dir
+    env_file:
+      - path: ./prod.env
+        required: true
+    environment:
+      - HAWKES_STATE_PATH=/app/state_dir/hawkes_signal_state.json
+      - OHLC_5M_SYNC_STATE_PATH=/app/state_dir/ohlc_5m_sync_state.json
     networks:
       - appnet
       - shared_network
