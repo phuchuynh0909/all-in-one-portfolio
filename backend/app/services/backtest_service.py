@@ -424,6 +424,60 @@ def _get_plot_strategy(strategy_name: str):
     return BreakoutDeMarkerStrategyBT, {}
 
 
+def _compute_mfe_mae(stats, data: pd.DataFrame) -> dict:
+    """
+    MFE = max favorable excursion (best unrealized profit during trade, % of entry).
+    MAE = max adverse excursion  (worst unrealized drawdown during trade, % of entry).
+    Uses High/Low bars between EntryBar and ExitBar (inclusive).
+    """
+    if stats is None or not hasattr(stats, '_trades') or stats._trades.empty:
+        return {}
+
+    highs = data['High'].values
+    lows  = data['Low'].values
+    n     = len(highs)
+
+    mfe_list: list[float] = []
+    mae_list: list[float] = []
+
+    for _, t in stats._trades.iterrows():
+        entry_bar   = int(t['EntryBar'])
+        exit_bar    = min(int(t['ExitBar']), n - 1)
+        entry_price = float(t['EntryPrice'])
+        direction   = 1 if float(t['Size']) > 0 else -1
+
+        trade_highs = highs[entry_bar: exit_bar + 1]
+        trade_lows  = lows[entry_bar:  exit_bar + 1]
+        if len(trade_highs) == 0:
+            continue
+
+        if direction == 1:  # long
+            mfe = (np.max(trade_highs) - entry_price) / entry_price * 100
+            mae = (entry_price - np.min(trade_lows))  / entry_price * 100
+        else:               # short
+            mfe = (entry_price - np.min(trade_lows))  / entry_price * 100
+            mae = (np.max(trade_highs) - entry_price) / entry_price * 100
+
+        mfe_list.append(mfe)
+        mae_list.append(mae)
+
+    if not mfe_list:
+        return {}
+
+    def _r(v: float) -> float:
+        return round(float(v), 4)
+
+    return {
+        'MFE Avg [%]':    _r(np.mean(mfe_list)),
+        'MAE Avg [%]':    _r(np.mean(mae_list)),
+        'MFE Median [%]': _r(np.median(mfe_list)),
+        'MAE Median [%]': _r(np.median(mae_list)),
+        'MFE Max [%]':    _r(np.max(mfe_list)),
+        'MAE Max [%]':    _r(np.max(mae_list)),
+        'MFE P75 [%]':    _r(np.percentile(mfe_list, 75)),
+    }
+
+
 async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) -> Dict:
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     stock_df = _load_delta_stocks(
@@ -492,6 +546,7 @@ async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) ->
             return value
 
         stats_dict = {str(k): _normalize_value(v) for k, v in raw_stats.items()}
+        stats_dict.update(_compute_mfe_mae(stats, stock_df))
 
     return {
         "symbol": symbol,

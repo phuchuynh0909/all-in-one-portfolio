@@ -76,6 +76,7 @@ COPY --from=builder /opt/venv /opt/venv
 
 # Copy application code
 COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser models ./models
 COPY --chown=appuser:appuser alembic ./alembic
 COPY --chown=appuser:appuser alembic.ini ./
 COPY --chown=appuser:appuser libs/backtesting.py/ ./libs/backtesting.py/
