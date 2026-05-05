@@ -17,7 +17,13 @@ After backfill, run merge to build VN30F1M:
 import argparse
 import sys
 from datetime import date, timedelta
+from pathlib import Path
 
+# Repo root (`worker/`); needed when running `python scripts/backfill_ticks.py`.
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
+    
 from infra.audit_queries import print_metrics
 from workers.reconciler import run_reconciler
 from core.vn30f_symbol import encode, front_month, third_thursday
