@@ -17,6 +17,7 @@ from .indicators import (
     avwap,
     build_smart_money_flow_kwargs,
     calculate_yz_volatility,
+    calculate_gkyz_volatility,
     hawkes_BVC,
     kalman_zscore,
     matrix_series,
@@ -145,6 +146,17 @@ def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]
                     window=window,
                     periods=periods,
                 )
+
+            elif ind.name == "gkyz_volatility":
+                window = int(ind.params.get("window", 21))
+                indicator_data["gkyz_volatility"] = calculate_gkyz_volatility(
+                    df["open"].values,
+                    df["high"].values,
+                    df["low"].values,
+                    df["close"].values,
+                    window=window,
+                    normalize=True,
+                ).tolist()
 
             elif ind.name == "matrix_series":
                 price_period = int(ind.params.get("price_period", 16))

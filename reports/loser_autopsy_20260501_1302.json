@@ -1,0 +1,561 @@
+{
+  "autopsy_date": "2026-05-01T13:02:01.784532",
+  "data_summary": {
+    "total_trades": 14296,
+    "date_range": [
+      "2017-02-06 00:00:00",
+      "2026-04-06 00:00:00"
+    ],
+    "symbols": 196,
+    "overall_win_rate": 0.38500279798545045,
+    "overall_avg_return": 0.02859628832106992
+  },
+  "top_discriminative_features": [
+    {
+      "feature": "msr_rank_10",
+      "loser_mean": 0.7050582648540881,
+      "winner_mean": 0.6636299075470711,
+      "cohen_d": -0.175069918094158,
+      "abs_cohen_d": 0.175069918094158,
+      "ks_stat": 0.09536022382839823,
+      "ks_pvalue": 2.181475805711304e-17,
+      "mwu_pvalue": 5.089140732173412e-19
+    },
+    {
+      "feature": "mrs_10",
+      "loser_mean": 2.7544575451918725,
+      "winner_mean": 2.1556020250931556,
+      "cohen_d": -0.14702990651951156,
+      "abs_cohen_d": 0.14702990651951156,
+      "ks_stat": 0.0657495919794824,
+      "ks_pvalue": 1.752821469993569e-08,
+      "mwu_pvalue": 7.338731337721705e-11
+    },
+    {
+      "feature": "rs_10",
+      "loser_mean": 1.5054298192608475,
+      "winner_mean": 0.6929046667583766,
+      "cohen_d": -0.1390656568076183,
+      "abs_cohen_d": 0.1390656568076183,
+      "ks_stat": 0.0648169736535323,
+      "ks_pvalue": 2.957001570062151e-08,
+      "mwu_pvalue": 1.975198554389102e-08
+    },
+    {
+      "feature": "mrs_20",
+      "loser_mean": 0.9785863419145241,
+      "winner_mean": 0.2111228166908869,
+      "cohen_d": -0.13288391342961592,
+      "abs_cohen_d": 0.13288391342961592,
+      "ks_stat": 0.06062019118675682,
+      "ks_pvalue": 2.835352562852038e-07,
+      "mwu_pvalue": 2.7506814620169502e-08
+    },
+    {
+      "feature": "kf_distance",
+      "loser_mean": 0.014309343912530399,
+      "winner_mean": 0.008839497661143374,
+      "cohen_d": -0.11167240893116347,
+      "abs_cohen_d": 0.11167240893116347,
+      "ks_stat": 0.05665656330146887,
+      "ks_pvalue": 2.0862021571325316e-06,
+      "mwu_pvalue": 1.9073487347474038e-07
+    },
+    {
+      "feature": "ema_20_distance",
+      "loser_mean": 0.014324589945112633,
+      "winner_mean": 0.008861255793424845,
+      "cohen_d": -0.11165224799616918,
+      "abs_cohen_d": 0.11165224799616918,
+      "ks_stat": 0.05665656330146887,
+      "ks_pvalue": 2.0862021571325316e-06,
+      "mwu_pvalue": 1.919123266809637e-07
+    },
+    {
+      "feature": "volume_threshold_ma_20",
+      "loser_mean": -0.48882011260960495,
+      "winner_mean": -0.2100861357262232,
+      "cohen_d": 0.10956061503304337,
+      "abs_cohen_d": 0.10956061503304337,
+      "ks_stat": 0.02611331312660294,
+      "ks_pvalue": 0.10734692248144452,
+      "mwu_pvalue": 0.7467366980976973
+    },
+    {
+      "feature": "ema_50_distance",
+      "loser_mean": 0.007030161857235425,
+      "winner_mean": -0.003452159013356854,
+      "cohen_d": -0.10689055276628505,
+      "abs_cohen_d": 0.10689055276628505,
+      "ks_stat": 0.05292608999766846,
+      "ks_pvalue": 1.2063959747255422e-05,
+      "mwu_pvalue": 6.944159263163792e-06
+    },
+    {
+      "feature": "rs_20",
+      "loser_mean": -0.05286138385201715,
+      "winner_mean": -1.2292589803034875,
+      "cohen_d": -0.10514334612919585,
+      "abs_cohen_d": 0.10514334612919585,
+      "ks_stat": 0.05362555374213103,
+      "ks_pvalue": 8.76092904761341e-06,
+      "mwu_pvalue": 7.799447274580611e-05
+    },
+    {
+      "feature": "msr_rank_20",
+      "loser_mean": 0.5539479256379632,
+      "winner_mean": 0.5243997459090888,
+      "cohen_d": -0.10354452490382908,
+      "abs_cohen_d": 0.10354452490382908,
+      "ks_stat": 0.06318489158311962,
+      "ks_pvalue": 7.252241260066139e-08,
+      "mwu_pvalue": 5.504061334448228e-07
+    },
+    {
+      "feature": "volume_threshold_ma_10",
+      "loser_mean": -0.3934278028681489,
+      "winner_mean": -0.13287672988656804,
+      "cohen_d": 0.10295129289371306,
+      "abs_cohen_d": 0.10295129289371306,
+      "ks_stat": 0.039403124271391934,
+      "ks_pvalue": 0.002562099560736774,
+      "mwu_pvalue": 0.03983446539431726
+    },
+    {
+      "feature": "ema_200_distance",
+      "loser_mean": 0.02573017678952266,
+      "winner_mean": 0.005989427406044113,
+      "cohen_d": -0.09262806646433408,
+      "abs_cohen_d": 0.09262806646433408,
+      "ks_stat": 0.038004196782466776,
+      "ks_pvalue": 0.004077356882288508,
+      "mwu_pvalue": 0.0001809441573740516
+    },
+    {
+      "feature": "ema_10_distance",
+      "loser_mean": 0.020994329003719087,
+      "winner_mean": 0.018591629548778934,
+      "cohen_d": -0.07955061660184064,
+      "abs_cohen_d": 0.07955061660184064,
+      "ks_stat": 0.046164607134530196,
+      "ks_pvalue": 0.00021398003162160286,
+      "mwu_pvalue": 0.00024094857038368738
+    },
+    {
+      "feature": "yz_vol_20",
+      "loser_mean": 0.46430786852966965,
+      "winner_mean": 0.4503941116101065,
+      "cohen_d": -0.06599341676669385,
+      "abs_cohen_d": 0.06599341676669385,
+      "ks_stat": 0.07064583819072044,
+      "ks_pvalue": 9.953951351795375e-10,
+      "mwu_pvalue": 0.000397195891097696
+    },
+    {
+      "feature": "rsi_window_14",
+      "loser_mean": 52.48009413702121,
+      "winner_mean": 51.7859479541671,
+      "cohen_d": -0.06508572668542308,
+      "abs_cohen_d": 0.06508572668542308,
+      "ks_stat": 0.042900442993704824,
+      "ks_pvalue": 0.0007450669835567679,
+      "mwu_pvalue": 0.0007732802645242716
+    },
+    {
+      "feature": "mfi_21",
+      "loser_mean": 49.95450980973341,
+      "winner_mean": 49.088707867400366,
+      "cohen_d": -0.05679399008122387,
+      "abs_cohen_d": 0.05679399008122387,
+      "ks_stat": 0.0391699696899044,
+      "ks_pvalue": 0.002771618499270879,
+      "mwu_pvalue": 0.005145863227734165
+    },
+    {
+      "feature": "zscore_10_log_return",
+      "loser_mean": 0.7700766954516636,
+      "winner_mean": 0.6906998573953124,
+      "cohen_d": -0.05363240577421655,
+      "abs_cohen_d": 0.05363240577421655,
+      "ks_stat": 0.028678013522965725,
+      "ks_pvalue": 0.058756939881398226,
+      "mwu_pvalue": 0.6127253815218072
+    },
+    {
+      "feature": "zscore_kf_10",
+      "loser_mean": 0.15382250265924957,
+      "winner_mean": 0.05056243458311239,
+      "cohen_d": -0.05149963215391568,
+      "abs_cohen_d": 0.05149963215391568,
+      "ks_stat": 0.0338074143156913,
+      "ks_pvalue": 0.014856901532315269,
+      "mwu_pvalue": 0.2153365696735967
+    },
+    {
+      "feature": "zscore_kf_20",
+      "loser_mean": -0.2880173447909294,
+      "winner_mean": -0.374430531895807,
+      "cohen_d": -0.05080631476441909,
+      "abs_cohen_d": 0.05080631476441909,
+      "ks_stat": 0.0373047330380042,
+      "ks_pvalue": 0.005111312605532236,
+      "mwu_pvalue": 0.002333858805465853
+    },
+    {
+      "feature": "vwap_distance_highest",
+      "loser_mean": -0.0836844525148601,
+      "winner_mean": -0.091427542820131,
+      "cohen_d": -0.048936033524339305,
+      "abs_cohen_d": 0.048936033524339305,
+      "ks_stat": 0.01795290277453952,
+      "ks_pvalue": 0.4940840828972236,
+      "mwu_pvalue": 0.7623000863419935
+    }
+  ],
+  "catastrophic_loss_drivers": [
+    {
+      "feature": "yz_vol_10",
+      "loser_mean": 0.572775965574738,
+      "winner_mean": 0.3956389993538632,
+      "cohen_d": -0.748234549154542,
+      "abs_cohen_d": 0.748234549154542,
+      "ks_stat": 0.37151586172260814,
+      "ks_pvalue": 6.388740503884836e-160,
+      "mwu_pvalue": 2.7046489463170946e-189
+    },
+    {
+      "feature": "yz_vol_20",
+      "loser_mean": 0.5641045459604763,
+      "winner_mean": 0.4001807448318549,
+      "cohen_d": -0.743571835227578,
+      "abs_cohen_d": 0.743571835227578,
+      "ks_stat": 0.3656730646937394,
+      "ks_pvalue": 8.87823970494092e-155,
+      "mwu_pvalue": 5.047920112371281e-182
+    },
+    {
+      "feature": "mrs_10",
+      "loser_mean": 3.918743920745661,
+      "winner_mean": 1.7896735379700008,
+      "cohen_d": -0.49030859101023905,
+      "abs_cohen_d": 0.49030859101023905,
+      "ks_stat": 0.21064289355910693,
+      "ks_pvalue": 1.4009490834820726e-50,
+      "mwu_pvalue": 2.9172880463748654e-60
+    },
+    {
+      "feature": "msr_rank_10",
+      "loser_mean": 0.7434137291280148,
+      "winner_mean": 0.6522092320528398,
+      "cohen_d": -0.3854613346731018,
+      "abs_cohen_d": 0.3854613346731018,
+      "ks_stat": 0.18817732865610992,
+      "ks_pvalue": 2.2422516974069056e-40,
+      "mwu_pvalue": 1.1951490541643173e-53
+    },
+    {
+      "feature": "rs_10",
+      "loser_mean": 2.413792373016079,
+      "winner_mean": 0.6180035698031707,
+      "cohen_d": -0.280021986947798,
+      "abs_cohen_d": 0.280021986947798,
+      "ks_stat": 0.13471957857159167,
+      "ks_pvalue": 7.83448044384331e-21,
+      "mwu_pvalue": 4.1664763251597774e-16
+    },
+    {
+      "feature": "ema_10_distance",
+      "loser_mean": 0.025480457091890247,
+      "winner_mean": 0.016435557909915802,
+      "cohen_d": -0.2774130563508824,
+      "abs_cohen_d": 0.2774130563508824,
+      "ks_stat": 0.16261649123455435,
+      "ks_pvalue": 3.321478606862257e-30,
+      "mwu_pvalue": 1.8683105466163287e-19
+    },
+    {
+      "feature": "vwap_distance_highest",
+      "loser_mean": -0.11652404104872287,
+      "winner_mean": -0.07392210656346297,
+      "cohen_d": 0.26697651933725824,
+      "abs_cohen_d": 0.26697651933725824,
+      "ks_stat": 0.13658191645133977,
+      "ks_pvalue": 2.1089252457190906e-21,
+      "mwu_pvalue": 5.789350220952478e-14
+    },
+    {
+      "feature": "mrs_20",
+      "loser_mean": 1.7919582751720993,
+      "winner_mean": 0.10248869208024225,
+      "cohen_d": -0.26557279877501005,
+      "abs_cohen_d": 0.26557279877501005,
+      "ks_stat": 0.15642964217501765,
+      "ks_pvalue": 5.686180851680752e-28,
+      "mwu_pvalue": 4.027373465956994e-16
+    },
+    {
+      "feature": "msr_rank_20",
+      "loser_mean": 0.5845547309833025,
+      "winner_mean": 0.5132275940066684,
+      "cohen_d": -0.24482496030275241,
+      "abs_cohen_d": 0.24482496030275241,
+      "ks_stat": 0.1446967613452924,
+      "ks_pvalue": 5.594002523668777e-24,
+      "mwu_pvalue": 5.4199946322835814e-21
+    },
+    {
+      "feature": "log_return",
+      "loser_mean": 0.018499539931724165,
+      "winner_mean": 0.01118636607455072,
+      "cohen_d": -0.24378905170209836,
+      "abs_cohen_d": 0.24378905170209836,
+      "ks_stat": 0.13153375460230732,
+      "ks_pvalue": 7.08891615569618e-20,
+      "mwu_pvalue": 1.8617635162141384e-10
+    },
+    {
+      "feature": "volume_threshold_ma_10",
+      "loser_mean": -0.7847989275484517,
+      "winner_mean": -0.17597053679103092,
+      "cohen_d": 0.1830600952794375,
+      "abs_cohen_d": 0.1830600952794375,
+      "ks_stat": 0.046245158541132425,
+      "ks_pvalue": 0.007874207088371494,
+      "mwu_pvalue": 0.8223878252970894
+    },
+    {
+      "feature": "volume_threshold_ma_20",
+      "loser_mean": -0.8577892944733595,
+      "winner_mean": -0.27225920186617686,
+      "cohen_d": 0.17571547179717567,
+      "abs_cohen_d": 0.17571547179717567,
+      "ks_stat": 0.0467134606416435,
+      "ks_pvalue": 0.00703669132897269,
+      "mwu_pvalue": 0.1803210047293221
+    },
+    {
+      "feature": "rs_20",
+      "loser_mean": 0.9842802188900355,
+      "winner_mean": -1.192339031887778,
+      "cohen_d": -0.1739801472309113,
+      "abs_cohen_d": 0.1739801472309113,
+      "ks_stat": 0.1288692808823385,
+      "ks_pvalue": 4.293134124003774e-19,
+      "mwu_pvalue": 0.0003137968077026209
+    },
+    {
+      "feature": "vwap_distance_lowest",
+      "loser_mean": 0.07937383596924336,
+      "winner_mean": 0.06008948893077825,
+      "cohen_d": -0.1430118857037981,
+      "abs_cohen_d": 0.1430118857037981,
+      "ks_stat": 0.09611389698440842,
+      "ks_pvalue": 8.449356222905527e-11,
+      "mwu_pvalue": 6.413393715850604e-09
+    },
+    {
+      "feature": "zscore_20_log_return",
+      "loser_mean": 0.7359489910064427,
+      "winner_mean": 0.6143199414734808,
+      "cohen_d": -0.09497752825693216,
+      "abs_cohen_d": 0.09497752825693216,
+      "ks_stat": 0.05395975080414683,
+      "ks_pvalue": 0.0010690168066944295,
+      "mwu_pvalue": 0.00017172963266505042
+    },
+    {
+      "feature": "ema_20_distance",
+      "loser_mean": 0.014494924222183268,
+      "winner_mean": 0.00979835942945681,
+      "cohen_d": -0.08675438910569462,
+      "abs_cohen_d": 0.08675438910569462,
+      "ks_stat": 0.13094826827144557,
+      "ks_pvalue": 1.0564522267302688e-19,
+      "mwu_pvalue": 0.003757646203489639
+    },
+    {
+      "feature": "kf_distance",
+      "loser_mean": 0.014469603059147842,
+      "winner_mean": 0.009783433052456011,
+      "cohen_d": -0.08647438191283859,
+      "abs_cohen_d": 0.08647438191283859,
+      "ks_stat": 0.1311037167402782,
+      "ks_pvalue": 9.504353857809428e-20,
+      "mwu_pvalue": 0.0038696715266809813
+    },
+    {
+      "feature": "zscore_10_log_return",
+      "loser_mean": 0.7623862042799531,
+      "winner_mean": 0.6653581235102903,
+      "cohen_d": -0.06556288336395512,
+      "abs_cohen_d": 0.06556288336395512,
+      "ks_stat": 0.041698019064721925,
+      "ks_pvalue": 0.02212384578812411,
+      "mwu_pvalue": 0.00372998378581921
+    },
+    {
+      "feature": "rsi_window_5",
+      "loser_mean": 61.75356996298246,
+      "winner_mean": 60.87043283113174,
+      "cohen_d": -0.060052983072735884,
+      "abs_cohen_d": 0.060052983072735884,
+      "ks_stat": 0.0383122861904146,
+      "ks_pvalue": 0.04454778789000624,
+      "mwu_pvalue": 0.02397771200591595
+    },
+    {
+      "feature": "obv",
+      "loser_mean": 217898540.8944056,
+      "winner_mean": 293605691.64930826,
+      "cohen_d": 0.0600108663093161,
+      "abs_cohen_d": 0.0600108663093161,
+      "ks_stat": 0.03557911076953513,
+      "ks_pvalue": 0.07506930955341562,
+      "mwu_pvalue": 0.2566438785086994
+    }
+  ],
+  "chronic_loser_symbols": [
+    "DVM",
+    "HHV",
+    "PVP",
+    "QTP",
+    "SAB",
+    "NHH",
+    "PLC",
+    "VRE",
+    "KHG",
+    "POW",
+    "HDB",
+    "VPI",
+    "NT2",
+    "KOS",
+    "VNM",
+    "HPX",
+    "VHM",
+    "BMP",
+    "PLX",
+    "REE",
+    "VCG",
+    "LAS",
+    "HNG",
+    "VC7",
+    "TPB",
+    "YEG",
+    "AGG",
+    "SSB",
+    "SKG",
+    "PNJ",
+    "VC3",
+    "DDV",
+    "HPG",
+    "KDC",
+    "VGS",
+    "HAG",
+    "HBC",
+    "ASM",
+    "EVF",
+    "ELC",
+    "NVL",
+    "VPG",
+    "DGC",
+    "GKM",
+    "EVG",
+    "HSG",
+    "KBC",
+    "VIC",
+    "PSH",
+    "HVN",
+    "DXS",
+    "HQC",
+    "CEO"
+  ],
+  "worst_months": [
+    {
+      "year_month": "2022-10-01",
+      "win_rate": "0.08139534883720931",
+      "avg_return": "-0.11879526759290666"
+    },
+    {
+      "year_month": "2022-04-01",
+      "win_rate": "0.0",
+      "avg_return": "-0.11510809672053149"
+    },
+    {
+      "year_month": "2022-09-01",
+      "win_rate": "0.030303030303030304",
+      "avg_return": "-0.08519750561277326"
+    },
+    {
+      "year_month": "2025-03-01",
+      "win_rate": "0.04878048780487805",
+      "avg_return": "-0.07567235281705774"
+    },
+    {
+      "year_month": "2026-03-01",
+      "win_rate": "0.046875",
+      "avg_return": "-0.07493243035658372"
+    },
+    {
+      "year_month": "2023-10-01",
+      "win_rate": "0.1134020618556701",
+      "avg_return": "-0.07010059109594227"
+    },
+    {
+      "year_month": "2018-05-01",
+      "win_rate": "0.0945945945945946",
+      "avg_return": "-0.0653358562174157"
+    },
+    {
+      "year_month": "2026-02-01",
+      "win_rate": "0.11949685534591195",
+      "avg_return": "-0.060750097368366965"
+    },
+    {
+      "year_month": "2022-05-01",
+      "win_rate": "0.22021660649819494",
+      "avg_return": "-0.051927016954294476"
+    },
+    {
+      "year_month": "2018-04-01",
+      "win_rate": "0.13636363636363635",
+      "avg_return": "-0.05043513467717919"
+    }
+  ],
+  "feature_suggestions": [
+    {
+      "priority": 1,
+      "name": "vnindex_trend_regime",
+      "reason": "Bull winrate (35.7%) vs Bear winrate (43.8%) differs by 8.1%"
+    },
+    {
+      "priority": 1,
+      "name": "vnindex_volatility_regime",
+      "reason": "Win rate spans 28.5%-50.0% across VNINDEX vol regimes"
+    },
+    {
+      "priority": 1,
+      "name": "symbol_blacklist or strategy_winrate_per_symbol",
+      "reason": "53 symbols have <35% historical win rate"
+    },
+    {
+      "priority": 1,
+      "name": "breakout_quality_features",
+      "reason": "Breakouts often fail due to volume/momentum confirmation issues"
+    },
+    {
+      "priority": 1,
+      "name": "strategy_self_assessment",
+      "reason": "Strategy performance is autocorrelated \u2014 recent failures predict near-term failures"
+    },
+    {
+      "priority": 2,
+      "name": "day_of_week and seasonality",
+      "reason": "Day-of-week effect is statistically significant"
+    },
+    {
+      "priority": 2,
+      "name": "cross_sectional_ranks",
+      "reason": "Relative strength matters \u2014 strong stocks tend to keep being strong"
+    }
+  ]
+}
