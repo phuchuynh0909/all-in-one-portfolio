@@ -33,8 +33,10 @@ tables>=3.9.0
 # Machine Learning
 xgboost>=2.0.3
 lightgbm>=4.3.0
-catboost>=1.2.2
+catboost>=1.2.10
 scikit-learn>=1.4.1
+stable-baselines3>=2.3.0
+gymnasium>=0.29.1
 
 # Utilities
 python-dateutil>=2.9.0

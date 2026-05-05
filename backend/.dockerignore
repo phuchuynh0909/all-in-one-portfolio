@@ -42,7 +42,6 @@ notebooks/
 
 # Assets that should be mounted
 assets/
-models/
 
 # Documentation
 *.md

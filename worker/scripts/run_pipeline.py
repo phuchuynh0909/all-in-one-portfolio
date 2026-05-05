@@ -18,6 +18,12 @@ import argparse
 import logging
 import sys
 from datetime import date
+from pathlib import Path
+
+# Repo root (`worker/`); needed when running `python scripts/run_pipeline.py`.
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in sys.path:
+    sys.path.insert(0, str(_root))
 
 from infra.audit_queries import run_duplicate_audit, run_merge_health
 from infra.clickhouse_client import get_clickhouse_client
