@@ -1,7 +1,8 @@
 from pathlib import Path
 from prefect import flow
 from deltalake import DeltaTable
-import os 
+from clickhouse_driver import Client  # type: ignore
+import os
 import pandas as pd
 from custom_metastock2pd import metastock_read, metastock_read_master
 
@@ -52,7 +53,7 @@ def update_symbol_data(symbol: str):
     }
 
     dt = DeltaTable("s3://delta-table-storage/stocks", storage_options=storage_options)
-    result = dt.merge(df, 
+    result = dt.merge(df,
             predicate="target.key == source.key",
             source_alias="source",
             target_alias="target"
@@ -61,6 +62,34 @@ def update_symbol_data(symbol: str):
         .when_matched_update_all(predicate="target.key == source.key")\
         .execute()
     print(result)
+
+    # Sync to ClickHouse
+    ch_host     = os.getenv("CLICKHOUSE_HOST", "localhost")
+    ch_port     = int(os.getenv("CLICKHOUSE_PORT", "9010"))
+    ch_user     = os.getenv("CLICKHOUSE_USER", "kyostyle1")
+    ch_password = os.getenv("CLICKHOUSE_PASSWORD", "kyostyle1")
+    ch_database = os.getenv("CLICKHOUSE_DB", "default")
+    ch_table    = os.getenv("CLICKHOUSE_OHLC_EOD_TABLE", "ohlc_eod")
+
+    ch_client = Client(host=ch_host, port=ch_port, user=ch_user, password=ch_password, database=ch_database)
+
+    ch_df = df[["date", "symbol", "open", "high", "low", "close", "volume"]].copy()
+    ch_df["date"] = pd.to_datetime(ch_df["date"], errors="coerce")
+    for col in ["open", "high", "low", "close", "volume"]:
+        ch_df[col] = pd.to_numeric(ch_df[col], errors="coerce")
+    ch_df = ch_df.dropna()
+
+    rows = [
+        (pd.to_datetime(r[0]).date(), str(r[1]), float(r[2]), float(r[3]), float(r[4]), float(r[5]), float(r[6]))
+        for r in ch_df.itertuples(index=False, name=None)
+    ]
+    if rows:
+        ch_client.execute(
+            f"INSERT INTO {ch_database}.{ch_table} (date, symbol, open, high, low, close, volume) VALUES",
+            rows,
+            types_check=False,
+        )
+        print(f"ClickHouse: inserted {len(rows)} rows for {symbol}")
 
     return result
 
