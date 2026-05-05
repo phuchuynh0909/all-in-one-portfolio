@@ -246,7 +246,7 @@ def _run_once(symbol: str, state: dict) -> dict:
         return state
 
     n = len(bars)
-    min_bars = _cfg.quantile_lookback + _cfg.kama_period + 5
+    min_bars = _cfg.quantile_lookback + _cfg.kama_period + 6  # +1 for forming candle
     if n < min_bars:
         log.info("Not enough bars yet (%d / %d needed)", n, min_bars)
         return state
@@ -270,8 +270,10 @@ def _run_once(symbol: str, state: dict) -> dict:
         calm_threshold=_cfg.calm_threshold,
     )
 
-    # 5. Check the last bar for new signals
-    idx = n - 1
+    # 5. Check the last *closed* bar (n-2); n-1 is the still-forming candle
+    if n < 2:
+        return state
+    idx = n - 2
     bar = bars.iloc[idx]
     bar_ts = str(pd.Timestamp(bar["stamp"]))
     bsi_val = float(bars["bsi"].iloc[idx])

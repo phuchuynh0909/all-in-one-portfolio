@@ -124,6 +124,32 @@ def fetch_ch_session_ticks(
     return rows
 
 
+def _merge_key(row: dict) -> tuple[str, str, float, int]:
+    """Key for merging: same as _tick_key but without match_qty so quantities get summed."""
+    return (
+        str(row["symbol"]),
+        _to_utc_rounded_microseconds(row["sending_time"]).isoformat(timespec="microseconds"),
+        float(row["match_price"]),
+        int(row["side"]),
+    )
+
+
+def merge_ticks(rows: list[dict]) -> tuple[list[dict], int]:
+    """Merge rows that share (symbol, sending_time, match_price, side) by summing match_qty.
+
+    Returns the merged list and how many raw rows were collapsed.
+    """
+    merged: dict[tuple, dict] = {}
+    for row in rows:
+        k = _merge_key(row)
+        if k not in merged:
+            merged[k] = dict(row)
+        else:
+            merged[k]["match_qty"] += int(row["match_qty"])
+    collapsed = len(rows) - len(merged)
+    return list(merged.values()), collapsed
+
+
 def diff_ticks(
     api_rows: list[dict], ch_rows: list[dict]
 ) -> tuple[list[dict], list[dict]]:
@@ -196,6 +222,10 @@ def run_reconciler(date_str: str, dry_run: bool = False) -> ReconcilerMetrics:
             api_rows = fetch_session_ticks(date_str)
 
         metrics.fetched_rows = len(api_rows)
+
+        api_rows, collapsed = merge_ticks(api_rows)
+        if collapsed:
+            log.info("Merged %d tick(s) into same-side buckets (qty summed)", collapsed)
 
         ch_client = get_clickhouse_client()
         target_symbol = symbol_for_date(date.fromisoformat(date_str))
