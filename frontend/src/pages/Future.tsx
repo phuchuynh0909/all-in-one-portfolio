@@ -6,6 +6,7 @@ import {
 } from '@mui/material';
 import TuneIcon from '@mui/icons-material/Tune';
 import PsychologyIcon from '@mui/icons-material/Psychology';
+import ClearIcon from '@mui/icons-material/Clear';
 import { createChart, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, UTCTimestamp } from 'lightweight-charts';
 import { fetchFutureOhlc, fetchRlExits } from '../lib/services/future';
@@ -13,7 +14,10 @@ import type { FutureOhlcResponse, RlTrade } from '../lib/services/future';
 import BsiPanel from '../components/chart/panels/BsiPanel';
 import KamaPanel from '../components/chart/panels/KamaPanel';
 
-const SYMBOL = 'VN30F1M';
+const SYMBOL      = 'VN30F1M';
+const STORAGE_KEY = 'future_params';
+const DATE_KEY    = 'future_from_date';
+const AUTO_REFRESH_MS = 10_000;
 
 interface Params {
   kappa: number;
@@ -30,6 +34,14 @@ const DEFAULTS: Params = {
   q_hi_pct: 95,
   kama_period: 10,
 };
+
+function loadParams(): Params {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (raw) return { ...DEFAULTS, ...JSON.parse(raw) };
+  } catch {}
+  return DEFAULTS;
+}
 
 type Signal = SeriesMarker<UTCTimestamp>;
 
@@ -138,10 +150,19 @@ export default function Future() {
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
 
   const [timeframe, setTimeframe] = useState<string>('5m');
+  const [fromDate, setFromDate]   = useState<string>(() => {
+    const stored = localStorage.getItem(DATE_KEY);
+    if (stored) return stored;
+    const d = new Date();
+    d.setDate(d.getDate() - 10);
+    return d.toISOString().slice(0, 10);
+  });
 
-  const [draft, setDraft]         = useState<Params>(DEFAULTS);
-  const [applied, setApplied]     = useState<Params>(DEFAULTS);
+  const [draft, setDraft]         = useState<Params>(loadParams);
+  const [applied, setApplied]     = useState<Params>(loadParams);
   const [panelOpen, setPanelOpen] = useState(false);
+
+  const [refreshTick, setRefreshTick] = useState(0);
 
   const [showRl, setShowRl]       = useState(false);
   const [rlTrades, setRlTrades]   = useState<RlTrade[]>([]);
@@ -153,7 +174,7 @@ export default function Future() {
     const load = async () => {
       try {
         setLoading(true);
-        setData(await fetchFutureOhlc(SYMBOL, { ...applied, timeframe }));
+        setData(await fetchFutureOhlc(SYMBOL, { ...applied, timeframe, start_date: fromDate || undefined }));
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Fetch failed');
@@ -162,7 +183,7 @@ export default function Future() {
       }
     };
     load();
-  }, [applied, timeframe]);
+  }, [applied, timeframe, fromDate, refreshTick]);
 
   // fetch RL exits when enabled or params change
   useEffect(() => {
@@ -171,7 +192,7 @@ export default function Future() {
       try {
         setRlLoading(true);
         setRlError(null);
-        const res = await fetchRlExits(SYMBOL, applied);
+        const res = await fetchRlExits(SYMBOL, { ...applied, start_date: fromDate || undefined });
         setRlTrades(res.trades);
       } catch (e) {
         setRlError(e instanceof Error ? e.message : 'RL fetch failed');
@@ -181,7 +202,7 @@ export default function Future() {
       }
     };
     load();
-  }, [showRl, applied]);
+  }, [showRl, applied, fromDate, refreshTick]);
 
   // clear RL markers when disabled
   useEffect(() => {
@@ -189,6 +210,22 @@ export default function Future() {
       rlMarkersPluginRef.current.setMarkers([]);
     }
   }, [showRl]);
+
+  // persist applied params + date filter to localStorage
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(applied));
+  }, [applied]);
+
+  useEffect(() => {
+    if (fromDate) localStorage.setItem(DATE_KEY, fromDate);
+    else localStorage.removeItem(DATE_KEY);
+  }, [fromDate]);
+
+  // auto-refresh every 10 s
+  useEffect(() => {
+    const id = setInterval(() => setRefreshTick(t => t + 1), AUTO_REFRESH_MS);
+    return () => clearInterval(id);
+  }, []);
 
   // create chart once
   useEffect(() => {
@@ -236,7 +273,11 @@ export default function Future() {
       ruleMarkersPluginRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
     }
 
-    chartRef.current?.timeScale().fitContent();
+    const n = data.timestamps.length;
+    chartRef.current?.timeScale().setVisibleLogicalRange({
+      from: Math.max(0, n - 100),
+      to: n - 1 + 20,
+    });
 
     const times = data.timestamps.map(ts => (new Date(ts).getTime() / 1000) as UTCTimestamp);
     setHoveredIndex(times.length - 1);
@@ -289,6 +330,27 @@ export default function Future() {
               <ToggleButton key={tf} value={tf}>{tf.toUpperCase()}</ToggleButton>
             ))}
           </ToggleButtonGroup>
+
+          {/* Date filter */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <TextField
+              type="date"
+              size="small"
+              label="From"
+              value={fromDate}
+              onChange={e => setFromDate(e.target.value)}
+              InputLabelProps={{ shrink: true }}
+              inputProps={{ max: new Date().toISOString().slice(0, 10) }}
+              sx={{ width: 150 }}
+            />
+            {fromDate && (
+              <Tooltip title="Clear date filter">
+                <IconButton size="small" onClick={() => setFromDate('')}>
+                  <ClearIcon fontSize="small" />
+                </IconButton>
+              </Tooltip>
+            )}
+          </Box>
 
           {/* RL toggle */}
           <Tooltip title={showRl ? 'Hide RL exits' : 'Show RL exit predictions'}>

@@ -25,6 +25,7 @@ import MatrixSeriesPanel from './panels/MatrixSeriesPanel';
 import WilliamsVixFixPanel from './panels/WilliamsVixFixPanel';
 import SqueezeTtmPanel from './panels/SqueezeTtmPanel';
 import SmfPanel from './panels/SmfPanel';
+import GkyzPanel from './panels/GkyzPanel';
 
 type StockChartProps = {
   symbol: string;
@@ -42,6 +43,7 @@ const INDICATOR_PANE_MAP: Record<string, number> = {
   matrix_series:    4,
   squeeze_ttm:      5,
   williams_vix_fix: 6,
+  gkyz_volatility:  7,
 };
 
 export interface ParamDef {
@@ -95,6 +97,13 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
     paramDefs: [
       { key: 'window', label: 'Window', min: 5, max: 200, step: 1 },
       { key: 'periods', label: 'Annual Periods', min: 52, max: 365, step: 1 },
+    ],
+  },
+  {
+    id: 'gkyz_volatility', name: 'gkyz_volatility', label: 'GKYZ Volatility',
+    params: { window: 21 }, visible: true,
+    paramDefs: [
+      { key: 'window', label: 'Window', min: 5, max: 200, step: 1 },
     ],
   },
   {
@@ -237,6 +246,7 @@ export default function StockChart({ symbol, height }: StockChartProps) {
       2,   // Panel 4: Matrix Series indicator
       2,   // Panel 5: Squeeze TTM
       1,   // Panel 6: Williams Vix Fix
+      1,   // Panel 7: GKYZ Volatility
     ],
     globalScaleMargins: { top: 0.02, bottom: 0.02 },
   };
@@ -953,6 +963,12 @@ export default function StockChart({ symbol, height }: StockChartProps) {
             timestamps={timestamps}
             paneIndex={6}
             visible={getVisible('williams_vix_fix')}
+          />
+          <GkyzPanel
+            chart={chartRef.current}
+            data={indicatorsData}
+            timestamps={timestamps}
+            visible={getVisible('gkyz_volatility')}
           />
           <SmfPanel
             chart={chartRef.current}

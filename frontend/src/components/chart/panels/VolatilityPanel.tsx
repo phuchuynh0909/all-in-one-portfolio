@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { IChartApi, ISeriesApi, LineSeries } from 'lightweight-charts';
+import { type IChartApi, type ISeriesApi, LineSeries } from 'lightweight-charts';
 import {
     formatIndicatorData,
     createConstantLine
