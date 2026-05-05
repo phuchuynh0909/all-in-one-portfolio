@@ -54,7 +54,6 @@ def calculate_gkyz_volatility(
         hi = result.rolling(window).max()
         result = (result - lo) / (hi - lo + 1e-10)
 
-    print("Go here")
     return result.to_numpy()
 
 
