@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Stage 1: Build dependencies with uv
 FROM python:3.12-slim AS builder
 
@@ -6,7 +7,9 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     UV_COMPILE_BYTECODE=1 \
-    UV_LINK_MODE=copy
+    UV_LINK_MODE=copy \
+    PIP_CACHE_DIR=/root/.cache/pip \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -23,7 +26,8 @@ ENV PATH="/opt/venv/bin:$PATH" \
 
 # Install dependencies with uv (much faster than pip)
 COPY requirements.txt ./
-RUN --mount=type=cache,target=/root/.cache/uv \
+RUN --mount=type=cache,id=all-in-one-uv-cache,target=/root/.cache/uv \
+    --mount=type=cache,id=all-in-one-pip-cache,target=/root/.cache/pip \
     uv pip install -r requirements.txt
 
 
