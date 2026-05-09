@@ -35,6 +35,7 @@ xgboost>=2.0.3
 lightgbm>=4.3.0
 catboost>=1.2.10
 scikit-learn>=1.4.1
+optuna>=4.0.0
 stable-baselines3>=2.3.0
 gymnasium>=0.29.1
 

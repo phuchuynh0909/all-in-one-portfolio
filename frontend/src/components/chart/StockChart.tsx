@@ -764,10 +764,13 @@ export default function StockChart({ symbol, height }: StockChartProps) {
         setIndicatorsData(result.indicators);
         setTimestamps(result.timestamps);
 
-        // Fit content to show all data and auto-scale price
+        // Show last 255 bars with 20-bar right padding
         const timeScale = chartRef.current?.timeScale();
         if (timeScale) {
-          timeScale.fitContent();
+          const n = result.timestamps.length;
+          const to = n - 1 + 20;
+          const from = to - 255 - 20 + 1;
+          timeScale.setVisibleLogicalRange({ from: Math.max(0, from), to });
         }
 
         // Re-apply pane heights after data is loaded
@@ -787,7 +790,13 @@ export default function StockChart({ symbol, height }: StockChartProps) {
   useEffect(() => {
     if (!chartRef.current || !timestamps.length) return;
     const fitChart = () => {
-      chartRef.current?.timeScale().fitContent();
+      const timeScale = chartRef.current?.timeScale();
+      if (timeScale) {
+        const n = timestamps.length;
+        const to = n - 1 + 20;
+        const from = to - 255 - 20 + 1;
+        timeScale.setVisibleLogicalRange({ from: Math.max(0, from), to });
+      }
       applyPaneHeights();
     };
     const timeoutId = window.setTimeout(fitChart, 0);
