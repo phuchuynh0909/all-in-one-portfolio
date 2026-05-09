@@ -22,10 +22,32 @@ logging.basicConfig(
 log = logging.getLogger("meta_label")
 
 
-PROJECT_ROOT = Path(__file__)
-PIPELINE_OUTPUT_DIR = PROJECT_ROOT / "notebooks"
-MODELS_DIR = PROJECT_ROOT / "models"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PIPELINE_OUTPUT_DIR = "notebooks"
+MODELS_DIR =  "models"
 USE_GPU: bool = False  # set to True via --gpu flag or USE_GPU=1 env var
+DEFAULT_WATCHLIST_SYMBOLS = (
+    "AAH", "AAA", "ABB", "ACB", "ACV", "ADS", "AGG", "AGR", "ANV", "APH",
+    "ASM", "BAF", "BCG", "BCM", "BFC", "BID", "BMP", "BSI", "BSR", "BVB",
+    "BVH", "BVS", "BWE", "C4G", "CEO", "CII", "CMG", "CNG", "CSV", "CTD",
+    "MIG", "CTG", "CTI", "CTR", "CTS", "DBC", "DCM", "DDV", "DGC", "DGW",
+    "DHC", "DIG", "DPG", "DPM", "DPR", "DRC", "DRI", "DTD", "DVM", "DXG",
+    "DXS", "EIB", "ELC", "EVF", "EVG", "FCN", "FOX", "FPT", "FRT", "FTS",
+    "GAS", "GEG", "GEX", "GIL", "GKM", "GMD", "GVR", "HAG", "HAH", "HAX",
+    "HBC", "HCM", "HDB", "HDC", "HDG", "HHS", "HHV", "HNG", "HPG", "HPX",
+    "HQC", "HSG", "HTN", "HUT", "HVN", "IDC", "IDI", "IDJ", "IJC", "ITA",
+    "KBC", "KDC", "KDH", "KHG", "KOS", "KSB", "LAS", "LCG", "LPB", "LSS",
+    "MBB", "MBS", "MCH", "MSB", "MSH", "MSN", "MSR", "MWG", "NAB", "NHA",
+    "NHH", "NKG", "NLG", "NT2", "NTL", "NVL", "OCB", "OIL", "ORS", "PAN",
+    "PC1", "PDR", "PET", "PHR", "PLC", "PLX", "PNJ", "POW", "PSH", "PTB",
+    "PVB", "PVC", "PVI", "PVD", "PVP", "PVS", "PVT", "QCG", "QNS", "REE",
+    "SAB", "SBT", "SCR", "SCS", "SHB", "SHS", "SIP", "SJS", "SKG", "SMC",
+    "SSB", "SSI", "STB", "SZC", "TCB", "TCH", "TCM", "TIG", "TNG", "TPB",
+    "TV2", "VC3", "VC7", "VCB", "VCG", "VCI", "VCS", "VDS", "VFS", "VGC",
+    "VGI", "VGS", "VGT", "VHC", "VHM", "VIB", "VIC", "VIX", "VJC", "VND",
+    "VNM", "VOS", "VPB", "VPG", "VPI", "VRE", "VSC", "VTP", "YEG", "IMP",
+    "L18", "QTP", "KSV", "VNINDEX", "VN30", "PAT", "STK", "PAC", "TLG",
+)
 
 
 # ── Inlined: app.services.indicators.zcore ──────────────────────────────────
@@ -584,7 +606,7 @@ def _configure_runtime() -> None:
     os.environ.setdefault("XDG_CACHE_HOME", str(cache_root))
     os.environ.setdefault("NUMBA_CACHE_DIR", str(numba_cache_dir))
 
-    backend_path = PROJECT_ROOT / "backend"
+    backend_path = "backend"
     for path in (str(PROJECT_ROOT), str(backend_path)):
         if path not in sys.path:
             sys.path.insert(0, path)
@@ -690,12 +712,27 @@ def _r2_upload(local_path: Path, r2_key: str) -> None:
     log.info("R2 upload  done  in %.1fs", time.time() - t0)
 
 
-def _load_watchlist_symbols(watchlist_path: Path | None = None) -> list[str]:
+def _load_watchlist_symbols(watchlist_path: str | Path | None = None) -> list[str]:
     import pandas as pd
 
-    path = watchlist_path or (PROJECT_ROOT / "backend/models/watchlist.csv")
-    watchlist_df = pd.read_csv(path)
-    return watchlist_df.iloc[:, 0].astype(str).tolist()
+    path = (
+        Path(watchlist_path)
+        if watchlist_path is not None
+        else PROJECT_ROOT / "backend/models/watchlist.csv"
+    )
+    if not path.exists():
+        if watchlist_path is not None:
+            raise FileNotFoundError(f"watchlist file not found: {path}")
+        return list(DEFAULT_WATCHLIST_SYMBOLS)
+    watchlist_df = pd.read_csv(path, header=None)
+    return (
+        watchlist_df.iloc[:, 0]
+        .dropna()
+        .astype(str)
+        .str.strip()
+        .loc[lambda symbols: symbols != ""]
+        .tolist()
+    )
 
 
 def load_ohlc_panel(
