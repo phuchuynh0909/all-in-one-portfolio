@@ -11,6 +11,7 @@ import os
 import sys
 import time
 from contextlib import contextmanager
+from functools import partial
 from pathlib import Path
 from typing import Any
 
@@ -596,6 +597,203 @@ def _gpu_kwargs(library: str) -> dict:
     if library == "cat":
         return {"task_type": "GPU"}
     return {}
+
+
+def _resolve_optuna_n_jobs(explicit: int | None = None) -> int:
+    """Parallel trials for Optuna (-1 = all CPUs). Override with OPTUNA_N_JOBS or explicit."""
+    if explicit is not None:
+        return explicit
+    raw = os.getenv("OPTUNA_N_JOBS", "-1").strip().lower()
+    if raw in ("", "auto", "all"):
+        return -1
+    try:
+        v = int(raw)
+    except ValueError:
+        return -1
+    return -1 if v == 0 else v
+
+
+class PurgedKFold:
+    """Purged K-fold with embargo (module-level for picklable Optuna objectives)."""
+
+    def __init__(self, n_splits=5, entry_dates=None, exit_dates=None, embargo_pct=0.01):
+        self.n_splits = n_splits
+        self.entry_dates = entry_dates.reset_index(drop=True)
+        self.exit_dates = exit_dates.reset_index(drop=True)
+        self.embargo_pct = embargo_pct
+
+    def split(self, X, y=None, groups=None):
+        n = len(X)
+        indices = np.arange(n)
+        embargo_n = int(n * self.embargo_pct)
+        test_ranges = np.array_split(indices, self.n_splits)
+        for test_idx in test_ranges:
+            test_start_t = self.entry_dates.iloc[test_idx[0]]
+            test_end_t = self.exit_dates.iloc[test_idx[-1]]
+            train_mask = np.ones(n, dtype=bool)
+            train_mask[test_idx] = False
+            for i in indices[train_mask]:
+                if (self.entry_dates.iloc[i] <= test_end_t) and (
+                    self.exit_dates.iloc[i] >= test_start_t
+                ):
+                    train_mask[i] = False
+            embargo_end = min(test_idx[-1] + 1 + embargo_n, n)
+            train_mask[test_idx[-1] + 1 : embargo_end] = False
+            train_idx = indices[train_mask]
+            yield train_idx, test_idx
+
+    def get_n_splits(self, X=None, y=None, groups=None):
+        return self.n_splits
+
+
+def _optuna_rows(arr: Any, idx: Any) -> Any:
+    return arr.iloc[idx] if hasattr(arr, "iloc") else np.asarray(arr)[idx]
+
+
+def _optuna_objective_xgb(
+    trial: Any,
+    *,
+    X_train_scaled: Any,
+    y_train: Any,
+    train_weights: Any,
+    purged_cv: PurgedKFold,
+    scale_pos_weight: float,
+    es_rounds: int,
+    xgb_gpu_kwargs: dict[str, Any],
+) -> float:
+    from sklearn.metrics import roc_auc_score
+    from xgboost import XGBClassifier
+
+    params = {
+        "objective": "binary:logistic",
+        "eval_metric": "auc",
+        "n_estimators": 1000,
+        "early_stopping_rounds": es_rounds,
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+        "max_depth": trial.suggest_int("max_depth", 3, 7),
+        "min_child_weight": trial.suggest_int("min_child_weight", 1, 10),
+        "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+        "gamma": trial.suggest_float("gamma", 0, 5),
+        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 1.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 1.0, log=True),
+        "scale_pos_weight": scale_pos_weight,
+        "random_state": 42,
+        "verbosity": 0,
+        **xgb_gpu_kwargs,
+    }
+    scores = []
+    for train_idx, val_idx in purged_cv.split(X_train_scaled):
+        m = XGBClassifier(**params)
+        m.fit(
+            _optuna_rows(X_train_scaled, train_idx),
+            _optuna_rows(y_train, train_idx),
+            sample_weight=_optuna_rows(train_weights, train_idx),
+            eval_set=[
+                (_optuna_rows(X_train_scaled, val_idx), _optuna_rows(y_train, val_idx))
+            ],
+            verbose=False,
+        )
+        proba = m.predict_proba(_optuna_rows(X_train_scaled, val_idx))[:, 1]
+        scores.append(roc_auc_score(_optuna_rows(y_train, val_idx), proba))
+    return float(np.mean(scores))
+
+
+def _optuna_objective_lgbm(
+    trial: Any,
+    *,
+    X_train_scaled: Any,
+    y_train: Any,
+    train_weights: Any,
+    purged_cv: PurgedKFold,
+    es_rounds: int,
+    lgbm_gpu_kwargs: dict[str, Any],
+) -> float:
+    from lightgbm import LGBMClassifier
+    from lightgbm import early_stopping as lgb_es
+    from lightgbm import log_evaluation as lgb_log
+    from sklearn.metrics import roc_auc_score
+
+    params = {
+        "objective": "binary",
+        "metric": "auc",
+        "n_estimators": 1000,
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+        "num_leaves": trial.suggest_int("num_leaves", 15, 63),
+        "max_depth": trial.suggest_int("max_depth", 3, 7),
+        "min_child_samples": trial.suggest_int("min_child_samples", 10, 80),
+        "subsample": trial.suggest_float("subsample", 0.6, 1.0),
+        "colsample_bytree": trial.suggest_float("colsample_bytree", 0.6, 1.0),
+        "reg_alpha": trial.suggest_float("reg_alpha", 1e-8, 1.0, log=True),
+        "reg_lambda": trial.suggest_float("reg_lambda", 1e-8, 1.0, log=True),
+        "class_weight": "balanced",
+        "random_state": 42,
+        "verbosity": -1,
+        **lgbm_gpu_kwargs,
+    }
+    scores = []
+    for train_idx, val_idx in purged_cv.split(X_train_scaled):
+        m = LGBMClassifier(**params)
+        m.fit(
+            _optuna_rows(X_train_scaled, train_idx),
+            _optuna_rows(y_train, train_idx),
+            sample_weight=_optuna_rows(train_weights, train_idx),
+            eval_set=[
+                (_optuna_rows(X_train_scaled, val_idx), _optuna_rows(y_train, val_idx))
+            ],
+            callbacks=[
+                lgb_es(es_rounds, verbose=False),
+                lgb_log(period=-1),
+            ],
+        )
+        proba = m.predict_proba(_optuna_rows(X_train_scaled, val_idx))[:, 1]
+        scores.append(roc_auc_score(_optuna_rows(y_train, val_idx), proba))
+    return float(np.mean(scores))
+
+
+def _optuna_objective_cat(
+    trial: Any,
+    *,
+    X_train_scaled: Any,
+    y_train: Any,
+    train_weights: Any,
+    purged_cv: PurgedKFold,
+    es_rounds: int,
+    cat_gpu_kwargs: dict[str, Any],
+) -> float:
+    from catboost import CatBoostClassifier
+    from sklearn.metrics import roc_auc_score
+
+    params = {
+        "objective": "Logloss",
+        "eval_metric": "AUC",
+        "iterations": 1000,
+        "early_stopping_rounds": es_rounds,
+        "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.2, log=True),
+        "depth": trial.suggest_int("depth", 3, 7),
+        "l2_leaf_reg": trial.suggest_float("l2_leaf_reg", 1e-3, 10.0, log=True),
+        "random_strength": trial.suggest_float("random_strength", 1e-3, 10.0, log=True),
+        "bagging_temperature": trial.suggest_float("bagging_temperature", 0, 5),
+        "auto_class_weights": "Balanced",
+        "random_seed": 42,
+        "verbose": False,
+        **cat_gpu_kwargs,
+    }
+    scores = []
+    for train_idx, val_idx in purged_cv.split(X_train_scaled):
+        m = CatBoostClassifier(**params)
+        m.fit(
+            _optuna_rows(X_train_scaled, train_idx),
+            _optuna_rows(y_train, train_idx),
+            sample_weight=_optuna_rows(train_weights, train_idx),
+            eval_set=(
+                _optuna_rows(X_train_scaled, val_idx),
+                _optuna_rows(y_train, val_idx),
+            ),
+        )
+        proba = m.predict_proba(_optuna_rows(X_train_scaled, val_idx))[:, 1]
+        scores.append(roc_auc_score(_optuna_rows(y_train, val_idx), proba))
+    return float(np.mean(scores))
 
 
 def _configure_runtime() -> None:
@@ -1409,6 +1607,7 @@ def _run_feature_pipeline_impl(refresh_stock_cache: bool = False) -> dict[str, A
 def _run_training_pipeline_impl(
     training_df: Any,
     training_feature_columns: list[str],
+    optuna_n_jobs: int | None = None,
 ) -> dict[str, Any]:
     """Train base models, ensembles, and evaluation artifacts from in-memory features."""
     import json
@@ -1506,35 +1705,6 @@ def _run_training_pipeline_impl(
         exit_dates_production.reset_index(drop=True),
     )
 
-    class PurgedKFold:
-        def __init__(self, n_splits=5, entry_dates=None, exit_dates=None, embargo_pct=0.01):
-            self.n_splits    = n_splits
-            self.entry_dates = entry_dates.reset_index(drop=True)
-            self.exit_dates  = exit_dates.reset_index(drop=True)
-            self.embargo_pct = embargo_pct
-
-        def split(self, X, y=None, groups=None):
-            n = len(X)
-            indices = np.arange(n)
-            embargo_n = int(n * self.embargo_pct)
-            test_ranges = np.array_split(indices, self.n_splits)
-            for test_idx in test_ranges:
-                test_start_t = self.entry_dates.iloc[test_idx[0]]
-                test_end_t   = self.exit_dates.iloc[test_idx[-1]]
-                train_mask = np.ones(n, dtype=bool)
-                train_mask[test_idx] = False
-                for i in indices[train_mask]:
-                    if (self.entry_dates.iloc[i] <= test_end_t) and \
-                       (self.exit_dates.iloc[i]  >= test_start_t):
-                        train_mask[i] = False
-                embargo_end = min(test_idx[-1] + 1 + embargo_n, n)
-                train_mask[test_idx[-1]+1 : embargo_end] = False
-                train_idx = indices[train_mask]
-                yield train_idx, test_idx
-
-        def get_n_splits(self, X=None, y=None, groups=None):
-            return self.n_splits
-
     purged_cv = PurgedKFold(
         n_splits=5,
         entry_dates=dates_train,
@@ -1610,49 +1780,43 @@ def _run_training_pipeline_impl(
 
     n_pos = (y_train == 1).sum()
     n_neg = (y_train == 0).sum()
-    scale_pos_weight = n_neg / max(n_pos, 1)
+    scale_pos_weight = float(n_neg / max(n_pos, 1))
 
     ES_ROUNDS = 50
 
-    def _rows(arr, idx):
-        return arr.iloc[idx] if hasattr(arr, 'iloc') else np.asarray(arr)[idx]
+    n_optuna = _resolve_optuna_n_jobs(optuna_n_jobs)
+    log.info(
+        "Optuna parallel  n_jobs=%s  (OPTUNA_N_JOBS env or --optuna-jobs; -1 = all CPUs)",
+        n_optuna,
+    )
+    if USE_GPU and n_optuna != 1:
+        log.warning(
+            "USE_GPU with Optuna n_jobs!=1: multiple workers may contend on one GPU; "
+            "use --optuna-jobs 1 if you see OOM or slowdowns."
+        )
 
-    def objective_xgb(trial):
-        params = {
-            'objective':            'binary:logistic',
-            'eval_metric':          'auc',
-            'n_estimators':         1000,
-            'early_stopping_rounds': ES_ROUNDS,
-            'learning_rate':        trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
-            'max_depth':            trial.suggest_int('max_depth', 3, 7),
-            'min_child_weight':     trial.suggest_int('min_child_weight', 1, 10),
-            'subsample':            trial.suggest_float('subsample', 0.6, 1.0),
-            'colsample_bytree':     trial.suggest_float('colsample_bytree', 0.6, 1.0),
-            'gamma':                trial.suggest_float('gamma', 0, 5),
-            'reg_alpha':            trial.suggest_float('reg_alpha', 1e-8, 1.0, log=True),
-            'reg_lambda':           trial.suggest_float('reg_lambda', 1e-8, 1.0, log=True),
-            'scale_pos_weight':     scale_pos_weight,
-            'random_state':         42,
-            'verbosity':            0,
-            **_gpu_kwargs('xgb'),
-        }
-        scores = []
-        for train_idx, val_idx in purged_cv.split(X_train_scaled):
-            m = XGBClassifier(**params)
-            m.fit(
-                _rows(X_train_scaled, train_idx), _rows(y_train, train_idx),
-                sample_weight=_rows(train_weights, train_idx),
-                eval_set=[(_rows(X_train_scaled, val_idx), _rows(y_train, val_idx))],
-                verbose=False,
-            )
-            proba = m.predict_proba(_rows(X_train_scaled, val_idx))[:, 1]
-            scores.append(roc_auc_score(_rows(y_train, val_idx), proba))
-        return np.mean(scores)
+    xgb_kw = _gpu_kwargs("xgb")
+    lgbm_kw = _gpu_kwargs("lgbm")
+    cat_kw = _gpu_kwargs("cat")
 
-    log.info("[1/3] XGBoost — Optuna HPO  n_trials=80")
+    log.info("[1/3] XGBoost — Optuna HPO  n_trials=80  n_jobs=%s", n_optuna)
     sampler = optuna.samplers.TPESampler(seed=42)
-    study_xgb = optuna.create_study(direction='maximize', sampler=sampler)
-    study_xgb.optimize(objective_xgb, n_trials=80, show_progress_bar=False)
+    study_xgb = optuna.create_study(direction="maximize", sampler=sampler)
+    study_xgb.optimize(
+        partial(
+            _optuna_objective_xgb,
+            X_train_scaled=X_train_scaled,
+            y_train=y_train,
+            train_weights=train_weights,
+            purged_cv=purged_cv,
+            scale_pos_weight=scale_pos_weight,
+            es_rounds=ES_ROUNDS,
+            xgb_gpu_kwargs=xgb_kw,
+        ),
+        n_trials=80,
+        n_jobs=n_optuna,
+        show_progress_bar=False,
+    )
     log.info("      XGBoost HPO done  best_auc=%.4f  params=%s", study_xgb.best_value, study_xgb.best_params)
 
     _es_cut = int(len(X_train_scaled) * 0.80)
@@ -1693,40 +1857,22 @@ def _run_training_pipeline_impl(
     from lightgbm import LGBMClassifier
     from lightgbm import early_stopping as lgb_es, log_evaluation as lgb_log
 
-    def objective_lgbm(trial):
-        params = {
-            'objective':         'binary',
-            'metric':            'auc',
-            'n_estimators':      1000,
-            'learning_rate':     trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
-            'num_leaves':        trial.suggest_int('num_leaves', 15, 63),
-            'max_depth':         trial.suggest_int('max_depth', 3, 7),
-            'min_child_samples': trial.suggest_int('min_child_samples', 10, 80),
-            'subsample':         trial.suggest_float('subsample', 0.6, 1.0),
-            'colsample_bytree':  trial.suggest_float('colsample_bytree', 0.6, 1.0),
-            'reg_alpha':         trial.suggest_float('reg_alpha', 1e-8, 1.0, log=True),
-            'reg_lambda':        trial.suggest_float('reg_lambda', 1e-8, 1.0, log=True),
-            'class_weight':      'balanced',
-            'random_state':      42,
-            'verbosity':         -1,
-            **_gpu_kwargs('lgbm'),
-        }
-        scores = []
-        for train_idx, val_idx in purged_cv.split(X_train_scaled):
-            m = LGBMClassifier(**params)
-            m.fit(
-                _rows(X_train_scaled, train_idx), _rows(y_train, train_idx),
-                sample_weight=_rows(train_weights, train_idx),
-                eval_set=[(_rows(X_train_scaled, val_idx), _rows(y_train, val_idx))],
-                callbacks=[lgb_es(ES_ROUNDS, verbose=False), lgb_log(period=-1)],
-            )
-            proba = m.predict_proba(_rows(X_train_scaled, val_idx))[:, 1]
-            scores.append(roc_auc_score(_rows(y_train, val_idx), proba))
-        return np.mean(scores)
-
-    log.info("[2/3] LightGBM — Optuna HPO  n_trials=80")
+    log.info("[2/3] LightGBM — Optuna HPO  n_trials=80  n_jobs=%s", n_optuna)
     study_lgbm = optuna.create_study(direction='maximize', sampler=optuna.samplers.TPESampler(seed=42))
-    study_lgbm.optimize(objective_lgbm, n_trials=80, show_progress_bar=False)
+    study_lgbm.optimize(
+        partial(
+            _optuna_objective_lgbm,
+            X_train_scaled=X_train_scaled,
+            y_train=y_train,
+            train_weights=train_weights,
+            purged_cv=purged_cv,
+            es_rounds=ES_ROUNDS,
+            lgbm_gpu_kwargs=lgbm_kw,
+        ),
+        n_trials=80,
+        n_jobs=n_optuna,
+        show_progress_bar=False,
+    )
     log.info("      LightGBM HPO done  best_auc=%.4f", study_lgbm.best_value)
     log.info("      LightGBM — final fit")
     final_lgbm = LGBMClassifier(
@@ -1756,37 +1902,22 @@ def _run_training_pipeline_impl(
 
     from catboost import CatBoostClassifier
 
-    def objective_cat(trial):
-        params = {
-            'objective':            'Logloss',
-            'eval_metric':          'AUC',
-            'iterations':           1000,
-            'early_stopping_rounds': ES_ROUNDS,
-            'learning_rate':        trial.suggest_float('learning_rate', 0.01, 0.2, log=True),
-            'depth':                trial.suggest_int('depth', 3, 7),
-            'l2_leaf_reg':          trial.suggest_float('l2_leaf_reg', 1e-3, 10.0, log=True),
-            'random_strength':      trial.suggest_float('random_strength', 1e-3, 10.0, log=True),
-            'bagging_temperature':  trial.suggest_float('bagging_temperature', 0, 5),
-            'auto_class_weights':   'Balanced',
-            'random_seed':          42,
-            'verbose':              False,
-            **_gpu_kwargs('cat'),
-        }
-        scores = []
-        for train_idx, val_idx in purged_cv.split(X_train_scaled):
-            m = CatBoostClassifier(**params)
-            m.fit(
-                _rows(X_train_scaled, train_idx), _rows(y_train, train_idx),
-                sample_weight=_rows(train_weights, train_idx),
-                eval_set=(_rows(X_train_scaled, val_idx), _rows(y_train, val_idx)),
-            )
-            proba = m.predict_proba(_rows(X_train_scaled, val_idx))[:, 1]
-            scores.append(roc_auc_score(_rows(y_train, val_idx), proba))
-        return float(np.mean(scores))
-
-    log.info("[3/3] CatBoost — Optuna HPO  n_trials=60")
+    log.info("[3/3] CatBoost — Optuna HPO  n_trials=60  n_jobs=%s", n_optuna)
     study_cat = optuna.create_study(direction='maximize', sampler=optuna.samplers.TPESampler(seed=42))
-    study_cat.optimize(objective_cat, n_trials=60, show_progress_bar=False)
+    study_cat.optimize(
+        partial(
+            _optuna_objective_cat,
+            X_train_scaled=X_train_scaled,
+            y_train=y_train,
+            train_weights=train_weights,
+            purged_cv=purged_cv,
+            es_rounds=ES_ROUNDS,
+            cat_gpu_kwargs=cat_kw,
+        ),
+        n_trials=60,
+        n_jobs=n_optuna,
+        show_progress_bar=False,
+    )
     log.info("      CatBoost HPO done  best_auc=%.4f", study_cat.best_value)
     log.info("      CatBoost — final fit")
     final_cat = CatBoostClassifier(
@@ -2070,6 +2201,7 @@ def train_meta_label_models(
     training_feature_columns: list[str],
     output_dir: str = str(PIPELINE_OUTPUT_DIR),
     models_dir: str = str(MODELS_DIR),
+    optuna_n_jobs: int | None = None,
 ) -> dict[str, Any]:
     """Train meta-label models from in-memory training data."""
     global MODELS_DIR
@@ -2086,7 +2218,9 @@ def train_meta_label_models(
     MODELS_DIR = model_path
     try:
         with _working_directory(output_path):
-            namespace = _run_training_pipeline_impl(training_df, training_feature_columns)
+            namespace = _run_training_pipeline_impl(
+                training_df, training_feature_columns, optuna_n_jobs=optuna_n_jobs
+            )
     finally:
         MODELS_DIR = previous_models_dir
         _collect_garbage()
@@ -2127,6 +2261,7 @@ def train_meta_label_models_pipeline(
     output_dir: str = str(PIPELINE_OUTPUT_DIR),
     models_dir: str = str(MODELS_DIR),
     refresh_stock_cache: bool = False,
+    optuna_n_jobs: int | None = None,
 ) -> dict[str, Any]:
     result: dict[str, Any] = {}
 
@@ -2144,6 +2279,7 @@ def train_meta_label_models_pipeline(
         training_feature_columns=feature_payload["feature_columns"],
         output_dir=output_dir,
         models_dir=models_dir,
+        optuna_n_jobs=optuna_n_jobs,
     )
     return result
 
@@ -2157,6 +2293,13 @@ if __name__ == "__main__":
     parser.add_argument("--refresh-stock-cache", action="store_true", default=False)
     parser.add_argument("--gpu", action="store_true", default=False,
                         help="Enable GPU training (XGBoost: cuda, LightGBM: gpu, CatBoost: GPU)")
+    parser.add_argument(
+        "--optuna-jobs",
+        type=int,
+        default=None,
+        metavar="N",
+        help="Parallel Optuna trials per study (-1 = all CPUs). Overrides OPTUNA_N_JOBS if set.",
+    )
     args = parser.parse_args()
 
     if args.gpu or _get_env_bool("USE_GPU"):
@@ -2167,5 +2310,6 @@ if __name__ == "__main__":
         output_dir=args.output_dir,
         models_dir=args.models_dir,
         refresh_stock_cache=args.refresh_stock_cache,
+        optuna_n_jobs=args.optuna_jobs,
     )
     print(result)
