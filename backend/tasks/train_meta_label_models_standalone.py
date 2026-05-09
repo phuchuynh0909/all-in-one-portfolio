@@ -23,7 +23,7 @@ logging.basicConfig(
 log = logging.getLogger("meta_label")
 
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+PROJECT_ROOT = Path(__file__).resolve()
 PIPELINE_OUTPUT_DIR = "notebooks"
 MODELS_DIR =  "models"
 USE_GPU: bool = False  # set to True via --gpu flag or USE_GPU=1 env var
