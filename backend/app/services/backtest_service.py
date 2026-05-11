@@ -28,6 +28,7 @@ from app.services.backtest_strategies import (
     EpisodicPivotStrategyBT,
     WilliamsVixStrategyBT,
 )
+from app.services.strategies.breakout_ttm_005c import BreakoutTTM005C
 
 # List of features used for ML predictions
 FEATURES_LIST = [
@@ -106,6 +107,11 @@ def get_strategy_params(strategy_name: str) -> Tuple[List[tuple], type, List[str
                        'consecutive_neg_threshold']
         return strategy_params, BreakoutTTMVersion2, param_names
 
+    elif strategy_name == "Breakout TTM 005C":
+        strategy_params = [('v1',), ('v2',), ('v3',)]
+        param_names = ['entry_version']
+        return strategy_params, BreakoutTTM005C, param_names
+
     elif strategy_name == "Dual RSI":
         from app.services.strategies.dual_rsi import DualRSI
         strategy_params = [
@@ -160,7 +166,7 @@ def build_features(total_trades: pd.DataFrame) -> pd.DataFrame:
 def predict_features(feature_df: pd.DataFrame) -> pd.DataFrame:
     """Make predictions using ML models."""
     from app.services.ml_models import get_models
-    
+
     # Get pre-loaded models
     xgb_model, lgb_model, catboost_model = get_models()
 
@@ -175,6 +181,48 @@ def predict_features(feature_df: pd.DataFrame) -> pd.DataFrame:
     feature_df['y_pred_catboost'] = catboost_model.predict_proba(X_predict)[:, 1]
 
     return feature_df
+
+
+def build_features_meta(stocks_panel: pd.DataFrame, trades_df: pd.DataFrame) -> pd.DataFrame:
+    """Build features for meta-label models using the full OHLC panel."""
+    from tasks.train_meta_label_models import build_features_from_ohlc_panel
+
+    panel_symbols = list(stocks_panel.columns.get_level_values('symbol').unique())
+    features_df = build_features_from_ohlc_panel(stocks_panel, watchlist_symbols=panel_symbols)
+    features_df_reset = features_df.reset_index()
+    return pd.merge(trades_df, features_df_reset, on=['date', 'symbol'], how='left')
+
+
+def predict_features_meta(feature_df: pd.DataFrame) -> pd.DataFrame:
+    """Make predictions using meta-label models with production scaler and calibration."""
+    from app.services.ml_models import get_meta_models
+
+    xgb_m, lgb_m, cat_m, scaler, feat_cols, spw, class_ratio, ensemble_weights = get_meta_models()
+
+    available_cols = [c for c in feat_cols if c in feature_df.columns]
+    X = feature_df[available_cols].fillna(0)
+    X_scaled = scaler.transform(X)
+
+    def _recalib(raw, ratio):
+        raw = np.clip(np.asarray(raw, dtype=float), 1e-6, 1 - 1e-6)
+        return raw / (raw + (1.0 - raw) / ratio)
+
+    p_xgb = _recalib(xgb_m.predict_proba(X_scaled)[:, 1], spw)
+    p_lgb = _recalib(lgb_m.predict(X_scaled), class_ratio)
+    p_cat = np.asarray(cat_m.predict_proba(X_scaled)[:, 1], dtype=float)
+
+    w_xgb = float(ensemble_weights.get('XGBoost', 1 / 3))
+    w_lgb = float(ensemble_weights.get('LightGBM', 1 / 3))
+    w_cat = float(ensemble_weights.get('CatBoost', 1 / 3))
+    w_sum = w_xgb + w_lgb + w_cat
+
+    out = feature_df.copy()
+    out['y_pred_xgb'] = p_xgb
+    out['y_pred_lgbm'] = p_lgb
+    out['y_pred_catboost'] = p_cat
+    out['y_pred_ensemble'] = (p_xgb * w_xgb + p_lgb * w_lgb + p_cat * w_cat) / w_sum
+
+    return out
 
 async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] | None = None, apply_ml: bool = True) -> Dict:
     """Run backtest for given strategy and parameters."""
@@ -246,37 +294,48 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     feature_start_time = time.time()
     feature_building_duration = 0
     prediction_duration = 0
-    
-    if apply_ml:
-        feature_df = build_features(all_trades_df)
-        feature_building_duration = time.time() - feature_start_time
-        logger.info(f"Feature building took {feature_building_duration:.2f} seconds")
-        
-        prediction_start_time = time.time()
-        feature_df = predict_features(feature_df)
-        prediction_duration = time.time() - prediction_start_time
-        logger.info(f"ML predictions took {prediction_duration:.2f} seconds")
 
-        # Merge original trades with feature/prediction results
-        merge_cols = ['col', 'entry_idx', 'type']
-        
+    is_005c = strategy_name == "Breakout TTM 005C"
+
+    if apply_ml:
+        if is_005c:
+            feature_df = build_features_meta(stocks, all_trades_df)
+            feature_building_duration = time.time() - feature_start_time
+            logger.info(f"Meta feature building took {feature_building_duration:.2f} seconds")
+
+            prediction_start_time = time.time()
+            feature_df = predict_features_meta(feature_df)
+            prediction_duration = time.time() - prediction_start_time
+            logger.info(f"Meta predictions took {prediction_duration:.2f} seconds")
+        else:
+            feature_df = build_features(all_trades_df)
+            feature_building_duration = time.time() - feature_start_time
+            logger.info(f"Feature building took {feature_building_duration:.2f} seconds")
+
+            prediction_start_time = time.time()
+            feature_df = predict_features(feature_df)
+            prediction_duration = time.time() - prediction_start_time
+            logger.info(f"ML predictions took {prediction_duration:.2f} seconds")
+
         # Merge predictions back to original trades (left join to keep all original trades)
-        prediction_cols = ['y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost'] + \
+        merge_cols = ['col', 'entry_idx', 'type']
+        prediction_cols = ['y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble'] + \
                          [col for col in feature_df.columns if col.startswith('msr_rank')]
-        
+        prediction_cols = [c for c in prediction_cols if c in feature_df.columns]
+        print(prediction_cols)
         complete_trades_df = pd.merge(
-            original_trades_df, 
+            original_trades_df,
             feature_df[merge_cols + prediction_cols],
-            on=merge_cols, 
+            on=merge_cols,
             how='left'
         )
     else:
         logger.info("Skipping ML predictions (apply_ml=False)")
         complete_trades_df = original_trades_df.copy()
-        # Add empty prediction columns
         complete_trades_df['y_pred_xgb'] = None
         complete_trades_df['y_pred_lgbm'] = None
         complete_trades_df['y_pred_catboost'] = None
+        complete_trades_df['y_pred_ensemble'] = None
         complete_trades_df['msr_rank_10'] = None
     
     # Prepare response with proper copies
@@ -307,17 +366,16 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
         open_trades_df.loc[:, 'metadata'] = open_trades_df['metadata'].apply(_parse_metadata)
 
     # Handle NaN and infinity values before JSON serialization
-    numeric_cols = ['entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'msr_rank_10']
+    numeric_cols = ['entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10']
     for col in numeric_cols:
         if col in open_trades_df.columns:
-            # Replace NaN and infinity with None for JSON compliance
             open_trades_df[col] = open_trades_df[col].replace([np.nan, np.inf, -np.inf], None)
 
     # Convert to records - select only available columns
-    open_trades_columns = ['symbol', 'date', 'entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm', 
-                          'y_pred_catboost', 'msr_rank_10', 'metadata', 'type', 'entry_idx']
+    open_trades_columns = ['symbol', 'date', 'entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm',
+                          'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10', 'metadata', 'type', 'entry_idx']
     available_open_cols = [col for col in open_trades_columns if col in open_trades_df.columns]
-    
+
     open_trades = open_trades_df[available_open_cols].to_dict('records')
 
     # Format closed trades
@@ -326,17 +384,16 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
         closed_trades_df.loc[:, 'metadata'] = closed_trades_df['metadata'].apply(_parse_metadata)
     closed_trades_df.loc[:, 'trading_days'] = closed_trades_df['exit_idx'] - closed_trades_df['entry_idx']
     closed_trades_df.loc[:, 'close_date'] = closed_trades_df.apply(lambda x: stocks.index[x['exit_idx']], axis=1)
-    
+
     # Handle NaN and infinity values before JSON serialization
-    numeric_cols = ['entry_price', 'pnl', 'trading_days', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'msr_rank_10']
+    numeric_cols = ['entry_price', 'pnl', 'trading_days', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10']
     for col in numeric_cols:
         if col in closed_trades_df.columns:
-            # Replace NaN and infinity with None for JSON compliance
             closed_trades_df[col] = closed_trades_df[col].replace([np.nan, np.inf, -np.inf], None)
-    
-    # Convert to records - select only available columns 
+
+    # Convert to records - select only available columns
     closed_trades_columns = ['symbol', 'date', 'close_date', 'entry_price', 'pnl', 'trading_days',
-                             'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'msr_rank_10', 'metadata',
+                             'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10', 'metadata',
                              'type', 'entry_idx', 'exit_idx']
     available_closed_cols = [col for col in closed_trades_columns if col in closed_trades_df.columns]
     

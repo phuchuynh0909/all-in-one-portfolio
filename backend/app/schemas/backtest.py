@@ -16,6 +16,7 @@ class Trade(BaseModel):
     y_pred_xgb: Optional[float] = None
     y_pred_lgbm: Optional[float] = None
     y_pred_catboost: Optional[float] = None
+    y_pred_ensemble: Optional[float] = None
     msr_rank_10: Optional[float] = None
 
 class BacktestRequest(BaseModel):
