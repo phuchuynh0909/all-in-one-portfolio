@@ -80,6 +80,7 @@ COPY --from=builder /opt/venv /opt/venv
 
 # Copy application code
 COPY --chown=appuser:appuser app ./app
+COPY --chown=appuser:appuser tasks ./tasks
 COPY --chown=appuser:appuser models ./models
 COPY --chown=appuser:appuser alembic ./alembic
 COPY --chown=appuser:appuser alembic.ini ./
