@@ -18,6 +18,7 @@ export interface Trade {
   y_pred_xgb?: number;
   y_pred_lgbm?: number;
   y_pred_catboost?: number;
+  y_pred_ensemble?: number;
   msr_rank_10?: number;
 }
 

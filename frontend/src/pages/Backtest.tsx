@@ -26,6 +26,7 @@ import { useBacktest, type Trade } from '../lib/services/backtest';
 import { format } from 'date-fns';
 
 const STRATEGIES = [
+  "Breakout TTM 005C",
   "Breakout TTM Version 2",
   "Breakout TTM V1",
   "Breakout TTM V1b",
@@ -82,17 +83,31 @@ const columns: GridColDef[] = [
     width: 100,
     valueFormatter: (params: GridValueFormatterParams) => (params.value as number | undefined)?.toFixed(3) ?? '-'
   },
-  { 
-    field: 'y_pred_catboost', 
-    headerName: 'CatBoost Score', 
+  {
+    field: 'y_pred_catboost',
+    headerName: 'CatBoost Score',
     width: 120,
     valueFormatter: (params: GridValueFormatterParams) => (params.value as number | undefined)?.toFixed(3) ?? '-'
   },
-  { 
-    field: 'msr_rank_10', 
-    headerName: 'MSR Rank', 
+  {
+    field: 'y_pred_ensemble',
+    headerName: 'Ensemble Score',
+    width: 120,
+    renderCell: (params: GridRenderCellParams) => {
+      const v = params.value as number | undefined | null;
+      if (v == null) return <Typography variant="body2">-</Typography>;
+      const color = v >= 0.6 ? 'success.main' : v >= 0.4 ? 'warning.main' : 'error.main';
+      return <Typography variant="body2" color={color} fontWeight="bold">{v.toFixed(3)}</Typography>;
+    }
+  },
+  {
+    field: 'msr_rank_10',
+    headerName: 'MSR Rank %',
     width: 100,
-    valueFormatter: (params: GridValueFormatterParams) => (params.value as number | undefined)?.toFixed(3) ?? '-'
+    valueFormatter: (params: GridValueFormatterParams) => {
+      const v = params.value as number | undefined;
+      return v != null ? `${(v * 100).toFixed(1)}%` : '-';
+    }
   },
   { 
     field: 'metadata', 
