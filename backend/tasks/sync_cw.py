@@ -125,7 +125,7 @@ def _fix_price_scale(df: pd.DataFrame) -> pd.DataFrame:
             continue
         df[col] = pd.to_numeric(df[col], errors="coerce")
         mask = df[col] > 1000
-        df.loc[mask, col] = df.loc[mask, col] / 100
+        df.loc[mask, col] = df.loc[mask, col] / 1000
         df[col] = df[col].round(2)
     return df
 
