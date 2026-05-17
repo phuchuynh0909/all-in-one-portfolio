@@ -27,7 +27,7 @@ export interface BacktestTrade {
   avgExitPrice: number;
   exitFees: number;
   pnl: number;
-  return: number;
+  return_pct: number;
   direction: 'Long' | 'Short';
   status: 'Closed' | 'Open';
 }
@@ -109,7 +109,7 @@ const calculateStats = (trades: BacktestTrade[], initialCash: number): BacktestS
   }
 
   const winningTrades = trades.filter((t) => t.pnl > 0);
-  const returns = trades.map((t) => t.return * 100);
+  const returns = trades.map((t) => t.return_pct * 100);
 
   return {
     totalReturn: ((equity - initialCash) / initialCash) * 100,
@@ -583,9 +583,9 @@ export default function BacktestChart({
           const exitMarker: SeriesMarker<UTCTimestamp> = {
             time: formatChartTime(trade.exitTimestamp),
             position: 'aboveBar',
-            color: trade.pnl >= 0 ? '#22c55e' : '#ef4444',
+            color: trade.return_pct >= 0 ? '#22c55e' : '#ef4444',
             shape: 'arrowDown',
-            text: `SELL ${trade.pnl >= 0 ? '+' : ''}${(trade.return * 100).toFixed(1)}%`,
+            text: `SELL ${trade.return_pct >= 0 ? '+' : ''}${(trade.return_pct * 100).toFixed(1)}%`,
           };
 
           return [entryMarker, exitMarker];

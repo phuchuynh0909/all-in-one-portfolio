@@ -15,12 +15,14 @@ import {
   Button,
   Chip,
   Stack,
+  Tooltip,
 } from '@mui/material';
 import { DataGrid, GridToolbar } from '@mui/x-data-grid';
-import type { 
-  GridColDef, 
+import type {
+  GridColDef,
   GridRenderCellParams,
-  GridValueFormatterParams
+  GridValueFormatterParams,
+  GridValueGetterParams,
 } from '@mui/x-data-grid';
 import { useBacktest, type Trade } from '../lib/services/backtest';
 import { format } from 'date-fns';
@@ -57,16 +59,16 @@ const columns: GridColDef[] = [
     valueFormatter: (params: GridValueFormatterParams) => params.value ? format(new Date(params.value as string), 'dd/MM/yyyy') : '-'
   },
   { field: 'entry_price', headerName: 'Entry Price', width: 120 },
-  { 
-    field: 'pnl', 
-    headerName: 'PnL', 
+  {
+    field: 'return_pct',
+    headerName: 'Return',
     width: 100,
     renderCell: (params: GridRenderCellParams) => (
       <Typography
         color={params.value >= 0 ? 'success.main' : 'error.main'}
         fontWeight="bold"
       >
-        {params.value.toFixed(2)}
+        {params.value != null ? `${(params.value * 100).toFixed(2)}%` : '-'}
       </Typography>
     )
   },
@@ -109,11 +111,87 @@ const columns: GridColDef[] = [
       return v != null ? `${(v * 100).toFixed(1)}%` : '-';
     }
   },
-  { 
-    field: 'metadata', 
-    headerName: 'Parameters', 
+  {
+    field: 'risk_regime',
+    headerName: 'Symbol Regime',
+    width: 120,
+    renderCell: (params: GridRenderCellParams) => {
+      const v = params.value as boolean | null | undefined;
+      if (v == null) return <Typography variant="body2" color="text.disabled">—</Typography>;
+      return (
+        <Tooltip title={v ? 'Symbol GKYZ: risk-on (high-vol)' : 'Symbol GKYZ: risk-off (low-vol)'}>
+          <Chip
+            label={v ? 'Risk-On' : 'Risk-Off'}
+            size="small"
+            sx={{
+              bgcolor: v ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+              color: v ? '#ef4444' : '#22c55e',
+              border: `1px solid ${v ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.4)'}`,
+              fontWeight: 600,
+              fontSize: '0.7rem',
+            }}
+          />
+        </Tooltip>
+      );
+    },
+  },
+  {
+    field: 'market_risk_regime',
+    headerName: 'Market Regime',
+    width: 125,
+    renderCell: (params: GridRenderCellParams) => {
+      const v = params.value as boolean | null | undefined;
+      if (v == null) return <Typography variant="body2" color="text.disabled">—</Typography>;
+      return (
+        <Tooltip title={v ? 'VNINDEX GKYZ: risk-on (high-vol)' : 'VNINDEX GKYZ: risk-off (low-vol)'}>
+          <Chip
+            label={v ? 'Risk-On' : 'Risk-Off'}
+            size="small"
+            sx={{
+              bgcolor: v ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
+              color: v ? '#ef4444' : '#22c55e',
+              border: `1px solid ${v ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.4)'}`,
+              fontWeight: 600,
+              fontSize: '0.7rem',
+            }}
+          />
+        </Tooltip>
+      );
+    },
+  },
+  {
+    field: 'breadth_regime',
+    headerName: 'Breadth Regime',
+    width: 130,
+    renderCell: (params: GridRenderCellParams) => {
+      const v = params.value as boolean | null | undefined;
+      if (v == null) return <Typography variant="body2" color="text.disabled">—</Typography>;
+      return (
+        <Tooltip title={v ? 'McClellan Summation > SMA20 (bullish breadth)' : 'McClellan Summation < SMA20 (bearish breadth)'}>
+          <Chip
+            label={v ? 'Bullish' : 'Bearish'}
+            size="small"
+            sx={{
+              bgcolor: v ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
+              color: v ? '#22c55e' : '#ef4444',
+              border: `1px solid ${v ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
+              fontWeight: 600,
+              fontSize: '0.7rem',
+            }}
+          />
+        </Tooltip>
+      );
+    },
+  },
+  {
+    field: 'metadata',
+    headerName: 'Parameters',
     width: 300,
-    valueFormatter: (params: GridValueFormatterParams) => formatMetadata(params.value as Record<string, any>)
+    valueGetter: (params: GridValueGetterParams) => {
+      const meta = params.value as Record<string, any> | null | undefined;
+      if (!meta || typeof meta !== 'object') return '';
+      return formatMetadata(meta);
+    },
   },
 ];
 

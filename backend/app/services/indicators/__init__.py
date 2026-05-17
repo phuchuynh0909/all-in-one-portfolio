@@ -22,6 +22,7 @@ from .garch_regime import garch_volatility, ms_garch_regime, garch_volatility_nb
 from .spread_gmm import ohlc_gmm_spread, rolling_ohlc_gmm_spread, ohlc_gmm_spread_nb
 from .garch_regime_multifeature import ms_regime_multifeature, regime_multifeature_nb
 from .markov_kama_regime import markov_kama_regime, markov_kama_regime_table
+from .regime_signals import gkyz_hysteresis, mcclellan_breadth_regime, compute_regime_signals
 
 __all__ = ['avwap', 'trailing_sl', 'hawkes_BVC',
            'calculate_kalman_zscore', 'calculate_yz_volatility', 'calculate_gkyz_volatility',
@@ -34,4 +35,5 @@ __all__ = ['avwap', 'trailing_sl', 'hawkes_BVC',
            'garch_volatility', 'ms_garch_regime', 'garch_volatility_nb',
            'ohlc_gmm_spread', 'rolling_ohlc_gmm_spread', 'ohlc_gmm_spread_nb',
            'ms_regime_multifeature', 'regime_multifeature_nb',
-           'markov_kama_regime', 'markov_kama_regime_table']
+           'markov_kama_regime', 'markov_kama_regime_table',
+           'gkyz_hysteresis', 'mcclellan_breadth_regime', 'compute_regime_signals']

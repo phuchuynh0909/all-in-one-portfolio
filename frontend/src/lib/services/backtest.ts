@@ -8,7 +8,7 @@ export interface Trade {
   symbol: string;
   date: string;
   entry_price: number;
-  pnl: number;
+  return_pct: number;
   type: 'open_trades' | 'closed_trades';
   entry_idx: number;
   exit_idx?: number;
@@ -20,6 +20,9 @@ export interface Trade {
   y_pred_catboost?: number;
   y_pred_ensemble?: number;
   msr_rank_10?: number;
+  risk_regime?: boolean | null;
+  market_risk_regime?: boolean | null;
+  breadth_regime?: boolean | null;
 }
 
 export interface ExecutionTime {

@@ -14,6 +14,7 @@ import numba as nb
 import pandas as pd
 import vectorbt as vbt
 
+from app.services.indicators import exrem_func_nb
 from app.services.indicators.trailing_sl import atr_trailing_nb
 from app.services.indicators.wiliams_vix_fix import williams_vix_fix_indicator
 
@@ -30,7 +31,7 @@ FIXED_TTM_PARAMS = {
         'osc_smoothing_period': 11,
         'atr_period': 6,
         'atr_multiplier': 2.0,
-        'low_stop_lookback': 9,
+        'low_stop_lookback': 3,
         'consecutive_neg_threshold': 13,
         'william_vix_period': 17,
         'kama_period': 8,
@@ -70,7 +71,7 @@ FIXED_TTM_PARAMS = {
         'osc_smoothing_period': 15,
         'atr_period': 11,
         'atr_multiplier': 2.6,
-        'low_stop_lookback': 5,
+        'low_stop_lookback': 3,
         'consecutive_neg_threshold': 4,
         'william_vix_period': 17,
         'kama_period': 16,
@@ -252,21 +253,21 @@ def compute_signals(
         entries_np = no_sqz_np & (crossed_now | cond_2 | cond_3) & flat_np
 
     else:
-        squeeze_diff_np = bb_upper_np - kc_upper_np
-        consec_neg = count_consecutive_neg_2d(ttms_np)
+        # squeeze_diff_np = bb_upper_np - kc_upper_np
+        # consec_neg = count_consecutive_neg_2d(ttms_np)
 
-        entry_1 = (
-            (shift_2d(squeeze_diff_np, 1) < 0)
-            & (squeeze_diff_np > 0)
-            & (ttms_np > 0)
-            & flat_np
-        )
-        entry_2 = (
-            (shift_2d(squeeze_diff_np, 1) < 0)
-            & (squeeze_diff_np > 0)
-            & (consec_neg > consecutive_neg_threshold)
-        )
-        entries_np = entry_1 | entry_2 | wvf_np
+        # entry_1 = (
+        #     (shift_2d(squeeze_diff_np, 1) < 0)
+        #     & (squeeze_diff_np > 0)
+        #     & (ttms_np > 0)
+        #     & flat_np
+        # )
+        # entry_2 = (
+        #     (shift_2d(squeeze_diff_np, 1) < 0)
+        #     & (squeeze_diff_np > 0)
+        #     & (consec_neg > consecutive_neg_threshold)
+        # )
+        entries_np = wvf_np
 
     return pd.DataFrame(entries_np, index=close.index, columns=close.columns)
 
@@ -277,7 +278,7 @@ def compute_exits(
     low,
     atr_multiplier: float = 1.9,
     atr_period: int = 10,
-    low_stop_lookback: int = 5,
+    low_stop_lookback: int = 3,
 ):
     atr_raw = vbt.IndicatorFactory.from_talib('ATR').run(high, low, close, timeperiod=atr_period)
     ATRTrailing = vbt.IndicatorFactory(
@@ -288,8 +289,8 @@ def compute_exits(
     atr_sl = ATRTrailing.run(close, atr_raw.real, atr_multiplier=atr_multiplier)
     exits_df = close.vbt.crossed_below(atr_sl.atr_trailing)
 
-    MIN = vbt.IndicatorFactory.from_talib('MIN')
-    lowest_low = MIN.run(low, timeperiod=low_stop_lookback).real
+    MIN        = vbt.IndicatorFactory.from_talib('MIN')
+    lowest_low = MIN.run(low, timeperiod=low_stop_lookback).real * 0.99  # 1% buffer below lowest low
     sl_stop_df = ((close - lowest_low) / close).clip(lower=0)
 
     return exits_df, sl_stop_df
@@ -353,9 +354,25 @@ class BreakoutTTM005C:
             low_stop_lookback=p['low_stop_lookback'],
         )
 
-    def get_portfolio(self, **portfolio_kwargs) -> vbt.Portfolio:
+    def get_portfolio(self, *, apply_exrem: bool = True, **portfolio_kwargs) -> vbt.Portfolio:
+        """
+        Build the VectorBT portfolio from raw entry/exit booleans.
+
+        ``apply_exrem`` — If True, run AmiBroker-style **ExRem** on entries using the
+        ATR trail exit mask: only the first entry bar after a flat period counts until
+        an exit fires (same idea as :class:`BreakoutTTMVersion2` in ``breakout_ttm.py``).
+        Exits are unchanged; ``sl_stop`` is unchanged.
+        """
         entries = self.get_entries()
         exits, sl_stop_df = self.get_exits_and_stop()
+        if apply_exrem:
+            en = entries.fillna(False).to_numpy(dtype=np.bool_)
+            ex = exits.fillna(False).to_numpy(dtype=np.bool_)
+            entries = pd.DataFrame(
+                exrem_func_nb(en, ex),
+                index=entries.index,
+                columns=entries.columns,
+            )
         kw = {
             'close': self.data.close,
             'entries': entries,
