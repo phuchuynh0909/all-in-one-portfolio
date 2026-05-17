@@ -24,7 +24,6 @@ import math
 import httpx
 import numpy as np
 import pandas as pd
-from scipy.stats import norm
 from prefect import flow, task
 from custom_metastock2pd import metastock_read, metastock_read_master
 from clickhouse_driver import Client  # type: ignore
@@ -111,6 +110,26 @@ def _filter_active_cw(emaster_df: pd.DataFrame) -> pd.DataFrame:
     return cw_df
 
 
+_PRICE_COLS = ("open", "high", "low", "close")
+
+
+def _fix_price_scale(df: pd.DataFrame) -> pd.DataFrame:
+    """Rescale price columns stored as raw integers and round to 2 decimal places.
+
+    Some MetaStock sources store prices as integers (e.g. 3910 instead of 39.10).
+    Any price column value > 1000 is divided by 100, then rounded to 2 dp.
+    Volume is left untouched.
+    """
+    for col in _PRICE_COLS:
+        if col not in df.columns:
+            continue
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+        mask = df[col] > 1000
+        df.loc[mask, col] = df.loc[mask, col] / 100
+        df[col] = df[col].round(2)
+    return df
+
+
 def _load_ohlc_for_symbols(
     emaster_subset: pd.DataFrame,
     cutoff: pd.Timestamp | None,
@@ -141,7 +160,7 @@ def _load_ohlc_for_symbols(
     df = pd.concat(frames, ignore_index=True)
     del frames
     gc.collect()
-    return df
+    return _fix_price_scale(df)
 
 
 # ── DNSE API metadata fetch ───────────────────────────────────────────────────
@@ -361,6 +380,7 @@ def compute_cw_analytics(
         .rename(columns={"symbol": "underlying", "close": "underlying_close"})
     )
     cw_ohlc = cw_ohlc.merge(und_close, on=["date", "underlying"], how="left")
+    cw_ohlc["underlying_close"] = cw_ohlc["underlying_close"].round(2)
 
     # Historical vol per underlying (rolling window, then merge by symbol+date)
     hv_records: list[dict] = []
