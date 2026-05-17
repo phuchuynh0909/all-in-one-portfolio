@@ -6,7 +6,7 @@ class Trade(BaseModel):
     symbol: str
     date: datetime
     entry_price: float
-    pnl: float
+    return_pct: float
     type: str = Field(description="Either 'open_trades' or 'closed_trades'")
     entry_idx: int
     exit_idx: Optional[int] = None
@@ -18,6 +18,9 @@ class Trade(BaseModel):
     y_pred_catboost: Optional[float] = None
     y_pred_ensemble: Optional[float] = None
     msr_rank_10: Optional[float] = None
+    risk_regime: Optional[bool] = None
+    market_risk_regime: Optional[bool] = None
+    breadth_regime: Optional[bool] = None
 
 class BacktestRequest(BaseModel):
     strategy: str = Field(description="Strategy name to use for backtesting")

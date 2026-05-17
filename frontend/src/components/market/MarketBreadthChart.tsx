@@ -6,6 +6,15 @@ import type { MarketBreadthResponse, TimeseriesResponse } from '../../lib/servic
 
 type ChartView = 'ad_line' | 'mcclellan' | 'breadth';
 
+function calcSMA(values: (number | null)[], period: number): (number | null)[] {
+  return values.map((_, i) => {
+    if (i < period - 1) return null;
+    const slice = values.slice(i - period + 1, i + 1);
+    if (slice.some(v => v == null)) return null;
+    return (slice as number[]).reduce((a, b) => a + b, 0) / period;
+  });
+}
+
 const CHART_HEIGHT = 600;
 const PANE_STRETCH_FACTORS = [3, 1, 1]; // Price, McClellan, A/D or Breadth
 
@@ -195,6 +204,22 @@ export default function MarketBreadthChart() {
 
       adLineSeries.setData(adLineData);
 
+      const adSMA20 = calcSMA(data.ad_line, 20);
+      const adSMASeries = chart.addSeries(LineSeries, {
+        color: '#f97316',
+        lineWidth: 1,
+        lineStyle: 0,
+        title: 'SMA 20',
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+        priceScaleId: 'right',
+      }, 2);
+      adSMASeries.setData(
+        data.timestamps
+          .map((ts, i) => ({ time: formatChartTime(ts), value: adSMA20[i] }))
+          .filter(d => d.value != null) as { time: any; value: number }[]
+      );
+
     } else if (view === 'mcclellan') {
       // Summation Index
       const summationSeries = chart.addSeries(LineSeries, {
@@ -210,6 +235,22 @@ export default function MarketBreadthChart() {
       }));
 
       summationSeries.setData(summationData);
+
+      const summSMA20 = calcSMA(data.mcclellan_summation, 20);
+      const summSMASeries = chart.addSeries(LineSeries, {
+        color: '#f97316',
+        lineWidth: 1,
+        lineStyle: 0,
+        title: 'SMA 20',
+        priceLineVisible: false,
+        crosshairMarkerVisible: false,
+        priceScaleId: 'right',
+      }, 2);
+      summSMASeries.setData(
+        data.timestamps
+          .map((ts, i) => ({ time: formatChartTime(ts), value: summSMA20[i] }))
+          .filter(d => d.value != null) as { time: any; value: number }[]
+      );
 
       // Zero line for Summation
       const summationZeroLine = chart.addSeries(LineSeries, {

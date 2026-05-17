@@ -7,7 +7,8 @@ from app.schemas.backtest import (
     H5Stats,
     BacktestPlotResponse
 )
-from app.services.backtest_service import run_backtest, run_backtest_plot
+from app.services.backtest_service import run_backtest
+from app.services.backtest_plot_service import run_backtest_plot
 from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from loguru import logger

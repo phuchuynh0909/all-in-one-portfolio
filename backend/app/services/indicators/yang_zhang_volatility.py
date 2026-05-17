@@ -10,7 +10,8 @@ def calculate_yz_volatility(
     low_prices: np.ndarray,
     close_prices: np.ndarray,
     window: int = 30,
-    periods: int = 252
+    periods: int = 252,
+    annualize: bool = True
 ) -> List[float]:
     """
     Calculate Yang-Zhang volatility.
@@ -62,7 +63,10 @@ def calculate_yz_volatility(
     sigma_yz_sq = sigma_yz_sq.clip(lower=0)  # Ensure non-negative
     
     # Calculate annualized volatility
-    yz_volatility = np.sqrt(sigma_yz_sq) * np.sqrt(periods)
+    if annualize:
+        yz_volatility = np.sqrt(sigma_yz_sq) * np.sqrt(periods)
+    else:
+        yz_volatility = np.sqrt(sigma_yz_sq)
     
     return yz_volatility.fillna(0).tolist()
 

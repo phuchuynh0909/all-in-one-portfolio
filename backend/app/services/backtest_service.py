@@ -1,33 +1,15 @@
-import pandas as pd
-import numpy as np
 import json
 import time
-import tempfile
-from pathlib import Path
-import pandas as pd
-import talib
-from ta.volatility import KeltnerChannel
-from sklearn.preprocessing import StandardScaler
 from typing import List, Dict, Tuple
 from datetime import datetime
+
+import numpy as np
+import pandas as pd
 from loguru import logger
+from sklearn.preprocessing import StandardScaler
+
 from app.services.stock_service import _load_delta_stocks, _load_feature_store
-from app.core.settings import settings
-from app.services.indicators import avwap, trailing_sl
-from backtesting import Backtest, Strategy
-from backtesting.lib import crossover
-from backtesting.test import SMA
-from app.services.backtest_strategies import (
-    BreakoutDeMarkerStrategyBT,
-    BreakoutTTMStrategyBT,
-    BreakoutTTMV1StrategyBT,
-    BreakoutTTMV1bStrategyBT,
-    BreakoutTTMV1cStrategyBT,
-    BreakoutTTMV2StrategyBT,
-    BreakoutTTMV3StrategyBT,
-    EpisodicPivotStrategyBT,
-    WilliamsVixStrategyBT,
-)
+from app.services.indicators.regime_signals import compute_regime_signals
 from app.services.strategies.breakout_ttm_005c import BreakoutTTM005C
 
 # List of features used for ML predictions
@@ -182,7 +164,6 @@ def predict_features(feature_df: pd.DataFrame) -> pd.DataFrame:
 
     return feature_df
 
-
 def build_features_meta(stocks_panel: pd.DataFrame, trades_df: pd.DataFrame) -> pd.DataFrame:
     """Build features for meta-label models using the full OHLC panel."""
     from tasks.train_meta_label_models import build_features_from_ohlc_panel
@@ -191,7 +172,6 @@ def build_features_meta(stocks_panel: pd.DataFrame, trades_df: pd.DataFrame) -> 
     features_df = build_features_from_ohlc_panel(stocks_panel, watchlist_symbols=panel_symbols)
     features_df_reset = features_df.reset_index()
     return pd.merge(trades_df, features_df_reset, on=['date', 'symbol'], how='left')
-
 
 def predict_features_meta(feature_df: pd.DataFrame) -> pd.DataFrame:
     """Make predictions using meta-label models with production scaler and calibration."""
@@ -231,13 +211,30 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     # Load stock data
     logger.info(f"Starting backtest for {strategy_name} from {start_date}")
     data_load_start = time.time()
+    _ohlcv_cols = ["date", "symbol", "open", "high", "low", "close", "volume"]
     stocks = _load_delta_stocks(
         symbols=symbols,
-        columns=["date", "symbol", "open", "high", "low", "close", "volume"],
+        columns=_ohlcv_cols,
         start=datetime.strptime(start_date, "%Y-%m-%d"),
     )
     stocks = stocks.set_index(["date", "symbol"]).sort_index()
     stocks = stocks.unstack(level=1).bfill().ffill()
+
+    # VNINDEX is excluded from the watchlist but required for market regime.
+    # Load it separately when absent (e.g. full-watchlist runs).
+    if 'VNINDEX' not in stocks['close'].columns:
+        vn_raw = _load_delta_stocks(
+            symbols=['VNINDEX'],
+            columns=_ohlcv_cols,
+            start=datetime.strptime(start_date, "%Y-%m-%d"),
+        )
+        if not vn_raw.empty:
+            vn_wide = (vn_raw
+                       .set_index(["date", "symbol"]).sort_index()
+                       .unstack(level=1)
+                       .reindex(stocks.index))
+            stocks = pd.concat([stocks, vn_wide], axis=1).sort_index(axis=1)
+
     data_loading_duration = time.time() - data_load_start
     logger.info(f"Data loading took {data_loading_duration:.2f} seconds")
     
@@ -283,7 +280,23 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     # Add symbol and date information
     all_trades_df['symbol'] = all_trades_df.apply(lambda x: stocks.close.columns[x['col']], axis=1)
     all_trades_df['date'] = all_trades_df.apply(lambda x: stocks.index[x['entry_idx']], axis=1)
-    
+
+    # Attach regime signals at entry bar
+    try:
+        regime_df = compute_regime_signals(stocks)
+        all_trades_df = all_trades_df.merge(regime_df, on=['date', 'symbol'], how='left')
+        # Convert numpy booleans to native Python bool for JSON serialisation
+        for _rc in ('risk_regime', 'market_risk_regime', 'breadth_regime'):
+            if _rc in all_trades_df.columns:
+                all_trades_df[_rc] = all_trades_df[_rc].apply(
+                    lambda v: bool(v) if pd.notna(v) else None
+                )
+    except Exception as _e:
+        logger.warning(f"Regime signal computation failed, skipping: {_e}")
+        all_trades_df['risk_regime'] = None
+        all_trades_df['market_risk_regime'] = None
+        all_trades_df['breadth_regime'] = None
+
     # Keep a copy of original trades before feature building
     original_trades_df = all_trades_df.copy()
     
@@ -340,7 +353,9 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     
     # Prepare response with proper copies
     formatting_start_time = time.time()
-    
+
+    complete_trades_df = complete_trades_df.rename(columns={'return': 'return_pct'})
+
     open_trades_df = complete_trades_df[complete_trades_df['type'] == 'open_trades'].copy()
     closed_trades_df = complete_trades_df[complete_trades_df['type'] == 'closed_trades'].copy()
 
@@ -366,14 +381,16 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
         open_trades_df.loc[:, 'metadata'] = open_trades_df['metadata'].apply(_parse_metadata)
 
     # Handle NaN and infinity values before JSON serialization
-    numeric_cols = ['entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10']
+    numeric_cols = ['entry_price', 'return_pct', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10']
     for col in numeric_cols:
         if col in open_trades_df.columns:
             open_trades_df[col] = open_trades_df[col].replace([np.nan, np.inf, -np.inf], None)
 
     # Convert to records - select only available columns
-    open_trades_columns = ['symbol', 'date', 'entry_price', 'pnl', 'y_pred_xgb', 'y_pred_lgbm',
-                          'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10', 'metadata', 'type', 'entry_idx']
+    open_trades_columns = ['symbol', 'date', 'entry_price', 'return_pct', 'y_pred_xgb', 'y_pred_lgbm',
+                          'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10',
+                          'risk_regime', 'market_risk_regime', 'breadth_regime',
+                          'metadata', 'type', 'entry_idx']
     available_open_cols = [col for col in open_trades_columns if col in open_trades_df.columns]
 
     open_trades = open_trades_df[available_open_cols].to_dict('records')
@@ -386,15 +403,16 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     closed_trades_df.loc[:, 'close_date'] = closed_trades_df.apply(lambda x: stocks.index[x['exit_idx']], axis=1)
 
     # Handle NaN and infinity values before JSON serialization
-    numeric_cols = ['entry_price', 'pnl', 'trading_days', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10']
+    numeric_cols = ['entry_price', 'return_pct', 'trading_days', 'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10']
     for col in numeric_cols:
         if col in closed_trades_df.columns:
             closed_trades_df[col] = closed_trades_df[col].replace([np.nan, np.inf, -np.inf], None)
 
     # Convert to records - select only available columns
-    closed_trades_columns = ['symbol', 'date', 'close_date', 'entry_price', 'pnl', 'trading_days',
-                             'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10', 'metadata',
-                             'type', 'entry_idx', 'exit_idx']
+    closed_trades_columns = ['symbol', 'date', 'close_date', 'entry_price', 'return_pct', 'trading_days',
+                             'y_pred_xgb', 'y_pred_lgbm', 'y_pred_catboost', 'y_pred_ensemble', 'msr_rank_10',
+                             'risk_regime', 'market_risk_regime', 'breadth_regime',
+                             'metadata', 'type', 'entry_idx', 'exit_idx']
     available_closed_cols = [col for col in closed_trades_columns if col in closed_trades_df.columns]
     
     closed_trades = closed_trades_df[available_closed_cols].to_dict('records')
@@ -419,196 +437,3 @@ async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] |
     }
 
 
-def _get_plot_strategy(strategy_name: str):
-    if strategy_name == "Breakout DeMarker":
-        return BreakoutDeMarkerStrategyBT, {
-            "demarker_period": 10,
-            "keltner_period": 16,
-            "bb_period": 15,
-            "bb_deviation": 2.5,
-            "keltner_factor": 2.2,
-            "keltner_atr_period": 20,
-            "atr_multiplier": 1.9,
-            "sl_stop": 0.06,
-            "entry_version": "v2",
-        }
-    elif strategy_name == "Breakout TTM":
-        args = {'bb_period': 10, 'bb_multiplier': 1.2, 'kc_period': 13, 'kc_atr_period': 10, 'kc_multiplier': 1.0, 'donichan_period': 10, 'osc_smoothing_period': 5, 'matype': 3, 'william_vix_period': 25}
-        return BreakoutTTMStrategyBT, args
-    elif strategy_name == "Breakout TTM V1":
-        # Best params Trial #453 — Total Return 403%, Sortino 0.995
-        return BreakoutTTMV1StrategyBT, {}
-    elif strategy_name == "Breakout TTM V1b":
-        # V1 + only enter when close > ATR trailing (uptrend confirmed at entry)
-        return BreakoutTTMV1bStrategyBT, {}
-    elif strategy_name == "Breakout TTM V1c":
-        # V1 + SMF Cloud regime filter (bull regime gate + switch_down force exit)
-        return BreakoutTTMV1cStrategyBT, {}
-    elif strategy_name == "Breakout TTM V2":
-        # Best params Trial #493 — Total Return 397%, Sortino 1.001
-        return BreakoutTTMV2StrategyBT, {}
-    elif strategy_name == "Breakout TTM V3":
-        # Best params Trial #238 — Total Return 403%, Sortino 0.981
-        return BreakoutTTMV3StrategyBT, {}
-    elif strategy_name == "Williams Vix Fix":
-        args = {
-            'bb_period': 10,
-            'bb_multiplier': 1.2,
-            'william_vix_period': 20,
-            'lb': 50,
-            'ph': 0.85,
-            'ltLB': 33,
-            'mtLB': 14,
-            'strength_str': 1,
-            'donichan_period': 10,
-            'atr_period': 10,
-            'atr_multiplier': 1.9,
-            'sl_stop': 0.1,
-        }
-        return WilliamsVixStrategyBT, args
-    elif strategy_name == "Episodic Pivot":
-        args = {
-            'gap_threshold': 0.01,
-            'vol_mult': 1.2,
-            'vol_period': 10,
-            'wait_days': 2,
-            'breakout_lookahead': 1,
-            'hold_days': 3,
-            'atr_period': 10,
-            'atr_multiplier': 1.8,
-        }
-        return EpisodicPivotStrategyBT, args
-    return BreakoutDeMarkerStrategyBT, {}
-
-
-def _compute_mfe_mae(stats, data: pd.DataFrame) -> dict:
-    """
-    MFE = max favorable excursion (best unrealized profit during trade, % of entry).
-    MAE = max adverse excursion  (worst unrealized drawdown during trade, % of entry).
-    Uses High/Low bars between EntryBar and ExitBar (inclusive).
-    """
-    if stats is None or not hasattr(stats, '_trades') or stats._trades.empty:
-        return {}
-
-    highs = data['High'].values
-    lows  = data['Low'].values
-    n     = len(highs)
-
-    mfe_list: list[float] = []
-    mae_list: list[float] = []
-
-    for _, t in stats._trades.iterrows():
-        entry_bar   = int(t['EntryBar'])
-        exit_bar    = min(int(t['ExitBar']), n - 1)
-        entry_price = float(t['EntryPrice'])
-        direction   = 1 if float(t['Size']) > 0 else -1
-
-        trade_highs = highs[entry_bar: exit_bar + 1]
-        trade_lows  = lows[entry_bar:  exit_bar + 1]
-        if len(trade_highs) == 0:
-            continue
-
-        if direction == 1:  # long
-            mfe = (np.max(trade_highs) - entry_price) / entry_price * 100
-            mae = (entry_price - np.min(trade_lows))  / entry_price * 100
-        else:               # short
-            mfe = (entry_price - np.min(trade_lows))  / entry_price * 100
-            mae = (np.max(trade_highs) - entry_price) / entry_price * 100
-
-        mfe_list.append(mfe)
-        mae_list.append(mae)
-
-    if not mfe_list:
-        return {}
-
-    def _r(v: float) -> float:
-        return round(float(v), 4)
-
-    return {
-        'MFE Avg [%]':    _r(np.mean(mfe_list)),
-        'MAE Avg [%]':    _r(np.mean(mae_list)),
-        'MFE Median [%]': _r(np.median(mfe_list)),
-        'MAE Median [%]': _r(np.median(mae_list)),
-        'MFE Max [%]':    _r(np.max(mfe_list)),
-        'MAE Max [%]':    _r(np.max(mae_list)),
-        'MFE P75 [%]':    _r(np.percentile(mfe_list, 75)),
-    }
-
-
-async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) -> Dict:
-    start_dt = datetime.strptime(start_date, "%Y-%m-%d")
-    stock_df = _load_delta_stocks(
-        symbols=[symbol],
-        start=start_dt,
-        columns=["date", "open", "high", "low", "close", "volume", "symbol"],
-    )
-
-    if stock_df.empty:
-        raise ValueError(f"No data found for symbol {symbol} from {start_date}")
-
-    stock_df = stock_df[stock_df["symbol"] == symbol].drop(columns=["symbol"]).copy()
-    stock_df = stock_df.sort_values("date")
-    stock_df = stock_df.rename(
-        columns={
-            "open": "Open",
-            "high": "High",
-            "low": "Low",
-            "close": "Close",
-            "volume": "Volume",
-        }
-    )
-    stock_df = stock_df.set_index("date")
-    stock_df = stock_df.dropna(subset=["Open", "High", "Low", "Close"])
-
-    strategy_class, strategy_params = _get_plot_strategy(strategy_name)
-    bt = Backtest(stock_df, strategy_class, cash=10000, commission=0.002, exclusive_orders=True, finalize_trades=True)
-    try:
-        stats = bt.run(**strategy_params)
-    except Exception as exc:
-        logger.exception(
-            "Backtest run failed",
-            extra={"symbol": symbol, "strategy": strategy_name, "start_date": start_date},
-        )
-        raise RuntimeError(f"{exc.__class__.__name__}: {exc}") from exc
-
-    with tempfile.NamedTemporaryFile(suffix=".html", delete=False) as temp_file:
-        html_path = Path(temp_file.name)
-
-    try:
-        bt.plot(filename=str(html_path), plot_volume=True, plot_equity=False, open_browser=False)
-        html = html_path.read_text(encoding="utf-8")
-    except Exception as exc:
-        logger.exception(
-            "Backtest plot failed",
-            extra={"symbol": symbol, "strategy": strategy_name, "start_date": start_date},
-        )
-        raise RuntimeError(f"{exc.__class__.__name__}: {exc}") from exc
-    finally:
-        if html_path.exists():
-            html_path.unlink()
-
-    stats_dict = {}
-    if stats is not None:
-        raw_stats = stats.filter(regex="^[^_]").to_dict()
-
-        def _normalize_value(value):
-            if isinstance(value, (np.integer, np.floating)):
-                return value.item()
-            if isinstance(value, np.bool_):
-                return bool(value)
-            if isinstance(value, (pd.Timestamp, datetime)):
-                return value.isoformat()
-            if isinstance(value, pd.Timedelta):
-                return str(value)
-            return value
-
-        stats_dict = {str(k): _normalize_value(v) for k, v in raw_stats.items()}
-        stats_dict.update(_compute_mfe_mae(stats, stock_df))
-
-    return {
-        "symbol": symbol,
-        "start_date": start_date,
-        "strategy": strategy_name,
-        "html": html,
-        "stats": stats_dict,
-    }
