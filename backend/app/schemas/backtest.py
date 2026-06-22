@@ -47,6 +47,7 @@ class BacktestPlotResponse(BaseModel):
     strategy: str
     html: str
     stats: Optional[Dict[str, Any]] = None
+    params: Optional[Dict[str, Any]] = None
 
 
 # ============================================================================

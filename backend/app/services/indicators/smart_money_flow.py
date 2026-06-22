@@ -22,7 +22,7 @@ import talib
 # ── Default (optimised) params ─────────────────────────────────────────────────
 SMF_DEFAULTS = {
     "trend_len":   34,
-    "basis_type":  "EMA",
+    "basis_type":  "ALMA",
     "alma_offset": 0.85,
     "alma_sigma":  6.0,
     "basis_smooth": 3,

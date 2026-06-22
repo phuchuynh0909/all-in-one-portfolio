@@ -137,6 +137,7 @@ export interface BacktestPlotResponse {
   strategy: string;
   html: string;
   stats?: Record<string, unknown> | null;
+  params?: Record<string, unknown> | null;
 }
 
 // Fetch available symbols from watchlist

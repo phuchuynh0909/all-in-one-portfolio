@@ -21,64 +21,64 @@ from app.services.indicators.wiliams_vix_fix import williams_vix_fix_indicator
 
 FIXED_TTM_PARAMS = {
     'v1': {
-        'bb_window': 15,
-        'bb_multiplier': 1.0,
+        'bb_window': 19,
+        'bb_multiplier': 1.2,
         'bb_matype': 3,
-        'kc_window': 38,
-        'kc_multiplier': 1.3,
+        'kc_window': 52,
+        'kc_multiplier': 1.4,
         'kc_atr_period': 5,
         'donichan_window': 9,
         'osc_smoothing_period': 11,
-        'atr_period': 6,
-        'atr_multiplier': 2.0,
+        'atr_period': 5,
+        'atr_multiplier': 2.2,
         'low_stop_lookback': 3,
-        'consecutive_neg_threshold': 13,
-        'william_vix_period': 17,
-        'kama_period': 8,
-        'kama_fast': 5,
-        'kama_slow': 41,
+        'consecutive_neg_threshold': 14,
+        'william_vix_period': 14,
+        'kama_period': 6,
+        'kama_fast': 4,
+        'kama_slow': 43,
         'kama_slope_win': 5,
-        'flat_threshold_pct': 2.7,
+        'flat_threshold_pct': 1.9,
     },
     'v2': {
-        'bb_window': 15,
-        'bb_multiplier': 1.3,
+        'bb_window': 19,
+        'bb_multiplier': 1.0,
         'bb_matype': 0,
-        'kc_window': 52,
+        'kc_window': 51,
         'kc_multiplier': 1.2,
-        'kc_atr_period': 14,
+        'kc_atr_period': 7,
         'donichan_window': 9,
         'osc_smoothing_period': 13,
-        'atr_period': 7,
-        'atr_multiplier': 2.6,
+        'atr_period': 5,
+        'atr_multiplier': 2.2,
         'low_stop_lookback': 3,
-        'consecutive_neg_threshold': 8,
-        'william_vix_period': 18,
-        'kama_period': 11,
-        'kama_fast': 2,
-        'kama_slow': 36,
-        'kama_slope_win': 5,
-        'flat_threshold_pct': 2.5,
+        'consecutive_neg_threshold': 6,
+        'william_vix_period': 27,
+        'kama_period': 7,
+        'kama_fast': 3,
+        'kama_slow': 37,
+        'kama_slope_win': 4,
+        'flat_threshold_pct': 2.0,
     },
     'v3': {
         'bb_window': 10,
-        'bb_multiplier': 1.2,
-        'bb_matype': 3,
-        'kc_window': 39,
-        'kc_multiplier': 1.6,
-        'kc_atr_period': 6,
+        'bb_multiplier': 1.9,
+        'bb_matype': 2,
+        'kc_window': 41,
+        'kc_multiplier': 1.2,
+        'kc_atr_period': 16,
         'donichan_window': 14,
         'osc_smoothing_period': 15,
-        'atr_period': 11,
-        'atr_multiplier': 2.6,
-        'low_stop_lookback': 3,
-        'consecutive_neg_threshold': 4,
-        'william_vix_period': 17,
-        'kama_period': 16,
+        'atr_period': 5,
+        'atr_multiplier': 2.2,
+        'low_stop_lookback': 17,
+        'consecutive_neg_threshold': 3,
+        'william_vix_period': 18,
+        'kama_period': 13,
         'kama_fast': 5,
-        'kama_slow': 39,
-        'kama_slope_win': 5,
-        'flat_threshold_pct': 1.8,
+        'kama_slow': 37,
+        'kama_slope_win': 16,
+        'flat_threshold_pct': 2.8,
     },
 }
 
@@ -154,6 +154,43 @@ def slope_flat_2d(kama_np, slope_window, flat_threshold_pct):
                 out[i, j] = slope_pct < flat_threshold_pct
     return out
 
+@nb.njit
+def _early_exit_nb(close_2d, low_2d, entries_2d, window, pct):
+    """
+    For each symbol: after an entry, if the bar LOW drops > pct from entry close
+    within the first `window` bars, emit an exit signal.
+    Uses low (not close) so intraday wicks are captured as true MAE.
+    """
+    n_rows, n_cols = close_2d.shape
+    out = np.zeros((n_rows, n_cols), dtype=np.bool_)
+    for col in range(n_cols):
+        entry_bar   = -1
+        entry_close = np.nan
+        for row in range(n_rows):
+            if entries_2d[row, col]:
+                entry_bar   = row
+                entry_close = close_2d[row, col]
+            if entry_bar >= 0:
+                bars_since = row - entry_bar
+                if 1 <= bars_since <= window:
+                    mae = (entry_close - low_2d[row, col]) / entry_close
+                    if mae > pct:
+                        out[row, col] = True
+                        entry_bar = -1   # stop watching after firing
+    return out
+
+
+def early_exit_signal(close, low, entries, window=5, pct=0.05):
+    """Exit when low-based MAE exceeds ``pct`` within ``window`` bars after entry."""
+    result = _early_exit_nb(
+        close.to_numpy().astype(np.float64),
+        low.to_numpy().astype(np.float64),
+        entries.to_numpy().astype(np.bool_),
+        window,
+        pct,
+    )
+    return pd.DataFrame(result, index=close.index, columns=close.columns)
+
 
 def compute_signals(
     close,
@@ -182,6 +219,7 @@ def compute_signals(
     EMA = vbt.IndicatorFactory.from_talib('EMA')
     SMA = vbt.IndicatorFactory.from_talib('SMA')
     MAX = vbt.IndicatorFactory.from_talib('MAX')
+    MIN = vbt.IndicatorFactory.from_talib('MIN')
     LREG = vbt.IndicatorFactory.from_talib('LINEARREG')
 
     bb = BB.run(
@@ -202,7 +240,7 @@ def compute_signals(
     kc_lower_np = ema_np - kc_multiplier * atr_np
 
     hh = MAX.run(high, timeperiod=donichan_window).real.to_numpy()
-    ll = MAX.run(low, timeperiod=donichan_window).real.to_numpy()
+    ll = MIN.run(low, timeperiod=donichan_window).real.to_numpy()
     sma = SMA.run(close, timeperiod=donichan_window).real.to_numpy()
     close_np = close.to_numpy()
     histogram = close_np - ((hh + ll) / 2 + sma) / 2
@@ -210,21 +248,6 @@ def compute_signals(
         pd.DataFrame(histogram, index=close.index, columns=close.columns),
         timeperiod=osc_smoothing_period,
     ).real.to_numpy()
-
-    _, _, _, wvf_signal = williams_vix_fix_indicator(
-        close,
-        high,
-        low,
-        period=william_vix_period,
-        mult=bb_multiplier,
-        bbl=bb_window,
-        lb=20,
-        ph=0.85,
-        ltLB=33,
-        mtLB=10,
-        strength_str=1,
-    )
-    wvf_np = wvf_signal if isinstance(wvf_signal, np.ndarray) else wvf_signal.to_numpy()
 
     if use_kama_slope:
         kama_np = kama_2d(close_np.astype(np.float64), kama_period, kama_fast, kama_slow)
@@ -253,8 +276,15 @@ def compute_signals(
         entries_np = no_sqz_np & (crossed_now | cond_2 | cond_3) & flat_np
 
     else:
-        # squeeze_diff_np = bb_upper_np - kc_upper_np
-        # consec_neg = count_consecutive_neg_2d(ttms_np)
+        _, _, _, wvf_signal = williams_vix_fix_indicator(
+            close, high, low, period=william_vix_period,
+            mult=bb_multiplier,  bbl=bb_window,
+            lb=20, ph=0.85, ltLB=33, mtLB=10, strength_str=1,
+        )
+        wvf_np = wvf_signal if isinstance(wvf_signal, np.ndarray) else wvf_signal.to_numpy()
+
+        squeeze_diff_np = bb_upper_np - kc_upper_np
+        consec_neg = count_consecutive_neg_2d(ttms_np)
 
         # entry_1 = (
         #     (shift_2d(squeeze_diff_np, 1) < 0)
@@ -262,12 +292,12 @@ def compute_signals(
         #     & (ttms_np > 0)
         #     & flat_np
         # )
-        # entry_2 = (
-        #     (shift_2d(squeeze_diff_np, 1) < 0)
-        #     & (squeeze_diff_np > 0)
-        #     & (consec_neg > consecutive_neg_threshold)
-        # )
-        entries_np = wvf_np
+        entry_2 = (
+            (shift_2d(squeeze_diff_np, 1) < 0)
+            & (squeeze_diff_np > 0)
+            & (consec_neg > consecutive_neg_threshold)
+        )
+        entries_np = wvf_np | entry_2
 
     return pd.DataFrame(entries_np, index=close.index, columns=close.columns)
 
@@ -279,7 +309,18 @@ def compute_exits(
     atr_multiplier: float = 1.9,
     atr_period: int = 10,
     low_stop_lookback: int = 3,
+    entries: pd.DataFrame | None = None,
+    early_exit_window: int = 5,
+    early_exit_pct: float = 0.05,
 ):
+    """
+    Returns (exits_df, sl_stop_df).
+
+    exits_df: ATR trailing-stop crossings, optionally OR-ed with early MAE exits
+              when ``entries`` is provided (low drops > early_exit_pct from entry
+              close within early_exit_window bars).
+    sl_stop_df: per-bar relative stop from rolling minimum low.
+    """
     atr_raw = vbt.IndicatorFactory.from_talib('ATR').run(high, low, close, timeperiod=atr_period)
     ATRTrailing = vbt.IndicatorFactory(
         input_names=['close', 'atr'],
@@ -289,14 +330,27 @@ def compute_exits(
     atr_sl = ATRTrailing.run(close, atr_raw.real, atr_multiplier=atr_multiplier)
     exits_df = close.vbt.crossed_below(atr_sl.atr_trailing)
 
-    MIN        = vbt.IndicatorFactory.from_talib('MIN')
+    if entries is not None:
+        exits_df = exits_df | early_exit_signal(
+            close, low, entries,
+            window=early_exit_window,
+            pct=early_exit_pct,
+        )
+
+    MIN = vbt.IndicatorFactory.from_talib('MIN')
     lowest_low = MIN.run(low, timeperiod=low_stop_lookback).real * 0.99  # 1% buffer below lowest low
     sl_stop_df = ((close - lowest_low) / close).clip(lower=0)
 
     return exits_df, sl_stop_df
 
 
-_EXIT_PARAM_KEYS = frozenset({'atr_period', 'atr_multiplier', 'low_stop_lookback'})
+_EXIT_PARAM_KEYS = frozenset({
+    'atr_period',
+    'atr_multiplier',
+    'low_stop_lookback',
+    'early_exit_window',
+    'early_exit_pct',
+})
 
 
 class BreakoutTTM005C:
@@ -343,7 +397,10 @@ class BreakoutTTM005C:
             **sig_kw,
         )
 
-    def get_exits_and_stop(self) -> tuple[pd.DataFrame, pd.DataFrame]:
+    def get_exits_and_stop(
+        self,
+        entries: pd.DataFrame | None = None,
+    ) -> tuple[pd.DataFrame, pd.DataFrame]:
         p = self._params
         return compute_exits(
             self.data.close,
@@ -352,6 +409,9 @@ class BreakoutTTM005C:
             atr_multiplier=p['atr_multiplier'],
             atr_period=p['atr_period'],
             low_stop_lookback=p['low_stop_lookback'],
+            entries=entries,
+            early_exit_window=p.get('early_exit_window', 5),
+            early_exit_pct=p.get('early_exit_pct', 0.05),
         )
 
     def get_portfolio(self, *, apply_exrem: bool = True, **portfolio_kwargs) -> vbt.Portfolio:
@@ -361,7 +421,10 @@ class BreakoutTTM005C:
         ``apply_exrem`` — If True, run AmiBroker-style **ExRem** on entries using the
         ATR trail exit mask: only the first entry bar after a flat period counts until
         an exit fires (same idea as :class:`BreakoutTTMVersion2` in ``breakout_ttm.py``).
-        Exits are unchanged; ``sl_stop`` is unchanged.
+        Early MAE exits are computed after ExRem so they align with traded entries.
+
+        Entries and ordinary exits fill at the **signal bar close** (``price=close``),
+        not at the next bar's open.
         """
         entries = self.get_entries()
         exits, sl_stop_df = self.get_exits_and_stop()
@@ -373,6 +436,7 @@ class BreakoutTTM005C:
                 index=entries.index,
                 columns=entries.columns,
             )
+        exits, sl_stop_df = self.get_exits_and_stop(entries)
         kw = {
             'close': self.data.close,
             'entries': entries,
@@ -382,6 +446,8 @@ class BreakoutTTM005C:
             'group_by': ['symbol'],
             'cash_sharing': False,
             'init_cash': self.init_cash,
+            # Signal-bar close fill (not next-bar open; vbt price=-np.inf uses open).
+            'price': self.data.close,
         }
         kw.update(portfolio_kwargs)
         return vbt.Portfolio.from_signals(**kw)

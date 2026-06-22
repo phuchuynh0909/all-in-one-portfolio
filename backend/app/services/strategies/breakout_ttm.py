@@ -185,14 +185,16 @@ class BreakoutTTMVersion2:
         exists = exit1 | exit3
         return exists
     
-    def get_portfolio(self):
+    def get_portfolio(self, **portfolio_kwargs):
         entries = self.get_entries()
         exits = self.get_exits(entries)
-        portfolio = vbt.Portfolio.from_signals(
-            self.data.close,
-            entries=entries,
-            exits=exits,
-            freq='1d',
-            group_by=['symbol']
-        )
-        return portfolio
+        kw = {
+            'close': self.data.close,
+            'entries': entries,
+            'exits': exits,
+            'freq': '1d',
+            'group_by': ['symbol'],
+            'price': self.data.close,
+        }
+        kw.update(portfolio_kwargs)
+        return vbt.Portfolio.from_signals(**kw)

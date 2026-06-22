@@ -29,6 +29,7 @@ export interface CoveredWarrantAssumptions {
   stock_price: number | null;
   warrant_price: number | null;
   annual_volatility: number | null;
+  hist_vol: number | null;
   risk_free_rate: number;
   days_to_expiry: number;
   time_to_expiry_years: number;

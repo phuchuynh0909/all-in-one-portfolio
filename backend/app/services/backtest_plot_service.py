@@ -154,6 +154,14 @@ async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) ->
     stock_df = stock_df.dropna(subset=["Open", "High", "Low", "Close"])
 
     strategy_class, strategy_params = _get_plot_strategy(strategy_name)
+
+    # Collect all class-level param defaults, then apply overrides
+    class_defaults = {
+        k: v for k, v in vars(strategy_class).items()
+        if not k.startswith('_') and not callable(v) and not isinstance(v, (classmethod, staticmethod, property))
+    }
+    all_params: Dict = {**class_defaults, **strategy_params}
+
     bt = Backtest(stock_df, strategy_class, cash=10000, commission=0.002,
                   exclusive_orders=True, finalize_trades=True)
     try:
@@ -205,4 +213,5 @@ async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) ->
         "strategy": strategy_name,
         "html": html,
         "stats": stats_dict,
+        "params": all_params,
     }

@@ -132,6 +132,59 @@ export default function BacktestVisualization() {
         </Paper>
       )}
 
+      {data?.params && !isLoading && (
+        <Paper
+          sx={{
+            p: 2,
+            mt: 3,
+            border: '1px solid rgba(99, 102, 241, 0.2)',
+            borderRadius: 2,
+            background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
+          }}
+        >
+          <Typography variant="subtitle1" sx={{ mb: 1.5, fontWeight: 600 }}>
+            Strategy Parameters
+          </Typography>
+          <Box
+            sx={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 1,
+            }}
+          >
+            {Object.entries(data.params).map(([key, value]) => (
+              <Box
+                key={key}
+                sx={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 0.5,
+                  px: 1.5,
+                  py: 0.5,
+                  borderRadius: 1,
+                  border: '1px solid rgba(99, 102, 241, 0.25)',
+                  backgroundColor: 'rgba(99, 102, 241, 0.08)',
+                  fontSize: '0.75rem',
+                }}
+              >
+                <Typography
+                  component="span"
+                  sx={{ fontSize: '0.72rem', color: 'text.secondary', fontFamily: 'monospace' }}
+                >
+                  {key}
+                </Typography>
+                <Typography
+                  component="span"
+                  sx={{ fontSize: '0.72rem', color: 'rgba(99, 102, 241, 0.9)', fontFamily: 'monospace', fontWeight: 600 }}
+                >
+                  {formatStatValue(value)}
+                </Typography>
+              </Box>
+            ))}
+          </Box>
+        </Paper>
+      )}
+
       {data?.stats && !isLoading && (
         <Paper
           sx={{

@@ -32,6 +32,7 @@ class CoveredWarrantAssumptions(BaseModel):
     stock_price: Optional[float] = None
     warrant_price: Optional[float] = None
     annual_volatility: Optional[float] = None
+    hist_vol: Optional[float] = None
     risk_free_rate: float
     days_to_expiry: int
     time_to_expiry_years: float

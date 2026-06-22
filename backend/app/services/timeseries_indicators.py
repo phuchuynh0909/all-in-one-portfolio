@@ -18,6 +18,7 @@ from .indicators import (
     build_smart_money_flow_kwargs,
     calculate_yz_volatility,
     calculate_gkyz_volatility,
+    chandelier_exit,
     hawkes_BVC,
     kalman_zscore,
     matrix_series,
@@ -93,8 +94,9 @@ def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]
 
             elif ind.name == "atr_trailing":
                 timeperiod = int(ind.params.get("timeperiod", 10))
+                multiplier = float(ind.params.get("multiplier", 1.8))
                 atr = talib.ATR(high_prices, low_prices, close_prices, timeperiod=timeperiod)
-                indicator_data["atr_trailing"] = convert_nans(trailing_sl(close_prices, atr))
+                indicator_data["atr_trailing"] = convert_nans(trailing_sl(close_prices, atr, atr_multiplier=multiplier))
 
             elif ind.name == "vwap":
                 window = int(ind.params.get("window", 100))
@@ -258,6 +260,18 @@ def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]
                     "bull_dot": smf_result["bull_dot"].tolist(),
                     "bear_dot": smf_result["bear_dot"].tolist(),
                     "strength_signed": convert_nans(smf_result["strength_signed"]),
+                }
+
+            elif ind.name == "chandelier_exit":
+                length = int(ind.params.get("length", 31))
+                multiplier = float(ind.params.get("multiplier", 2.2))
+                ce = chandelier_exit(close_prices, high_prices, low_prices, length=length, multiplier=multiplier)
+                dir_int = np.where(np.isnan(ce["direction"]), None, ce["direction"].astype(int))
+                indicator_data["chandelier_exit"] = {
+                    "value":     convert_nans(ce["value"]),
+                    "direction": [int(v) if v is not None else None for v in dir_int],
+                    "long":      convert_nans(ce["long"]),
+                    "short":     convert_nans(ce["short"]),
                 }
 
             elif ind.name == "williams_vix_fix":

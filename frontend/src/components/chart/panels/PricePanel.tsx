@@ -23,6 +23,7 @@ type PricePanelProps = {
     onSeriesReady: (series: ISeriesApi<"Candlestick">) => void;
     atrVisible?: boolean;
     vwapVisible?: boolean;
+    chandelierVisible?: boolean;
 };
 
 type ChartMarker = SeriesMarker<UTCTimestamp>;
@@ -46,6 +47,7 @@ export default function PricePanel({
     onSeriesReady,
     atrVisible,
     vwapVisible,
+    chandelierVisible,
 }: PricePanelProps) {
     const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -53,6 +55,7 @@ export default function PricePanel({
     const atrTrailingRef = useRef<ISeriesApi<"Line"> | null>(null);
     const vwapHighestRef = useRef<ISeriesApi<"Line"> | null>(null);
     const vwapLowestRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const chandelierLineRef = useRef<ISeriesApi<"Line"> | null>(null);
     const reportMarkersRef = useRef<MarkerController | null>(null);
     const positionMarkersRef = useRef<MarkerController | null>(null);
 
@@ -145,6 +148,18 @@ export default function PricePanel({
         });
         vwapLowestRef.current = vwapLowest;
 
+        // Single chandelier line — color switches per bar based on direction
+        const chandelierLine = chart.addSeries(LineSeries, {
+            color: '#089981',
+            lineWidth: 2,
+            lineStyle: 2, // dashed
+            title: 'CE',
+            priceFormat: { type: 'price' },
+            priceLineVisible: false,
+            lastValueVisible: false,
+        });
+        chandelierLineRef.current = chandelierLine;
+
         return () => {
             if (chart) {
                 try {
@@ -154,6 +169,7 @@ export default function PricePanel({
                     chart.removeSeries(atrTrailing);
                     chart.removeSeries(vwapHighest);
                     chart.removeSeries(vwapLowest);
+                    chart.removeSeries(chandelierLine);
                 } catch (e) {
                     console.warn('Error removing series:', e);
                 }
@@ -164,6 +180,7 @@ export default function PricePanel({
             atrTrailingRef.current = null;
             vwapHighestRef.current = null;
             vwapLowestRef.current = null;
+            chandelierLineRef.current = null;
             reportMarkersRef.current = null;
             positionMarkersRef.current = null;
         };
@@ -180,6 +197,11 @@ export default function PricePanel({
         vwapHighestRef.current?.applyOptions({ visible: show });
         vwapLowestRef.current?.applyOptions({ visible: show });
     }, [vwapVisible]);
+
+    // Toggle Chandelier Exit visibility
+    useEffect(() => {
+        chandelierLineRef.current?.applyOptions({ visible: chandelierVisible !== false });
+    }, [chandelierVisible]);
 
     // Update data
     useEffect(() => {
@@ -216,6 +238,23 @@ export default function PricePanel({
         const vwapLowestData = formatIndicatorData(timestamps, indicators.vwap_lowest ?? []);
         vwapHighestRef.current?.setData(vwapHighestData);
         vwapLowestRef.current?.setData(vwapLowestData);
+
+        // Chandelier Exit — single dashed line, green (dir=1) or red (dir=-1) per bar
+        const ceData = indicators.chandelier_exit;
+        if (ceData?.value && ceData?.direction) {
+            const ceLineData = (timestamps as string[])
+                .map((ts: string, i: number) => {
+                    const val = ceData.value[i];
+                    if (val == null) return null;
+                    return {
+                        time: formatChartTime(ts),
+                        value: val as number,
+                        color: ceData.direction[i] === 1 ? '#00ffff' : '#f23645',
+                    };
+                })
+                .filter((d): d is { time: UTCTimestamp; value: number; color: string } => d !== null);
+            chandelierLineRef.current?.setData(ceLineData);
+        }
 
         // Only update markers if chart is ready
         if (isChartReady) {

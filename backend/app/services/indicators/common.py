@@ -34,6 +34,116 @@ def lowest_at_entry(low, entry):
     return lowest_low
 
 
+@nb.njit(cache=True)
+def shift_2d(arr: np.ndarray, num: int, fill_value: float = np.nan) -> np.ndarray:
+    """Shift a 2-D array along axis 0 by `num` rows (positive = shift down)."""
+    result = np.empty_like(arr)
+    n = arr.shape[0]
+    if num > 0:
+        result[:num, :] = fill_value
+        result[num:, :] = arr[:n - num, :]
+    elif num < 0:
+        result[n + num:, :] = fill_value
+        result[:n + num, :] = arr[-num:, :]
+    else:
+        result[:, :] = arr
+    return result
+
+
+@nb.njit(cache=True)
+def count_consecutive_neg_2d(arr: np.ndarray) -> np.ndarray:
+    """Count consecutive negative values per column, resetting to 0 on non-negative."""
+    n, m = arr.shape
+    out  = np.zeros((n, m), dtype=np.int64)
+    for j in range(m):
+        count = 0
+        for i in range(n):
+            if arr[i, j] < 0:
+                count += 1
+                out[i, j] = count
+            else:
+                count = 0
+    return out
+
+
+@nb.njit(cache=True)
+def autocorr_2d(prices_np: np.ndarray, ret_period: int = 5, window: int = 60) -> np.ndarray:
+    """
+    Rolling lag-1 autocorrelation of `ret_period`-bar returns over a `window`-bar lookback.
+
+    Positive → returns tend to continue (momentum).
+    Negative → returns mean-revert.
+    NaN for the first (ret_period + window - 1) rows.
+    """
+    n, m = prices_np.shape
+    out  = np.full((n, m), np.nan)
+    for j in range(m):
+        for i in range(ret_period + window - 1, n):
+            rets  = np.empty(window)
+            valid = True
+            for k in range(window):
+                cur  = i - window + 1 + k
+                prev = cur - ret_period
+                p_c  = prices_np[cur, j]
+                p_p  = prices_np[prev, j]
+                if p_p == 0.0 or np.isnan(p_c) or np.isnan(p_p):
+                    valid = False
+                    break
+                rets[k] = p_c / p_p - 1.0
+            if not valid:
+                continue
+            mean = 0.0
+            for k in range(window):
+                mean += rets[k]
+            mean /= window
+            cov = 0.0
+            var = 0.0
+            for k in range(1, window):
+                dx   = rets[k]     - mean
+                dx1  = rets[k - 1] - mean
+                cov += dx * dx1
+                var += dx * dx
+            var += (rets[0] - mean) ** 2
+            if var > 0.0:
+                out[i, j] = cov / var
+    return out
+
+
+@nb.njit(cache=True)
+def ema_span_2d(arr: np.ndarray, span: int) -> np.ndarray:
+    """EMA with pandas-compatible ewm(span=span, adjust=False)."""
+    alpha = 2.0 / (span + 1)
+    n, m = arr.shape
+    out = np.empty_like(arr)
+    for j in range(m):
+        out[0, j] = arr[0, j]
+        for i in range(1, n):
+            out[i, j] = alpha * arr[i, j] + (1.0 - alpha) * out[i - 1, j]
+    return out
+
+
+@nb.njit(cache=True)
+def obv_2d(close_np: np.ndarray, volume_np: np.ndarray) -> np.ndarray:
+    """
+    On-Balance Volume for 2-D arrays (rows=time, cols=symbols).
+
+    Accumulates +volume on up-closes and -volume on down-closes, column-wise.
+    Returns float64 array of the same shape.
+    """
+    n, m = close_np.shape
+    out  = np.zeros((n, m), dtype=np.float64)
+    for j in range(m):
+        obv = 0.0
+        for i in range(n):
+            if i > 0:
+                if close_np[i, j] > close_np[i - 1, j]:
+                    obv += volume_np[i, j]
+                elif close_np[i, j] < close_np[i - 1, j]:
+                    obv -= volume_np[i, j]
+            out[i, j] = obv
+    return out
+
+
 EPS = 1e-10
 
 @njit

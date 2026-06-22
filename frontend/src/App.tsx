@@ -24,7 +24,7 @@ import Backtest from './pages/Backtest';
 import BacktestVisualization from './pages/BacktestVisualization';
 import { FinancialStatements } from './pages/FinancialStatements';
 import Scanner from './pages/Scanner';
-import Live from './pages/Live';
+import Regime from './pages/Regime';
 import Alerts from './pages/Alerts';
 import ChatAgents from './pages/ChatAgents';
 import Future from './pages/Future';
@@ -60,7 +60,7 @@ const navItems = [
   { path: '/backtest-viz', label: '📊 BT Visual' },
   { path: '/financial', label: 'Financial Statements' },
   { path: '/scanner', label: 'Scanner' },
-  { path: '/live', label: '🔴 Live' },
+  { path: '/regime', label: '📊 Regime' },
   { path: '/future', label: '⚡ Future' },
   { path: '/cw', label: 'CW' },
   { path: '/alerts', label: '🔔 Alerts' },
@@ -130,7 +130,7 @@ export default function App() {
               <Route path="/backtest-viz" element={<BacktestVisualization />} />
               <Route path="/financial" element={<FinancialStatements />} />
               <Route path="/scanner" element={<Scanner />} />
-              <Route path="/live" element={<Live />} />
+              <Route path="/regime" element={<Regime />} />
               <Route path="/future" element={<Future />} />
               <Route path="/cw" element={<CW />} />
               <Route path="/alerts" element={<Alerts />} />

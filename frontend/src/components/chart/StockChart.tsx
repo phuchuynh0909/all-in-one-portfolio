@@ -71,7 +71,11 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
   {
     id: 'atr_trailing', name: 'atr_trailing', label: 'ATR Trailing Stop',
-    params: {}, visible: true, paramDefs: [],
+    params: { timeperiod: 10, multiplier: 1.8 }, visible: true,
+    paramDefs: [
+      { key: 'timeperiod', label: 'ATR Period',   min: 2,   max: 100, step: 1   },
+      { key: 'multiplier', label: 'Multiplier',   min: 0.5, max: 10,  step: 0.1 },
+    ],
   },
   {
     id: 'vwap', name: 'vwap', label: 'VWAP',
@@ -124,6 +128,14 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   {
     id: 'squeeze_ttm', name: 'squeeze_ttm', label: 'Squeeze TTM',
     params: {}, visible: true, paramDefs: [],
+  },
+  {
+    id: 'chandelier_exit', name: 'chandelier_exit', label: 'Chandelier Exit',
+    params: { length: 31, multiplier: 2.2 }, visible: true,
+    paramDefs: [
+      { key: 'length',     label: 'Length',     min: 5,   max: 100, step: 1   },
+      { key: 'multiplier', label: 'Multiplier', min: 0.5, max: 10,  step: 0.1 },
+    ],
   },
   {
     id: 'smart_money_flow', name: 'smart_money_flow', label: 'SMF Cloud',
@@ -933,6 +945,7 @@ export default function StockChart({ symbol, height }: StockChartProps) {
             onSeriesReady={(series) => { candlestickSeriesRef.current = series; }}
             atrVisible={getVisible('atr_trailing')}
             vwapVisible={getVisible('vwap')}
+            chandelierVisible={getVisible('chandelier_exit')}
           />
           <RsiPanel
             chart={chartRef.current}

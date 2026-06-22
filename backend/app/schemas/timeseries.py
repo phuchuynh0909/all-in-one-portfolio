@@ -40,6 +40,12 @@ class SmartMoneyFlow(BaseModel):
     bear_dot: List[bool]
     strength_signed: List[Optional[float]]
 
+class ChandelierExit(BaseModel):
+    value: List[Optional[float]]
+    direction: List[Optional[int]]
+    long: List[Optional[float]]
+    short: List[Optional[float]]
+
 class Indicators(BaseModel):
     rsi: Optional[List[Optional[float]]] = None
     rsi_5: Optional[List[Optional[float]]] = None
@@ -66,6 +72,7 @@ class Indicators(BaseModel):
     williams_vix_fix: Optional[WilliamsVixFix] = None
     squeeze_ttm: Optional[SqueezeTTM] = None
     smart_money_flow: Optional[SmartMoneyFlow] = None
+    chandelier_exit: Optional[ChandelierExit] = None
 
 class Timeseries(BaseModel):
     open: List[float]
