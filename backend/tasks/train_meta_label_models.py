@@ -297,7 +297,7 @@ def _build_feature_context_from_ohlc_panel(
 
     # ── 13. DC TMV — TTM Squeeze momentum value ──────────────────────────────────
     # squeeze_ttm uses vbt.IndicatorFactory.from_talib internally → handles 2-D DataFrames
-    _diff, dc_tmv_raw = squeeze_ttm(
+    _diff, dc_tmv_raw, _ = squeeze_ttm(
         close_df.to_numpy(), high_df.to_numpy(), low_df.to_numpy(),
         bb_period=10, bb_mult=1.2, bb_matype=3,
         kc_period=10, kc_mult=1.2,
@@ -717,7 +717,7 @@ def _run_feature_pipeline_impl(refresh_stock_cache: bool = False) -> dict[str, A
     feature_context = _build_feature_context_from_ohlc_panel(df)
     features_df = feature_context["features_df"]
     stocks_exclude_vnindex = feature_context["stocks_exclude_vnindex"]
-    from app.services.strategies import BreakoutTTM005C, FIXED_TTM_PARAMS
+    from app.services.strategies import BreakoutTTMV1, FIXED_TTM_PARAMS
 
     # Same defaults as the 005c backtest raw leg (no MS position sizing).
     MS_POSITION_BUDGET = 100.0
@@ -729,7 +729,7 @@ def _run_feature_pipeline_impl(refresh_stock_cache: bool = False) -> dict[str, A
         if ver == 'v3':
             continue
 
-        strategy = BreakoutTTM005C(
+        strategy = BreakoutTTMV1(
             stocks_exclude_vnindex,
             ver,
             init_cash=MS_POSITION_BUDGET,

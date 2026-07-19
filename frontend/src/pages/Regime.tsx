@@ -26,6 +26,14 @@ const REGIME_COLORS: Record<number, string> = {
   [-2]: '#f23645',  // Bearish_High_Var
 };
 
+// TICA+HMM regime label → colour
+const TICA_LABEL_COLORS: Record<string, string> = {
+  'Risk-On':  '#27AE60',  // emerald
+  'Caution':  '#E67E22',  // orange
+  'Risk-Off': '#C0392B',  // red
+  'Crisis':   '#7B241C',  // dark red
+};
+
 const yzColor = (pct: number | null): string => {
   if (pct == null) return '#9ca3af';
   if (pct > 90)  return '#f23645';
@@ -61,10 +69,11 @@ const CHART_OPTIONS = {
 
 // ── panel labels ─────────────────────────────────────────────────────────────
 const PANEL_LABELS = [
-  { text: 'Price + KAMA',        color: '#a5b4fc' },
-  { text: 'Markov-KAMA Regime',  color: '#a5b4fc' },
-  { text: 'Regime Probability',  color: '#a5b4fc' },
-  { text: 'YZ Vol Percentile',   color: '#a5b4fc' },
+  { text: 'Price + KAMA',          color: '#a5b4fc' },
+  { text: 'Markov-KAMA Regime',    color: '#a5b4fc' },
+  { text: 'Regime Probability',    color: '#a5b4fc' },
+  { text: 'YZ Vol Percentile',     color: '#a5b4fc' },
+  { text: 'TICA+HMM Regime',       color: '#F39C12' },
 ];
 
 export default function RegimePage() {
@@ -89,11 +98,11 @@ export default function RegimePage() {
       height: containerRef.current.clientHeight,
     });
 
-    // stretch panes: price large, 3 indicator panes small
+    // stretch panes: price large, 4 indicator panes small
     setTimeout(() => {
       try {
         const panes = chart.panes();
-        const factors = [5, 1, 1, 1];
+        const factors = [5, 1, 1, 1, 1];
         panes.forEach((p: any, i: number) => {
           if (typeof p.setStretchFactor === 'function' && i < factors.length)
             p.setStretchFactor(factors[i]);
@@ -141,7 +150,7 @@ export default function RegimePage() {
     const chart = chartRef.current;
     if (!chart || !chartReady || !data) return;
 
-    const { timestamps, open, high, low, close, markov_kama, ms_regime, yz_percentile } = data;
+    const { timestamps, open, high, low, close, markov_kama, ms_regime, yz_percentile, tica_hmm } = data;
     const n = timestamps.length;
 
     // ── Panel 0: candlestick + KAMA ────────────────────────────────────────
@@ -193,6 +202,15 @@ export default function RegimePage() {
       title: 'YZ Pct',
     }, 3);
 
+    // ── Panel 4: TICA+HMM regime (coloured bars) ──────────────────────────
+    const ticaRegimeHist = chart.addSeries(HistogramSeries, {
+      color: '#27AE60',
+      priceFormat: { type: 'price', precision: 0, minMove: 1 },
+      priceScaleId: 'right',
+      lastValueVisible: false,
+      priceLineVisible: false,
+    }, 4);
+
     // reference lines at 25, 75, 90
     const makeRef = (_val: number, col: string) =>
       chart.addSeries(LineSeries, {
@@ -205,16 +223,17 @@ export default function RegimePage() {
     const ref90 = makeRef(90, 'rgba(242,54,69,0.5)');
 
     // ── build data arrays ──────────────────────────────────────────────────
-    const priceData: { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
-    const kamaData:  { time: UTCTimestamp; value: number; color: string }[] = [];
-    const histData:  { time: UTCTimestamp; value: number; color: string }[] = [];
-    const bullData:  { time: UTCTimestamp; value: number }[]   = [];
-    const msData:    { time: UTCTimestamp; value: number }[]   = [];
-    const midData:   { time: UTCTimestamp; value: number }[]   = [];
-    const yzData:    { time: UTCTimestamp; value: number; color: string }[] = [];
-    const r25: { time: UTCTimestamp; value: number }[] = [];
-    const r75: { time: UTCTimestamp; value: number }[] = [];
-    const r90: { time: UTCTimestamp; value: number }[] = [];
+    const priceData:    { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
+    const kamaData:     { time: UTCTimestamp; value: number; color: string }[] = [];
+    const histData:     { time: UTCTimestamp; value: number; color: string }[] = [];
+    const bullData:     { time: UTCTimestamp; value: number }[] = [];
+    const msData:       { time: UTCTimestamp; value: number }[] = [];
+    const midData:      { time: UTCTimestamp; value: number }[] = [];
+    const yzData:       { time: UTCTimestamp; value: number; color: string }[] = [];
+    const r25:          { time: UTCTimestamp; value: number }[] = [];
+    const r75:          { time: UTCTimestamp; value: number }[] = [];
+    const r90:          { time: UTCTimestamp; value: number }[] = [];
+    const ticaHistData: { time: UTCTimestamp; value: number; color: string }[] = [];
 
     for (let i = 0; i < n; i++) {
       const t = toTs(timestamps[i]);
@@ -244,6 +263,12 @@ export default function RegimePage() {
       r25.push({ time: t, value: 25 });
       r75.push({ time: t, value: 75 });
       r90.push({ time: t, value: 90 });
+
+      // TICA+HMM panel — one full-height bar per bar, coloured by regime
+      const lbl = tica_hmm.regime_label[i] ?? '';
+      if (lbl) {
+        ticaHistData.push({ time: t, value: 1, color: TICA_LABEL_COLORS[lbl] ?? '#9ca3af' });
+      }
     }
 
     priceSeries.setData(priceData);
@@ -256,6 +281,7 @@ export default function RegimePage() {
     ref25.setData(r25);
     ref75.setData(r75);
     ref90.setData(r90);
+    ticaRegimeHist.setData(ticaHistData);
 
     // show last 365 bars
     const ts = chart.timeScale();
@@ -275,6 +301,7 @@ export default function RegimePage() {
         chart.removeSeries(ref25);
         chart.removeSeries(ref75);
         chart.removeSeries(ref90);
+        chart.removeSeries(ticaRegimeHist);
       } catch {}
     };
   }, [data, chartReady]);
@@ -330,17 +357,19 @@ export default function RegimePage() {
         </Stack>
 
         {/* regime legend */}
-        <Stack direction="row" spacing={0.5} sx={{ ml: 'auto' }}>
+        <Stack direction="row" spacing={0.5} sx={{ ml: 'auto', alignItems: 'center' }}>
           {([-2, -1, 0, 1, 2] as const).map(code => (
-            <Box key={code} sx={{
-              width: 14, height: 14, borderRadius: '50%',
-              bgcolor: REGIME_COLORS[code],
-              title: String(code),
-            }} />
+            <Box key={code} sx={{ width: 12, height: 12, borderRadius: '50%', bgcolor: REGIME_COLORS[code] }} />
           ))}
-          <Typography variant="caption" sx={{ color: '#6b7280', ml: 0.5 }}>
-            Bear→Bull
-          </Typography>
+          <Typography variant="caption" sx={{ color: '#6b7280', mx: 0.5 }}>B→Bull</Typography>
+          {(['Risk-On', 'Caution', 'Risk-Off'] as const).map(lbl => (
+            <Chip
+              key={lbl}
+              label={lbl}
+              size="small"
+              sx={{ bgcolor: TICA_LABEL_COLORS[lbl] + '33', color: TICA_LABEL_COLORS[lbl], fontSize: '0.65rem', height: 18, fontWeight: 600 }}
+            />
+          ))}
         </Stack>
       </Paper>
 

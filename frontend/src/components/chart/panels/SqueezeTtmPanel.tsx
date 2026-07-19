@@ -3,6 +3,17 @@ import { HistogramSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import { formatChartTime } from '../../../lib/services/timeseries';
 
+/** Matches backend ``squeeze_ttm`` — derived from ``diff = bb_upper - kc_upper`` */
+const SQUEEZE_NONE = 0; // diff == 0 or warmup
+const SQUEEZE_ON = 1;   // diff < 0
+const SQUEEZE_OFF = 2;  // diff > 0
+
+const SQUEEZE_BAR_COLORS: Record<number, string> = {
+  [SQUEEZE_NONE]: 'rgba(244, 245, 244, 0.7)',
+  [SQUEEZE_ON]: 'rgba(239, 68, 68, 0.7)',
+  [SQUEEZE_OFF]: 'rgba(34, 197, 94, 0.7)',
+};
+
 type SqueezeTtmPanelProps = {
   chart: IChartApi;
   data: any;
@@ -55,13 +66,20 @@ export default function SqueezeTtmPanel({
     if (!data || !timestamps) return;
 
     const histogram = data.squeeze_ttm?.histogram ?? [];
-    const squeezeOn = data.squeeze_ttm?.squeeze_on ?? [];
+    const squeezeState = data.squeeze_ttm?.squeeze_state ?? [];
 
     const histogramData = timestamps.map((timestamp: string, i: number) => {
       const value = histogram[i];
       if (typeof value !== 'number') return null;
-      const isSqueeze = !!squeezeOn[i];
-      const color = isSqueeze ? 'rgba(239, 68, 68, 0.7)' : 'rgba(34, 197, 94, 0.7)';
+
+      const rawState = squeezeState[i];
+      const state =
+        typeof rawState === 'number' && !Number.isNaN(rawState)
+          ? rawState
+          : SQUEEZE_NONE;
+      const color =
+        SQUEEZE_BAR_COLORS[state] ?? SQUEEZE_BAR_COLORS[SQUEEZE_NONE];
+
       return {
         time: formatChartTime(timestamp) as UTCTimestamp,
         value,

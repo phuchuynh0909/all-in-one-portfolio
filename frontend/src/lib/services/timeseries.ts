@@ -19,6 +19,7 @@ export interface TimeseriesResponse {
     atr_trailing?: (number | null)[];
     vwap_highest?: (number | null)[];
     vwap_lowest?: (number | null)[];
+    kama?: (number | null)[];
     bvc?: (number | null)[];
     kalman_zscore?: (number | null)[];
     yz_volatility?: (number | null)[];
@@ -44,7 +45,7 @@ export interface TimeseriesResponse {
     };
     squeeze_ttm?: {
       histogram: (number | null)[];
-      squeeze_on: boolean[];
+      squeeze_state: number[]; // 0=diff==0, 1=diff<0 (on), 2=diff>0 (off)
     };
     smart_money_flow?: {
       last_signal: (number | null)[];
@@ -59,6 +60,13 @@ export interface TimeseriesResponse {
       bull_dot: boolean[];
       bear_dot: boolean[];
       strength_signed: (number | null)[];
+    };
+    linreg_channel?: {
+      reg: (number | null)[];
+      pi_upper: (number | null)[];
+      pi_lower: (number | null)[];
+      ci_upper: (number | null)[];
+      ci_lower: (number | null)[];
     };
   };
 }

@@ -15,6 +15,7 @@ import {
   Typography,
   CircularProgress,
   Tooltip,
+  TablePagination,
 } from '@mui/material';
 import SearchIcon from '@mui/icons-material/Search';
 import EditIcon from '@mui/icons-material/Edit';
@@ -29,7 +30,25 @@ interface ReportTableProps {
 
 export const ReportTable: React.FC<ReportTableProps> = ({ reports, isLoading, onSymbolSearch }) => {
   const [searchSymbol, setSearchSymbol] = React.useState('');
+  const [page, setPage] = React.useState(0);
+  const [rowsPerPage, setRowsPerPage] = React.useState(10);
   const navigate = useNavigate();
+
+  // Reset to first page whenever the underlying data set changes
+  React.useEffect(() => {
+    setPage(0);
+  }, [reports]);
+
+  const handleChangePage = (_event: unknown, newPage: number) => {
+    setPage(newPage);
+  };
+
+  const handleChangeRowsPerPage = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setRowsPerPage(parseInt(event.target.value, 10));
+    setPage(0);
+  };
+
+  const paginatedReports = reports.slice(page * rowsPerPage, page * rowsPerPage + rowsPerPage);
 
   const handleSearch = () => {
     onSymbolSearch(searchSymbol);
@@ -83,7 +102,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({ reports, isLoading, on
               </TableRow>
             </TableHead>
             <TableBody>
-              {reports.map((report) => (
+              {paginatedReports.map((report) => (
                 <TableRow key={report.id} hover>
                   <TableCell>{report.id}</TableCell>
                   <TableCell>{report.mack}</TableCell>
@@ -112,6 +131,15 @@ export const ReportTable: React.FC<ReportTableProps> = ({ reports, isLoading, on
               ))}
             </TableBody>
           </Table>
+          <TablePagination
+            component="div"
+            count={reports.length}
+            page={page}
+            onPageChange={handleChangePage}
+            rowsPerPage={rowsPerPage}
+            onRowsPerPageChange={handleChangeRowsPerPage}
+            rowsPerPageOptions={[10, 25, 50, 100]}
+          />
         </TableContainer>
       )}
     </Box>

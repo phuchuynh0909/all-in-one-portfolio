@@ -1,0 +1,46 @@
+{
+  "v1": {
+    "bb_window": 23,
+    "bb_multiplier": 1.5,
+    "bb_matype": 2,
+    "kc_window": 21,
+    "kc_multiplier": 0.9,
+    "kc_atr_period": 5,
+    "donichan_window": 11,
+    "osc_smoothing_period": 9,
+    "low_stop_lookback": 5,
+    "atr_period": 10,
+    "atr_multiplier": 1.9,
+    "max_sl": 0.06
+  },
+  "v2": {
+    "bb_window": 22,
+    "bb_multiplier": 2.0,
+    "bb_matype": 0,
+    "kc_window": 16,
+    "kc_multiplier": 0.8,
+    "kc_atr_period": 13,
+    "donichan_window": 11,
+    "osc_smoothing_period": 8,
+    "low_stop_lookback": 5,
+    "atr_period": 10,
+    "atr_multiplier": 2.2,
+    "max_sl": 0.07
+  },
+  "v3": {
+    "bb_window": 11,
+    "bb_multiplier": 0.9,
+    "bb_matype": 0,
+    "kc_window": 20,
+    "kc_multiplier": 1.9000000000000001,
+    "kc_atr_period": 19,
+    "donichan_window": 11,
+    "osc_smoothing_period": 9,
+    "low_stop_lookback": 3,
+    "atr_period": 5,
+    "atr_multiplier": 3.5,
+    "max_sl": 0.14,
+    "william_vix_period": 18,
+    "consecutive_neg_threshold": 4
+  }
+}

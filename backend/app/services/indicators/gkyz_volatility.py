@@ -16,9 +16,9 @@ def calculate_gkyz_volatility(
     Garman-Klass-Yang-Zhang volatility estimator.
 
     Combines three components:
-      - HL:  0.5 * mean(log(H/L)^2)
-      - CC: -(2*ln2-1) * mean(log(C/C_prev)^2)
-      - OC:  mean(log(O/C_prev)^2)
+      - OC:  mean(log(O/C_prev)^2)           overnight gap
+      - HL:  0.5 * mean(log(H/L)^2)          intraday range
+      - CO: -(2*ln2-1) * mean(log(C/O)^2)    drift vs today's open
 
     Args:
         open_prices:  1-D array of open prices
@@ -64,47 +64,78 @@ def gkyz_volatility_nb(
     high: np.ndarray,
     low: np.ndarray,
     window: int = 21,
+    normalize: bool = False,
 ) -> np.ndarray:
     """
     Numba-accelerated GKYZ volatility for 2-D arrays (rows=time, cols=symbols).
 
-    Returns raw (non-normalized) GKYZ volatility; NaN for first `window-1` rows.
+    Matches :func:`calculate_gkyz_volatility` (same components, 2-dp rounding,
+    annualization, and rolling min-max when ``normalize=True``).
+
+    Parameters
+    ----------
+    normalize : bool
+        When False, return annualized GKYZ (× √252 × 100).
+        When True, also min-max normalize to [0, 1] over a rolling ``window``
+        (requires ``window`` non-NaN bars in the lookback, same as pandas).
+
+    Returns NaN for the first ``window - 1`` rows; when ``normalize=True``,
+    NaN until bar ``2 * window - 2``.
     """
     n_rows, n_cols = close.shape
+    raw = np.full(close.shape, np.nan, dtype=np.float64)
     out = np.full(close.shape, np.nan, dtype=np.float64)
 
     log2 = np.log(2.0)
-    cc_coeff = -(2.0 * log2 - 1.0)
+    co_coeff = -(2.0 * log2 - 1.0)
+    ann_factor = np.sqrt(252.0) * 100.0
 
     for col in nb.prange(n_cols):
         for i in range(window - 1, n_rows):
-            sum_hl = 0.0
-            sum_cc = 0.0
             sum_oc = 0.0
+            sum_hl = 0.0
+            sum_co = 0.0
 
             for j in range(i - window + 1, i + 1):
-                prev_j = j - 1 if j > 0 else 0
-                h = high[j, col]
-                l = low[j, col]
-                c = close[j, col]
-                o = open_[j, col]
-                c_prev = close[prev_j, col]
+                prev_j = 0 if j == 0 else j - 1
+                h = round(high[j, col], 2)
+                l = round(low[j, col], 2)
+                c = round(close[j, col], 2)
+                o = round(open_[j, col], 2)
+                c_prev = round(close[prev_j, col], 2)
 
-                hl_sq = np.log(h / l) ** 2
-                cc_sq = np.log(c / c_prev) ** 2
-                oc_sq = np.log(o / c_prev) ** 2
+                sum_oc += np.log(o / c_prev) ** 2
+                sum_hl += np.log(h / l) ** 2
+                sum_co += np.log(c / o) ** 2
 
-                sum_hl += hl_sq
-                sum_cc += cc_sq
-                sum_oc += oc_sq
-
-            hl_comp = 0.5 * sum_hl / window
-            cc_comp = cc_coeff * sum_cc / window
             oc_comp = sum_oc / window
+            hl_comp = 0.5 * sum_hl / window
+            co_comp = co_coeff * sum_co / window
 
-            variance = hl_comp + cc_comp + oc_comp
+            variance = oc_comp + hl_comp + co_comp
             if variance < 0.0:
                 variance = 0.0
-            out[i, col] = np.sqrt(variance)
+            raw[i, col] = np.sqrt(variance) * ann_factor
+
+        if normalize:
+            for i in range(window - 1, n_rows):
+                lo = np.inf
+                hi = -np.inf
+                count = 0
+                for k in range(i - window + 1, i + 1):
+                    v = raw[k, col]
+                    if not np.isnan(v):
+                        count += 1
+                        if v < lo:
+                            lo = v
+                        if v > hi:
+                            hi = v
+                if count >= window:
+                    out[i, col] = (raw[i, col] - lo) / (hi - lo + 1e-10)
+                else:
+                    out[i, col] = np.nan
+        else:
+            for i in range(window - 1, n_rows):
+                out[i, col] = raw[i, col]
 
     return out

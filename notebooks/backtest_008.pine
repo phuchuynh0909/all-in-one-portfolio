@@ -1,0 +1,160 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// Backtest 008 — QQE Deceleration + ATR Trailing Stop
+// Ported from notebooks/backtest_008.ipynb
+//
+// Entry : QQE Value1 (Wilder RSI → SMA) decelerating —
+//         qqe_v1 < qqe_v1[qqe_shift]  → fill at NEXT bar open
+// Exit  : Close crosses below ATR trailing stop  (mirrors atr_trailing_nb)
+//         OR initial swing-low stop (lowest(low, N) capped at max_sl %)
+//
+// Optuna best params (balanced Pareto):
+//   qqe_period=20  qqe_smooth=3  qqe_shift=2
+//   atr_period=14  atr_mult=3.0  low_stop_lookback=2  max_sl=13 %
+// ─────────────────────────────────────────────────────────────────────────────
+//@version=5
+strategy("QQE Decel + ATR Trail [BT-008]",
+     overlay            = true,
+     initial_capital    = 100000,
+     default_qty_type   = strategy.percent_of_equity,
+     default_qty_value  = 100,
+     commission_type    = strategy.commission.percent,
+     commission_value   = 0.1,
+     slippage           = 2,
+     calc_on_every_tick = false)
+
+// ── Inputs ────────────────────────────────────────────────────────────────────
+var GRP_E = "Entry — QQE Deceleration"
+qqe_period = input.int  (20,   "RSI Period",           minval = 2,                  group = GRP_E)
+qqe_smooth = input.int  (3,    "Smooth (SMA period)",  minval = 1,                  group = GRP_E)
+qqe_shift  = input.int  (2,    "Shift (lookback bars)",minval = 1,                  group = GRP_E)
+
+var GRP_X = "Exit — ATR Trailing Stop"
+atr_period        = input.int  (14,   "ATR Period",          minval = 1,            group = GRP_X)
+atr_mult          = input.float(3.0,  "ATR Multiplier",      minval = 0.1, step=0.1,group = GRP_X)
+low_stop_lookback = input.int  (2,    "Swing-Low Lookback",  minval = 1,            group = GRP_X)
+max_sl_pct        = input.float(13.0, "Max Stop Loss (%)",   minval = 0.1, step=0.5,group = GRP_X) / 100.0
+
+// ── QQE Value1 ────────────────────────────────────────────────────────────────
+// Wilder RSI: RMA(gain, n) / RMA(loss, n) — identical to ta.rsi() internals
+delta   = close - close[1]
+gain    = delta > 0 ? delta  : 0.0
+loss    = delta < 0 ? -delta : 0.0
+rma_g   = ta.rma(gain, qqe_period)
+rma_l   = ta.rma(loss, qqe_period)
+rsi_raw = rma_l == 0 ? 100.0 : rma_g == 0 ? 0.0 : 100.0 - 100.0 / (1.0 + rma_g / rma_l)
+qqe_v1  = ta.sma(rsi_raw, qqe_smooth)   // QQE Value1
+
+// Entry: momentum decelerating
+entry_sig = qqe_v1 < qqe_v1[qqe_shift]
+
+// ── ATR Trailing Stop — direct port of atr_trailing_nb ───────────────────────
+//
+// Python logic (per-bar):
+//   iff_1 = src - sl  if src > trail_prev  else  src + sl
+//   iff_2 = min(trail_prev, src + sl)  if (src < trail_prev and src_prev < trail_prev)  else iff_1
+//   trail = max(trail_prev, src - sl)  if (src > trail_prev and src_prev > trail_prev)  else iff_2
+//
+// When trail_prev is NaN (first bar), both comparisons are False in Python →
+//   iff_1 = src + sl,  iff_2 = iff_1,  trail = iff_2  →  trail_init = src + sl
+// ─────────────────────────────────────────────────────────────────────────────
+atr_raw = ta.atr(atr_period)
+sl_amt  = atr_raw * atr_mult
+
+var float trail = na
+if na(trail[1])
+    trail := close + sl_amt                                    // first-bar init (NaN branch)
+else
+    bool above_prev = close    > trail[1]
+    bool was_above  = close[1] > trail[1]
+    if above_prev and was_above                                // trend up — raise floor
+        trail := math.max(trail[1], close - sl_amt)
+    else if not above_prev and not was_above                   // trend down — lower ceiling
+        trail := math.min(trail[1], close + sl_amt)
+    else                                                       // just crossed — reset
+        trail := above_prev ? close - sl_amt : close + sl_amt
+
+trail_bull = close > trail
+atr_exit   = ta.crossunder(close, trail)
+
+// ── Swing-low initial stop (set once at entry) ───────────────────────────────
+swing_low = ta.lowest(low, low_stop_lookback)
+sl_frac   = close > 0 ? math.min((close - swing_low) / close, max_sl_pct) : max_sl_pct
+
+// ── Strategy execution ────────────────────────────────────────────────────────
+// Signal fires on confirmed close → Pine fills at NEXT bar's open (default).
+var float init_stop = na
+
+if entry_sig and strategy.position_size == 0
+    // Approximate stop using signal-bar close; refined to openprice after fill
+    init_stop := close * (1.0 - sl_frac)
+    strategy.entry("Long", strategy.long)
+
+// Once filled, anchor stop to actual entry price
+if strategy.position_size > 0 and not na(strategy.openprice)
+    // Recompute init_stop against real entry price on the first in-trade bar
+    if strategy.openprice != close   // entry just filled (open ≠ signal close)
+        init_stop := strategy.openprice * (1.0 - sl_frac[1])
+    float eff_stop = math.max(nz(init_stop, trail), trail)
+    strategy.exit("Exit", from_entry = "Long", stop = eff_stop)
+
+if strategy.position_size == 0
+    init_stop := na
+
+// ── Plots ─────────────────────────────────────────────────────────────────────
+bool in_trade = strategy.position_size > 0
+
+// ATR trailing stop line (colour tracks direction)
+atr_color = trail_bull ? color.new(color.lime, 25) : color.new(color.red, 25)
+plot(trail, "ATR Trail Stop", color = atr_color, linewidth = 2)
+
+// Initial swing-low stop (shown only while in trade)
+plot(in_trade ? init_stop : na, "Swing-Low Stop",
+     color     = color.new(color.orange, 10),
+     linewidth = 1,
+     style     = plot.style_circles)
+
+// Entry label (signal bar — actual fill is next open)
+plotshape(entry_sig, "Buy Signal",
+     shape    = shape.triangleup,
+     location = location.belowbar,
+     color    = color.new(color.lime, 0),
+     text     = "B",
+     textcolor= color.black,
+     size     = size.small)
+
+// ATR-trail exit label
+plotshape(in_trade and atr_exit, "Sell (ATR Trail)",
+     shape    = shape.triangledown,
+     location = location.abovebar,
+     color    = color.new(color.red, 0),
+     text     = "S",
+     textcolor= color.white,
+     size     = size.small)
+
+// Tint bars while holding
+bgcolor(in_trade ? color.new(color.teal, 90) : na, title = "In-trade tint")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// QQE Value1 pane — add as a SECOND script (New pane → paste below)
+// ─────────────────────────────────────────────────────────────────────────────
+// //@version=5
+// indicator("QQE Value1 [BT-008]", overlay=false)
+//
+// qqe_period = input.int(20, "RSI Period")
+// qqe_smooth = input.int(3,  "Smooth")
+// qqe_shift  = input.int(2,  "Shift")
+//
+// delta  = close - close[1]
+// gain   = delta > 0 ? delta  : 0.0
+// loss   = delta < 0 ? -delta : 0.0
+// rsi_v  = ta.rma(loss, qqe_period) == 0 ? 100.0 :
+//          ta.rma(gain, qqe_period) == 0 ? 0.0   :
+//          100.0 - 100.0 / (1.0 + ta.rma(gain, qqe_period) / ta.rma(loss, qqe_period))
+// v1     = ta.sma(rsi_v, qqe_smooth)
+// v1_lag = v1[qqe_shift]
+// sig    = v1 < v1_lag
+//
+// plot(v1,     "QQE V1",         color=color.aqua,  linewidth=2)
+// plot(v1_lag, "QQE V1 shifted", color=color.gray,  linewidth=1)
+// hline(50, "Mid", color=color.gray, linestyle=hline.style_dashed)
+// plotshape(sig, shape=shape.circle, location=location.bottom, color=color.lime, size=size.tiny)

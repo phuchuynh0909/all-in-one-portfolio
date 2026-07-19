@@ -18,6 +18,8 @@ import {
   Drawer,
   Fab,
   IconButton,
+  ToggleButton,
+  ToggleButtonGroup,
 } from '@mui/material';
 import { Sync, Notes, Search } from '@mui/icons-material';
 import { syncStock } from '../lib/services/workflows';
@@ -29,6 +31,7 @@ import StockChart from '../components/chart/StockChart';
 export default function ChartPage() {
   const [symbol, setSymbol] = useState('VNINDEX');
   const [currentSymbol, setCurrentSymbol] = useState('VNINDEX');
+  const [view, setView] = useState<'chart' | 'largeOrders'>('chart');
   const [isFocused, setIsFocused] = useState(false);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [syncing, setSyncing] = useState(false);
@@ -216,10 +219,34 @@ export default function ChartPage() {
           />
         </Stack>
 
-        <IconButton
-          onClick={handleSync}
-          disabled={syncing}
-          aria-label={`Sync ${currentSymbol}`}
+        <Stack direction="row" spacing={1} alignItems="center">
+          <ToggleButtonGroup
+            value={view}
+            exclusive
+            size="small"
+            onChange={(_, v) => { if (v) setView(v); }}
+            sx={{
+              '& .MuiToggleButton-root': {
+                color: '#9ca3af',
+                borderColor: 'rgba(99,102,241,0.3)',
+                px: 1.5,
+                py: 0.4,
+                textTransform: 'none',
+                '&.Mui-selected': {
+                  color: '#a5b4fc',
+                  bgcolor: 'rgba(99,102,241,0.18)',
+                },
+              },
+            }}
+          >
+            <ToggleButton value="chart">Chart</ToggleButton>
+            <ToggleButton value="largeOrders">Large Orders</ToggleButton>
+          </ToggleButtonGroup>
+
+          <IconButton
+            onClick={handleSync}
+            disabled={syncing}
+            aria-label={`Sync ${currentSymbol}`}
           sx={{
             width: 40,
             height: 40,
@@ -235,8 +262,9 @@ export default function ChartPage() {
             },
           }}
         >
-          <Sync sx={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
-        </IconButton>
+            <Sync sx={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
+          </IconButton>
+        </Stack>
       </Paper>
 
       {/* Chart */}
@@ -252,7 +280,12 @@ export default function ChartPage() {
           borderRadius: 2,
         }}
       >
-        <StockChart symbol={currentSymbol} onReportClick={handleReportClick} height={chartHeight} />
+        <StockChart
+          symbol={currentSymbol}
+          onReportClick={handleReportClick}
+          height={chartHeight}
+          showLargeOrders={view === 'largeOrders'}
+        />
       </Paper>
 
       <Fab

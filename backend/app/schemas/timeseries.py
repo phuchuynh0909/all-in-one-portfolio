@@ -24,7 +24,7 @@ class WilliamsVixFix(BaseModel):
 
 class SqueezeTTM(BaseModel):
     histogram: List[Optional[float]]
-    squeeze_on: List[bool]
+    squeeze_state: List[int]  # 0=diff==0/warmup, 1=diff<0 (on), 2=diff>0 (off)
 
 class SmartMoneyFlow(BaseModel):
     last_signal: List[Optional[int]]
@@ -46,6 +46,13 @@ class ChandelierExit(BaseModel):
     long: List[Optional[float]]
     short: List[Optional[float]]
 
+class LinRegChannel(BaseModel):
+    reg: List[Optional[float]]
+    pi_upper: List[Optional[float]]
+    pi_lower: List[Optional[float]]
+    ci_upper: List[Optional[float]]
+    ci_lower: List[Optional[float]]
+
 class Indicators(BaseModel):
     rsi: Optional[List[Optional[float]]] = None
     rsi_5: Optional[List[Optional[float]]] = None
@@ -57,6 +64,7 @@ class Indicators(BaseModel):
     atr_trailing: Optional[List[Optional[float]]] = None
     vwap_highest: Optional[List[Optional[float]]] = None
     vwap_lowest: Optional[List[Optional[float]]] = None
+    kama: Optional[List[Optional[float]]] = None
     bvc: Optional[List[Optional[float]]] = None
     stoch: Optional[Dict[str, List[Optional[float]]]] = None
     kalman_zscore: Optional[List[Optional[float]]] = None
@@ -73,6 +81,7 @@ class Indicators(BaseModel):
     squeeze_ttm: Optional[SqueezeTTM] = None
     smart_money_flow: Optional[SmartMoneyFlow] = None
     chandelier_exit: Optional[ChandelierExit] = None
+    linreg_channel: Optional[LinRegChannel] = None
 
 class Timeseries(BaseModel):
     open: List[float]

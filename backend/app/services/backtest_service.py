@@ -10,7 +10,7 @@ from sklearn.preprocessing import StandardScaler
 
 from app.services.stock_service import _load_delta_stocks, _load_feature_store
 from app.services.indicators.regime_signals import compute_regime_signals
-from app.services.strategies.breakout_ttm_005c import BreakoutTTM005C
+from app.services.strategies.breakout_ttm_v1 import BreakoutTTMV1
 
 # List of features used for ML predictions
 FEATURES_LIST = [
@@ -90,9 +90,9 @@ def get_strategy_params(strategy_name: str) -> Tuple[List[tuple], type, List[str
         return strategy_params, BreakoutTTMVersion2, param_names
 
     elif strategy_name == "Breakout TTM 005C":
-        strategy_params = [('v1',), ('v2',), ('v3',)]
+        strategy_params = [('v1',), ('v2',), ('v3',), ('v4',)]
         param_names = ['entry_version']
-        return strategy_params, BreakoutTTM005C, param_names
+        return strategy_params, BreakoutTTMV1, param_names
 
     elif strategy_name == "Dual RSI":
         from app.services.strategies.dual_rsi import DualRSI

@@ -218,10 +218,10 @@ export default function SmfPanel({
 
       // ── Retest dots ────────────────────────────────────────────────────────
       if (smf.bull_dot?.[i]) {
-        markers.push({ time: t, position: 'belowBar', color: BULL, shape: 'circle', text: '', size: 1 });
+        markers.push({ time: t, position: 'belowBar', color: BULL, shape: 'circle', text: '', size: 0.5 });
       }
       if (smf.bear_dot?.[i]) {
-        markers.push({ time: t, position: 'aboveBar', color: BEAR, shape: 'circle', text: '', size: 1 });
+        markers.push({ time: t, position: 'aboveBar', color: BEAR, shape: 'circle', text: '', size: 0.5 });
       }
     });
 

@@ -15,6 +15,11 @@ export interface YZPercentileData {
   pct_rank: (number | null)[];
 }
 
+export interface TicaHmmData {
+  regime_code:  number[];  // 0..k-1 Viterbi
+  regime_label: string[];  // "Risk-On" | "Caution" | "Risk-Off"
+}
+
 export interface RegimeResponse {
   symbol: string;
   timestamps: string[];
@@ -25,6 +30,7 @@ export interface RegimeResponse {
   markov_kama: MarkovKamaData;
   ms_regime: MSRegimeData;
   yz_percentile: YZPercentileData;
+  tica_hmm: TicaHmmData;
 }
 
 export interface RegimeRequest {

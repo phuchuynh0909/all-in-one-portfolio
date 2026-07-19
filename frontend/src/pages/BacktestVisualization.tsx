@@ -15,23 +15,34 @@ import {
   TableContainer,
   TableRow,
 } from '@mui/material';
-import { useBacktestPlot, useWatchlistSymbols } from '../lib/services/backtest';
+import { useBacktestPlot, useBacktestPlotStrategies, useWatchlistSymbols } from '../lib/services/backtest';
+
+// State that persists to localStorage so selections survive a page refresh.
+function usePersistedState(key: string, defaultValue: string) {
+  const [value, setValue] = useState<string>(() => {
+    try {
+      return localStorage.getItem(key) ?? defaultValue;
+    } catch {
+      return defaultValue;
+    }
+  });
+  const set = (next: string) => {
+    setValue(next);
+    try {
+      localStorage.setItem(key, next);
+    } catch {
+      /* ignore write failures (private mode, quota) */
+    }
+  };
+  return [value, set] as const;
+}
 
 export default function BacktestVisualization() {
-  const [selectedSymbol, setSelectedSymbol] = useState<string>('VCG');
-  const [selectedStrategy, setSelectedStrategy] = useState<string>('Breakout TTM');
+  const [selectedSymbol, setSelectedSymbol] = usePersistedState('backtest.symbol', 'VCG');
+  const [selectedStrategy, setSelectedStrategy] = usePersistedState('backtest.strategy', 'Breakout TTM');
 
-  const strategies = [
-    'Breakout DeMarker',
-    'Breakout TTM',
-    'Breakout TTM V1',
-    'Breakout TTM V1b',
-    'Breakout TTM V1c',
-    'Breakout TTM V2',
-    'Breakout TTM V3',
-    'Williams Vix Fix',
-    'Episodic Pivot',
-  ];
+  const { data: strategiesData } = useBacktestPlotStrategies();
+  const strategies = strategiesData || [];
 
   const { data: symbolsData } = useWatchlistSymbols();
   const symbols = symbolsData || [];

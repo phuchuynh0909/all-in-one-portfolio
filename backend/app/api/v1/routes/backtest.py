@@ -8,7 +8,7 @@ from app.schemas.backtest import (
     BacktestPlotResponse
 )
 from app.services.backtest_service import run_backtest
-from app.services.backtest_plot_service import run_backtest_plot
+from app.services.backtest_plot_service import run_backtest_plot, list_plot_strategies
 from fastapi_cache.decorator import cache
 from fastapi_cache import FastAPICache
 from loguru import logger
@@ -211,6 +211,12 @@ async def backtest_strategy(request: BacktestRequest) -> BacktestResponse:
     )
     
     return BacktestResponse(**result)
+
+
+@router.get("/plot/strategies", response_model=List[str])
+async def get_backtest_plot_strategies() -> List[str]:
+    """Ordered list of strategy names available on the visualisation page."""
+    return list_plot_strategies()
 
 
 @router.get("/plot", response_model=BacktestPlotResponse)

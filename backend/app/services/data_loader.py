@@ -3,7 +3,8 @@ import numpy as np
 import pandas as pd
 
 
-MINIO_HOST = "https://minio.phuchuynh.xyz"
+# MINIO_HOST = "https://minio.phuchuynh.xyz"
+MINIO_HOST = "http://192.168.1.3:9000"
 
 _STORAGE_OPTIONS = {
     "AWS_ACCESS_KEY_ID":         "CzOwnLkEDXQy951AOqes",
@@ -48,6 +49,7 @@ def load_stocks(
     store_key: str      = _DEFAULT_KEY,
     years: int          = 10,
     refresh: bool       = False,
+    exclude: list[str] | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Load OHLCV data, cache to local HDF5.
@@ -59,6 +61,7 @@ def load_stocks(
     store_key      : key inside the HDF5 store
     years          : how many years of history to pull from DeltaLake
     refresh        : force re-download even if the cache exists
+    exclude        : symbols to drop from the watchlist before loading
 
     Returns
     -------
@@ -67,6 +70,9 @@ def load_stocks(
       rest    — each a plain DataFrame (dates × symbols)
     """
     symbols = _read_watchlist(watchlist_path)
+    if exclude:
+        exclude_set = set(exclude)
+        symbols = np.array([s for s in symbols if s not in exclude_set])
 
     if not refresh and os.path.exists(local_file):
         print(f"Loading from HDF5 cache: {local_file}")

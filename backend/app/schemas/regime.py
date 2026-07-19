@@ -19,6 +19,11 @@ class YZPercentileData(BaseModel):
     pct_rank: List[Optional[float]]         # 0–100
 
 
+class TicaHmmData(BaseModel):
+    regime_code:  List[int]   # 0..k-1 (Viterbi)
+    regime_label: List[str]   # "Risk-On" | "Caution" | "Risk-Off"
+
+
 class RegimeResponse(BaseModel):
     symbol: str
     timestamps: List[str]
@@ -29,6 +34,7 @@ class RegimeResponse(BaseModel):
     markov_kama: MarkovKamaData
     ms_regime: MSRegimeData
     yz_percentile: YZPercentileData
+    tica_hmm: TicaHmmData
 
 
 class RegimeRequest(BaseModel):

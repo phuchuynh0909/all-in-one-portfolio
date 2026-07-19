@@ -17,66 +17,64 @@ from app.services.backtest_strategies import (
     BreakoutTTMV1cStrategyBT,
     BreakoutTTMV2StrategyBT,
     BreakoutTTMV3StrategyBT,
+    BreakoutTTMKamaStrategyBT,
+    BreakoutTTMKamaV1StrategyBT,
+    BreakoutTTMKamaV3StrategyBT,
     EpisodicPivotStrategyBT,
     WilliamsVixStrategyBT,
 )
 
 
+# ── Plot strategy registry ────────────────────────────────────────────────────
+# Single source of truth for the visualisation page: name -> (strategy class,
+# default kwargs). Ordered — the frontend renders this order in its dropdown.
+PLOT_STRATEGIES: "dict[str, tuple[type, dict]]" = {
+    "Breakout DeMarker": (BreakoutDeMarkerStrategyBT, {
+        "demarker_period": 10,
+        "keltner_period": 16,
+        "bb_period": 15,
+        "bb_deviation": 2.5,
+        "keltner_factor": 2.2,
+        "keltner_atr_period": 20,
+        "atr_multiplier": 1.9,
+        "sl_stop": 0.06,
+        "entry_version": "v2",
+    }),
+    "Breakout TTM": (BreakoutTTMStrategyBT, {
+        'bb_period': 10, 'bb_multiplier': 1.2, 'kc_period': 13, 'kc_atr_period': 10,
+        'kc_multiplier': 1.0, 'donichan_period': 10, 'osc_smoothing_period': 5,
+        'matype': 3, 'william_vix_period': 25,
+    }),
+    "Breakout TTM V1":  (BreakoutTTMV1StrategyBT,  {}),
+    "Breakout TTM V1b": (BreakoutTTMV1bStrategyBT, {}),
+    "Breakout TTM V1c": (BreakoutTTMV1cStrategyBT, {}),
+    "Breakout TTM V2":  (BreakoutTTMV2StrategyBT,  {}),
+    "Breakout TTM V3":  (BreakoutTTMV3StrategyBT,  {}),
+    "Breakout TTM KAMA":    (BreakoutTTMKamaStrategyBT,   {}),
+    "Breakout TTM KAMA V1": (BreakoutTTMKamaV1StrategyBT, {}),
+    "Breakout TTM KAMA V3": (BreakoutTTMKamaV3StrategyBT, {}),
+    "Williams Vix Fix": (WilliamsVixStrategyBT, {
+        'bb_period': 10, 'bb_multiplier': 1.2, 'william_vix_period': 20,
+        'lb': 50, 'ph': 0.85, 'ltLB': 33, 'mtLB': 14, 'strength_str': 1,
+        'donichan_period': 10, 'atr_period': 10, 'atr_multiplier': 1.9, 'sl_stop': 0.1,
+    }),
+    "Episodic Pivot": (EpisodicPivotStrategyBT, {
+        'gap_threshold': 0.01, 'vol_mult': 1.2, 'vol_period': 10, 'wait_days': 2,
+        'breakout_lookahead': 1, 'hold_days': 3, 'atr_period': 10, 'atr_multiplier': 1.8,
+    }),
+}
+
+_DEFAULT_STRATEGY = "Breakout DeMarker"
+
+
+def list_plot_strategies() -> "list[str]":
+    """Ordered list of strategy names available on the visualisation page."""
+    return list(PLOT_STRATEGIES.keys())
+
+
 def _get_plot_strategy(strategy_name: str):
-    if strategy_name == "Breakout DeMarker":
-        return BreakoutDeMarkerStrategyBT, {
-            "demarker_period": 10,
-            "keltner_period": 16,
-            "bb_period": 15,
-            "bb_deviation": 2.5,
-            "keltner_factor": 2.2,
-            "keltner_atr_period": 20,
-            "atr_multiplier": 1.9,
-            "sl_stop": 0.06,
-            "entry_version": "v2",
-        }
-    elif strategy_name == "Breakout TTM":
-        args = {'bb_period': 10, 'bb_multiplier': 1.2, 'kc_period': 13, 'kc_atr_period': 10, 'kc_multiplier': 1.0, 'donichan_period': 10, 'osc_smoothing_period': 5, 'matype': 3, 'william_vix_period': 25}
-        return BreakoutTTMStrategyBT, args
-    elif strategy_name == "Breakout TTM V1":
-        return BreakoutTTMV1StrategyBT, {}
-    elif strategy_name == "Breakout TTM V1b":
-        return BreakoutTTMV1bStrategyBT, {}
-    elif strategy_name == "Breakout TTM V1c":
-        return BreakoutTTMV1cStrategyBT, {}
-    elif strategy_name == "Breakout TTM V2":
-        return BreakoutTTMV2StrategyBT, {}
-    elif strategy_name == "Breakout TTM V3":
-        return BreakoutTTMV3StrategyBT, {}
-    elif strategy_name == "Williams Vix Fix":
-        args = {
-            'bb_period': 10,
-            'bb_multiplier': 1.2,
-            'william_vix_period': 20,
-            'lb': 50,
-            'ph': 0.85,
-            'ltLB': 33,
-            'mtLB': 14,
-            'strength_str': 1,
-            'donichan_period': 10,
-            'atr_period': 10,
-            'atr_multiplier': 1.9,
-            'sl_stop': 0.1,
-        }
-        return WilliamsVixStrategyBT, args
-    elif strategy_name == "Episodic Pivot":
-        args = {
-            'gap_threshold': 0.01,
-            'vol_mult': 1.2,
-            'vol_period': 10,
-            'wait_days': 2,
-            'breakout_lookahead': 1,
-            'hold_days': 3,
-            'atr_period': 10,
-            'atr_multiplier': 1.8,
-        }
-        return EpisodicPivotStrategyBT, args
-    return BreakoutDeMarkerStrategyBT, {}
+    strategy, args = PLOT_STRATEGIES.get(strategy_name, PLOT_STRATEGIES[_DEFAULT_STRATEGY])
+    return strategy, args
 
 
 def _compute_mfe_mae(stats, data: pd.DataFrame) -> dict:
@@ -162,8 +160,12 @@ async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) ->
     }
     all_params: Dict = {**class_defaults, **strategy_params}
 
+    # Strategies may opt into same-bar-close fills (e.g. to mirror a vectorbt
+    # from_signals research backtest); default stays next-bar-open.
+    trade_on_close = bool(getattr(strategy_class, "_trade_on_close", False))
     bt = Backtest(stock_df, strategy_class, cash=10000, commission=0.002,
-                  exclusive_orders=True, finalize_trades=True)
+                  exclusive_orders=True, finalize_trades=True,
+                  trade_on_close=trade_on_close)
     try:
         stats = bt.run(**strategy_params)
     except Exception as exc:

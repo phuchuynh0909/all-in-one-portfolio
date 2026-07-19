@@ -1,0 +1,10 @@
+{
+  "reg_window": 100,
+  "confidence": 0.81,
+  "slope_min_pct": -0.13999999999999999,
+  "use_atr_pct_gate": false,
+  "atr_pct_period": 14,
+  "atr_pct_max": 5,
+  "low_stop_lookback": 2,
+  "max_sl": 0.05
+}

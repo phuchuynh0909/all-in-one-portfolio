@@ -23,7 +23,9 @@ type PricePanelProps = {
     onSeriesReady: (series: ISeriesApi<"Candlestick">) => void;
     atrVisible?: boolean;
     vwapVisible?: boolean;
+    kamaVisible?: boolean;
     chandelierVisible?: boolean;
+    linregVisible?: boolean;
 };
 
 type ChartMarker = SeriesMarker<UTCTimestamp>;
@@ -47,7 +49,9 @@ export default function PricePanel({
     onSeriesReady,
     atrVisible,
     vwapVisible,
+    kamaVisible,
     chandelierVisible,
+    linregVisible,
 }: PricePanelProps) {
     const candlestickSeriesRef = useRef<ISeriesApi<"Candlestick"> | null>(null);
     const volumeSeriesRef = useRef<ISeriesApi<"Histogram"> | null>(null);
@@ -55,7 +59,11 @@ export default function PricePanel({
     const atrTrailingRef = useRef<ISeriesApi<"Line"> | null>(null);
     const vwapHighestRef = useRef<ISeriesApi<"Line"> | null>(null);
     const vwapLowestRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const kamaRef = useRef<ISeriesApi<"Line"> | null>(null);
     const chandelierLineRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const linregRegRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const linregPiUpperRef = useRef<ISeriesApi<"Line"> | null>(null);
+    const linregPiLowerRef = useRef<ISeriesApi<"Line"> | null>(null);
     const reportMarkersRef = useRef<MarkerController | null>(null);
     const positionMarkersRef = useRef<MarkerController | null>(null);
 
@@ -148,6 +156,18 @@ export default function PricePanel({
         });
         vwapLowestRef.current = vwapLowest;
 
+        // KAMA — Kaufman Adaptive Moving Average overlay
+        const kama = chart.addSeries(LineSeries, {
+            color: '#eab308',  // Amber
+            lineWidth: 2,
+            title: 'KAMA',
+            priceFormat: {
+                type: 'price',
+            },
+            priceLineVisible: false,
+        });
+        kamaRef.current = kama;
+
         // Single chandelier line — color switches per bar based on direction
         const chandelierLine = chart.addSeries(LineSeries, {
             color: '#089981',
@@ -160,6 +180,39 @@ export default function PricePanel({
         });
         chandelierLineRef.current = chandelierLine;
 
+        // Linear Regression Prediction Channel — regression line + PI bands (overlay)
+        const linregReg = chart.addSeries(LineSeries, {
+            color: '#38bdf8',  // sky blue
+            lineWidth: 2,
+            title: 'LR Reg',
+            priceFormat: { type: 'price' },
+            priceLineVisible: false,
+            lastValueVisible: false,
+        });
+        linregRegRef.current = linregReg;
+
+        const linregPiUpper = chart.addSeries(LineSeries, {
+            color: '#f43f5e',  // crimson
+            lineWidth: 1,
+            lineStyle: 2,  // dashed
+            title: 'LR PI Up',
+            priceFormat: { type: 'price' },
+            priceLineVisible: false,
+            lastValueVisible: false,
+        });
+        linregPiUpperRef.current = linregPiUpper;
+
+        const linregPiLower = chart.addSeries(LineSeries, {
+            color: '#f43f5e',  // crimson
+            lineWidth: 1,
+            lineStyle: 2,  // dashed
+            title: 'LR PI Low',
+            priceFormat: { type: 'price' },
+            priceLineVisible: false,
+            lastValueVisible: false,
+        });
+        linregPiLowerRef.current = linregPiLower;
+
         return () => {
             if (chart) {
                 try {
@@ -169,7 +222,11 @@ export default function PricePanel({
                     chart.removeSeries(atrTrailing);
                     chart.removeSeries(vwapHighest);
                     chart.removeSeries(vwapLowest);
+                    chart.removeSeries(kama);
                     chart.removeSeries(chandelierLine);
+                    chart.removeSeries(linregReg);
+                    chart.removeSeries(linregPiUpper);
+                    chart.removeSeries(linregPiLower);
                 } catch (e) {
                     console.warn('Error removing series:', e);
                 }
@@ -180,7 +237,11 @@ export default function PricePanel({
             atrTrailingRef.current = null;
             vwapHighestRef.current = null;
             vwapLowestRef.current = null;
+            kamaRef.current = null;
             chandelierLineRef.current = null;
+            linregRegRef.current = null;
+            linregPiUpperRef.current = null;
+            linregPiLowerRef.current = null;
             reportMarkersRef.current = null;
             positionMarkersRef.current = null;
         };
@@ -198,10 +259,23 @@ export default function PricePanel({
         vwapLowestRef.current?.applyOptions({ visible: show });
     }, [vwapVisible]);
 
+    // Toggle KAMA visibility
+    useEffect(() => {
+        kamaRef.current?.applyOptions({ visible: kamaVisible !== false });
+    }, [kamaVisible]);
+
     // Toggle Chandelier Exit visibility
     useEffect(() => {
         chandelierLineRef.current?.applyOptions({ visible: chandelierVisible !== false });
     }, [chandelierVisible]);
+
+    // Toggle Linear Regression Prediction Channel visibility
+    useEffect(() => {
+        const show = linregVisible !== false;
+        linregRegRef.current?.applyOptions({ visible: show });
+        linregPiUpperRef.current?.applyOptions({ visible: show });
+        linregPiLowerRef.current?.applyOptions({ visible: show });
+    }, [linregVisible]);
 
     // Update data
     useEffect(() => {
@@ -238,6 +312,15 @@ export default function PricePanel({
         const vwapLowestData = formatIndicatorData(timestamps, indicators.vwap_lowest ?? []);
         vwapHighestRef.current?.setData(vwapHighestData);
         vwapLowestRef.current?.setData(vwapLowestData);
+
+        const kamaData = formatIndicatorData(timestamps, indicators.kama ?? []);
+        kamaRef.current?.setData(kamaData);
+
+        // Linear Regression Prediction Channel — regression line + PI bands
+        const lrc = indicators.linreg_channel;
+        linregRegRef.current?.setData(formatIndicatorData(timestamps, lrc?.reg ?? []));
+        linregPiUpperRef.current?.setData(formatIndicatorData(timestamps, lrc?.pi_upper ?? []));
+        linregPiLowerRef.current?.setData(formatIndicatorData(timestamps, lrc?.pi_lower ?? []));
 
         // Chandelier Exit — single dashed line, green (dir=1) or red (dir=-1) per bar
         const ceData = indicators.chandelier_exit;

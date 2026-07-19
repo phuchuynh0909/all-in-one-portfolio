@@ -10,12 +10,14 @@ from app.schemas.regime import (
     MSRegimeData,
     RegimeRequest,
     RegimeResponse,
+    TicaHmmData,
     YZPercentileData,
 )
 from app.services.indicators import (
     calculate_yz_volatility,
     markov_kama_regime,
     ms_regime_multifeature,
+    tica_hmm_regime,
 )
 from app.services.stock_service import _load_delta_stocks
 from app.services.utils import convert_nans
@@ -58,7 +60,10 @@ async def get_regime(symbol: str, request: RegimeRequest) -> RegimeResponse:
         close, open_, high, low, volume
     )
 
-    # 3. Yang-Zhang percentile (007 — rolling 252-day pct-rank)
+    # 3. TICA + HMM (Risk-On / Caution / Risk-Off)
+    th_code, th_label, _, _ = tica_hmm_regime(close, index=index)
+
+    # 4. Yang-Zhang percentile (007 — rolling 252-day pct-rank)
     yz_vol = np.asarray(
         calculate_yz_volatility(open_, high, low, close, window=21, periods=252),
         dtype=float,
@@ -89,5 +94,9 @@ async def get_regime(symbol: str, request: RegimeRequest) -> RegimeResponse:
         yz_percentile=YZPercentileData(
             yz_vol=convert_nans(yz_vol),
             pct_rank=convert_nans(pct_rank),
+        ),
+        tica_hmm=TicaHmmData(
+            regime_code=th_code.tolist(),
+            regime_label=th_label,
         ),
     )

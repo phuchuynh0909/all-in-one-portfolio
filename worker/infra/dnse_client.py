@@ -106,7 +106,8 @@ class DNSEClient:
 
         if data.get("errors"):
             self.log.warning(
-                "GraphQL errors (date=%s, before=%s): %s",
+                "GraphQL errors (symbol=%s, date=%s, before=%s): %s",
+                symbol,
                 date_str,
                 before,
                 data["errors"],
@@ -114,13 +115,24 @@ class DNSEClient:
 
         if data.get("data") is None and not data.get("errors"):
             self.log.warning(
-                "GraphQL returned data=null (date=%s, before=%s)", date_str, before
+                "GraphQL returned data=null (symbol=%s, date=%s, before=%s)",
+                symbol,
+                date_str,
+                before,
             )
 
-        ticks: list[dict] = (
-            data.get("data", {}).get("GetKrxTicksBySymbols", {}).get("ticks", [])
-        )
-        return ticks or []
+        ticks_node = data.get("data", {}).get("GetKrxTicksBySymbols") or {}
+        raw_ticks = ticks_node.get("ticks")
+        if raw_ticks is None and data.get("data") is not None:
+            self.log.warning(
+                "GraphQL returned ticks=null (symbol=%s, date=%s, before=%s)",
+                symbol,
+                date_str,
+                before,
+            )
+
+        ticks: list[dict] = raw_ticks or []
+        return ticks
 
     def fetch_day_ticks(
         self,
@@ -209,5 +221,13 @@ class DNSEClient:
         resp = requests.post(
             API_URL, headers=HEADERS, json=payload, timeout=self.timeout
         )
-        resp.raise_for_status()
+        try:
+            resp.raise_for_status()
+        except requests.HTTPError:
+            self.log.error(
+                "DNSE API HTTP %s: %s",
+                resp.status_code,
+                resp.text[:2000],
+            )
+            raise
         return resp.json()

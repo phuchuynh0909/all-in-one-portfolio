@@ -123,10 +123,9 @@ class MockConfig:
         enabled = os.getenv("ISP_USE_MOCK", "0") in ("1", "true", "True")
         symbols = [
             s.strip()
-            for s in os.getenv("ISP_MOCK_SYMBOLS", "ANV").split(",")
+            for s in os.getenv("ISP_MOCK_SYMBOLS", "").split(",")
             if s.strip()
         ]
-        print(symbols)
         start_time = os.getenv("ISP_MOCK_START", "2025-10-17 09:00:00")
         end_time = os.getenv("ISP_MOCK_END", "2025-10-17 14:45:00")
         speed = float(os.getenv("ISP_MOCK_SPEED", "1.0"))
@@ -356,6 +355,85 @@ class HawkesConfig:
 
 
 @dataclass
+class LargeOrderConfig:
+    """Large-order ("Layer 3") pipeline configuration.
+
+    Tracks the whole watchlist but keeps only trades whose notional value
+    (match_price * match_qty) clears ``min_dollar_value``.
+    """
+
+    min_dollar_value: float
+    table: str
+    watchlist_file: str
+    board: int
+    session_tz: str
+    session_start_str: str
+    session_end_str: str
+    request_delay: float
+    window_seconds: int
+    wait_seconds: float
+    exclude_auctions: bool
+    auction_windows: list[tuple[dtime, dtime]]
+
+    @staticmethod
+    def _parse_time(s: str) -> dtime:
+        parts = [int(x) for x in s.strip().split(":")]
+        while len(parts) < 3:
+            parts.append(0)
+        return dtime(parts[0], parts[1], parts[2])
+
+    @classmethod
+    def _parse_window(cls, s: str) -> tuple[dtime, dtime]:
+        start_str, end_str = [p.strip() for p in s.split(",")]
+        return cls._parse_time(start_str), cls._parse_time(end_str)
+
+    @property
+    def session_start(self) -> dtime:
+        start_str, _ = ISPConfig._parse_session(
+            f"{self.session_start_str},{self.session_end_str}"
+        )
+        return start_str
+
+    @property
+    def session_end(self) -> dtime:
+        _, end_str = ISPConfig._parse_session(
+            f"{self.session_start_str},{self.session_end_str}"
+        )
+        return end_str
+
+    @classmethod
+    def from_env(cls) -> "LargeOrderConfig":
+        # Auction (ATO/ATC) windows — trades inside these clear at a single
+        # auction price and are dropped so they don't form fake blocks.
+        exclude_auctions = _parse_bool(
+            os.getenv("LARGE_ORDER_EXCLUDE_AUCTIONS"), default=True
+        )
+        auction_windows: list[tuple[dtime, dtime]] = []
+        if exclude_auctions:
+            auction_windows = [
+                cls._parse_window(os.getenv("LARGE_ORDER_ATO_WINDOW", "09:00:00,09:15:00")),
+                cls._parse_window(os.getenv("LARGE_ORDER_ATC_WINDOW", "14:30:00,15:00:00")),
+            ]
+
+        return cls(
+            min_dollar_value=float(os.getenv("LARGE_ORDER_MIN_VALUE", "500000")),
+            table=os.getenv("CLICKHOUSE_LARGE_ORDERS_TABLE", "large_orders"),
+            watchlist_file=os.getenv("LARGE_ORDER_WATCHLIST_FILE", "watchlist.json"),
+            board=int(os.getenv("LARGE_ORDER_BOARD", os.getenv("TICK_BOARD", "2"))),
+            session_tz=os.getenv("EXCHANGE_TZ", "Asia/Ho_Chi_Minh"),
+            session_start_str=os.getenv("TICK_SESSION_START", "09:00"),
+            session_end_str=os.getenv("TICK_SESSION_END", "15:00"),
+            request_delay=float(os.getenv("LARGE_ORDER_REQUEST_DELAY", "0.1")),
+            # Block aggregation: bucket width and how long the live windower
+            # waits (system time) for late/out-of-order ticks before closing.
+            window_seconds=int(os.getenv("LARGE_ORDER_WINDOW_SECONDS", "1")),
+            wait_seconds=float(os.getenv("LARGE_ORDER_WAIT_SECONDS", "2")),
+            exclude_auctions=exclude_auctions,
+            auction_windows=auction_windows,
+        )
+
+
+@dataclass
 class Config:
     """Main configuration container."""
 
@@ -368,6 +446,7 @@ class Config:
     tick_sync: TickSyncConfig
     reconciler: ReconcilerConfig
     hawkes: HawkesConfig
+    large_order: LargeOrderConfig
 
     @classmethod
     def load(cls) -> "Config":
@@ -382,6 +461,7 @@ class Config:
             tick_sync=TickSyncConfig.from_env(),
             reconciler=ReconcilerConfig.from_env(),
             hawkes=HawkesConfig.from_env(),
+            large_order=LargeOrderConfig.from_env(),
         )
 
 

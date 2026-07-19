@@ -125,7 +125,83 @@ python hawkes_signal_worker.py --symbol VN30F1M --poll 60
 
 ---
 
+### 4. `large_order_ingest.py` — Layer 3 large-order blocks (always-on)
+
+The sparse counterpart to `tick_ingest`. Subscribes to the live tick feed for
+**every symbol in the watchlist** (not just the VN30F contract) and **merges
+trades into fixed-second blocks** per `(symbol, side)`: a single institutional
+order usually arrives as many sub-second fills, so block-merging captures the
+true size that per-tick filtering would miss. Only blocks whose total notional
+`Σ(price × qty)` clears `LARGE_ORDER_MIN_VALUE` (default `1000`) are stored.
+
+Bytewax steps: MQTT input (all watchlist topics) → normalize via
+`tick_contract.normalize_tick` → key by `SYMBOL|SIDE` → **drop ATO/ATC auction
+prints** (`is_auction_time`) → `fold_window` (event-time `TumblingWindower`,
+`LARGE_ORDER_WINDOW_SECONDS`, default `1s`) merging ticks into blocks →
+`finalize_block` (vwap = notional/qty) → `op.filter` keep `is_large_block` →
+ClickHouse `large_orders` sink.
+
+> **Auction exclusion** (on by default, `LARGE_ORDER_EXCLUDE_AUCTIONS=1`):
+> ATO/ATC trades clear at a single auction price and would otherwise form one
+> huge fake block (e.g. the FPT close prints 185k shares in one 14:45 tick).
+> Trades whose exchange-local time (truncated to the second) fall in
+> `LARGE_ORDER_ATO_WINDOW` (`09:00:00,09:15:00`) or `LARGE_ORDER_ATC_WINDOW`
+> (`14:30:00,15:00:00`) are dropped on both the live and reconciler paths.
+
+Block aggregation lives in `core/large_order.py` (`new_block_acc` / `fold_tick`
+/ `merge_acc` / `finalize_block`) and is shared verbatim with the reconciler.
+
+> Event-time windows flush a block only once the watermark passes the bucket
+> end (driven by later trades + `LARGE_ORDER_WAIT_SECONDS`, default `2s`). A
+> quiet symbol's final block may lag until more ticks arrive; the daily
+> reconciler back-fills the authoritative end-of-day blocks regardless.
+
+**Run:**
+```bash
+python -m bytewax.run workers.large_order_ingest:flow
+```
+
+### 5. `large_order_reconciler.py` — Layer 3 daily back-fill
+
+**Same DNSE GraphQL API as the tick reconciler** (`DNSEClient.fetch_day_ticks`);
+the only difference is scope — it loops over the watchlist symbols instead of
+the single front-month contract. Per symbol: pull the day's tape, merge into
+in-session large blocks with the **same aggregation as the live path**, then
+**upsert all** large blocks. Because a block's size can grow as fills arrive,
+the reconciler is authoritative — `ReplacingMergeTree(received_at)` overwrites
+any partial live block by `(symbol, sending_time, side)`; it also reports how
+many block keys were new. Uses its own run-state file
+(`state_dir/large_order_reconciler_run_state.json`).
+
+**Run:**
+```bash
+python workers/large_order_reconciler.py                  # respects 15:00 ICT guard
+python workers/large_order_reconciler.py --force          # bypass guard
+python workers/large_order_reconciler.py --date 2026-06-20 --dry-run
+python workers/large_order_reconciler.py --symbol FPT --symbol HPG
+# Date-range backfill — weekends skipped, bypasses the schedule guard:
+python workers/large_order_reconciler.py --from-date 2026-06-01 --to-date 2026-06-10
+```
+
+---
+
 ## Data model
+
+### `large_orders` (Layer 3 blocks)
+```sql
+symbol       String
+sending_time DateTime64(6, 'UTC')   -- block bucket start (floored to window)
+side         Int32                  -- 1=BUY, 2=SELL, 0=unknown
+vwap         Float64                -- volume-weighted price = dollar_value / total_qty
+total_qty    Int64                  -- summed quantity in the block
+dollar_value Float64                -- summed notional Σ(price * qty)
+num_trades   Int64                  -- fills merged into the block
+received_at  DateTime64(6, 'UTC')
+
+ENGINE = ReplacingMergeTree(received_at)
+ORDER BY (symbol, sending_time, side)
+PARTITION BY toYYYYMMDD(sending_time)
+```
 
 ### `ticks`
 ```sql

@@ -7,6 +7,7 @@ import {
   fetchTimeseries,
   getDateRange,
   formatChartTime,
+  formatReportDateForChart,
 } from '../../lib/services/timeseries';
 import { differenceInDays } from 'date-fns';
 
@@ -26,11 +27,13 @@ import WilliamsVixFixPanel from './panels/WilliamsVixFixPanel';
 import SqueezeTtmPanel from './panels/SqueezeTtmPanel';
 import SmfPanel from './panels/SmfPanel';
 import GkyzPanel from './panels/GkyzPanel';
+import LargeOrderBubbles from './LargeOrderBubbles';
 
 type StockChartProps = {
   symbol: string;
   onReportClick?: (report: Report) => void;
   height?: number;
+  showLargeOrders?: boolean;
 };
 
 /** Maps indicator id → the pane index it occupies.
@@ -81,6 +84,19 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
     id: 'vwap', name: 'vwap', label: 'VWAP',
     params: { window: 200 }, visible: true,
     paramDefs: [{ key: 'window', label: 'Window', min: 10, max: 1000, step: 10 }],
+  },
+  {
+    id: 'kama', name: 'kama', label: 'KAMA',
+    params: { timeperiod: 10 }, visible: true,
+    paramDefs: [{ key: 'timeperiod', label: 'Period', min: 2, max: 200, step: 1 }],
+  },
+  {
+    id: 'linreg_channel', name: 'linreg_channel', label: 'LR Prediction Channel',
+    params: { reg_window: 50, confidence: 0.85 }, visible: true,
+    paramDefs: [
+      { key: 'reg_window', label: 'Reg Window', min: 10, max: 200,  step: 5    },
+      { key: 'confidence', label: 'Confidence', min: 0.5, max: 0.99, step: 0.01 },
+    ],
   },
   {
     id: 'bvc', name: 'bvc', label: 'BVC',
@@ -164,7 +180,7 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
 ];
 
-export default function StockChart({ symbol, height }: StockChartProps) {
+export default function StockChart({ symbol, height, showLargeOrders = false }: StockChartProps) {
   const [reports, setReports] = useState<Report[]>([]);
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
@@ -692,13 +708,21 @@ export default function StockChart({ symbol, height }: StockChartProps) {
             </div>
           `;
 
-          let left = param.point.x;
+          // Anchor the tooltip over the report's BAR (not the cursor) so it
+          // sits on the 📄 marker. timeToCoordinate is pane-relative, so add
+          // the left price-scale width to convert to container coordinates.
+          const markerX = hoveredReport.ngaykn
+            ? chart.timeScale().timeToCoordinate(
+                formatReportDateForChart(hoveredReport.ngaykn) as UTCTimestamp,
+              )
+            : null;
+          const anchorX = markerX ?? param.point.x; // pane-relative fallback
           const timeScaleWidth = chart.timeScale()?.width() ?? 0;
           const priceScaleWidth = chart.priceScale('left')?.width() ?? 0;
           const halfTooltipWidth = toolTipWidth / 2;
           const newLeft = Math.max(
             Math.min(
-              left + priceScaleWidth - halfTooltipWidth,
+              anchorX + priceScaleWidth - halfTooltipWidth,
               priceScaleWidth + timeScaleWidth - toolTipWidth
             ),
             priceScaleWidth
@@ -945,8 +969,19 @@ export default function StockChart({ symbol, height }: StockChartProps) {
             onSeriesReady={(series) => { candlestickSeriesRef.current = series; }}
             atrVisible={getVisible('atr_trailing')}
             vwapVisible={getVisible('vwap')}
+            kamaVisible={getVisible('kama')}
             chandelierVisible={getVisible('chandelier_exit')}
+            linregVisible={getVisible('linreg_channel')}
           />
+          {showLargeOrders && chartContainerRef.current && (
+            <LargeOrderBubbles
+              chart={chartRef.current}
+              seriesRef={candlestickSeriesRef}
+              container={chartContainerRef.current}
+              symbol={symbol}
+              visible={showLargeOrders}
+            />
+          )}
           <RsiPanel
             chart={chartRef.current}
             data={indicatorsData}
