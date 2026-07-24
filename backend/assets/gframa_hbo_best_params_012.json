@@ -1,15 +1,15 @@
 {
-  "gaussian_length": 5,
+  "gaussian_length": 6,
   "sigma": 1.0,
-  "fm_len": 18,
+  "fm_len": 16,
   "gframa_atr_period": 5,
-  "gframa_atr_mult": 2.9000000000000004,
-  "hbo_length": 12,
-  "hbo_mult": 2.25,
-  "low_stop_lookback": 5,
-  "atr_period": 13,
-  "atr_mult_min": 2.2,
-  "atr_mult_max": 2.9000000000000004,
-  "corr_window": 40,
-  "max_sl": 0.09
+  "gframa_atr_mult": 1.0,
+  "hbo_length": 9,
+  "hbo_mult": 2.5,
+  "low_stop_lookback": 4,
+  "atr_period": 7,
+  "atr_mult_min": 2.1,
+  "atr_mult_max": 3.9000000000000004,
+  "corr_window": 20,
+  "max_sl": 0.11000000000000001
 }

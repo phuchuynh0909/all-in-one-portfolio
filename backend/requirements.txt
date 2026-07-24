@@ -28,7 +28,6 @@ ta-lib>=0.4.28
 ta>=0.11.0
 numba>=0.61.0
 tables>=3.9.0
--e ./libs/backtesting.py
 
 # Machine Learning
 xgboost>=2.0.3
@@ -52,3 +51,26 @@ statsmodels>=0.14.6
 
 # Task orchestration
 prefect>=2.14.0
+
+# RAG pipeline (report PDF -> markdown -> embeddings -> Qdrant)
+qdrant-client>=1.9.0       # embeddings come from Ollama (Qwen3-Embedding-8B), not fastembed
+ollama>=0.3.0              # Ollama Python client (embeddings)
+marker-pdf>=1.2.0          # PDF->markdown parser option "marker" (pulls torch + models; heavy)
+llama-parse>=0.5.0         # PDF->markdown parser option "llamaparse" (cloud API; needs LLAMA_CLOUD_API_KEY)
+
+# TradingAgents (vendored at ../vendor/TradingAgents, put on sys.path by
+# app.services.tradingagents). These are its runtime deps; the multi-agent
+# graph runs against a local Ollama server (see app/services/tradingagents/README.md).
+langgraph>=0.4.8
+langgraph-checkpoint-sqlite>=2.0.0
+langchain-core>=0.3.81
+langchain-openai>=0.3.23
+langchain-google-genai>=2.0     # only needed when TRADINGAGENTS_LLM_PROVIDER=google/gemini
+stockstats>=0.6.5
+ddgs>=6.0            # keyless web search for the news/sentiment analysts (Tavily optional via TAVILY_API_KEY)
+# yfinance intentionally omitted: this deployment uses Vietnamese-market data
+# only. The vendored framework imports yfinance at module load, so
+# app.services.tradingagents installs a lightweight stub when it is absent
+# (Yahoo is never actually called — all data routes to the VN 'portfolio' vendor).
+
+-e ./libs/backtesting.py

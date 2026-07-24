@@ -27,6 +27,7 @@ import Scanner from './pages/Scanner';
 import Regime from './pages/Regime';
 import Alerts from './pages/Alerts';
 import ChatAgents from './pages/ChatAgents';
+import TradingAgents from './pages/TradingAgents';
 import Future from './pages/Future';
 import CW from './pages/CW';
 
@@ -65,6 +66,7 @@ const navItems = [
   { path: '/cw', label: 'CW' },
   { path: '/alerts', label: '🔔 Alerts' },
   { path: '/chat', label: '🤖 Chat' },
+  { path: '/trading-agents', label: '🤝 Agents' },
 ];
 
 // Create a client
@@ -133,6 +135,7 @@ export default function App() {
               <Route path="/regime" element={<Regime />} />
               <Route path="/future" element={<Future />} />
               <Route path="/cw" element={<CW />} />
+              <Route path="/trading-agents" element={<TradingAgents />} />
               <Route path="/alerts" element={<Alerts />} />
               <Route
                 path="/chat"

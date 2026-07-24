@@ -1,27 +1,71 @@
 import React from 'react';
-import { Container, Typography, Box, Button, CircularProgress, Snackbar, Alert } from '@mui/material';
+import {
+  Container,
+  Typography,
+  Box,
+  Button,
+  CircularProgress,
+  Snackbar,
+  Alert,
+  TextField,
+  MenuItem,
+} from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
 import { ReportTable } from '../components/report/ReportTable';
-import { fetchReports, syncReports } from '../lib/services/report';
-import type { Report as ReportType, SyncStats } from '../lib/services/report';
+import {
+  fetchReports,
+  syncReports,
+  fetchRagStatuses,
+  triggerReportRag,
+} from '../lib/services/report';
+import type { Report as ReportType, SyncStats, RagStatus, PdfParser } from '../lib/services/report';
+
+const RAG_IN_PROGRESS = ['PENDING', 'PARSING', 'EMBEDDING'];
 
 const Report: React.FC = () => {
   const [reports, setReports] = React.useState<ReportType[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [syncResult, setSyncResult] = React.useState<{ success: boolean; stats?: SyncStats; error?: string } | null>(null);
+  const [ragStatuses, setRagStatuses] = React.useState<Record<number, RagStatus>>({});
+  const [parser, setParser] = React.useState<PdfParser>('marker');
 
   const loadReports = async (symbol?: string) => {
     try {
       setIsLoading(true);
       const data = await fetchReports(symbol);
-      console.log(data);
       setReports(data);
     } catch (error) {
       console.error('Error loading reports:', error);
     } finally {
       setIsLoading(false);
     }
+  };
+
+  const loadRagStatuses = React.useCallback(async () => {
+    try {
+      setRagStatuses(await fetchRagStatuses());
+    } catch (error) {
+      console.error('Error loading RAG statuses:', error);
+    }
+  }, []);
+
+  const handleEmbed = async (reportId: number) => {
+    // Optimistic: show queued immediately, then let polling take over.
+    setRagStatuses((prev) => ({
+      ...prev,
+      [reportId]: { report_id: reportId, status: 'PENDING' },
+    }));
+    try {
+      await triggerReportRag(reportId, false, parser);
+    } catch (error) {
+      console.error('Error triggering RAG pipeline:', error);
+      setRagStatuses((prev) => ({
+        ...prev,
+        [reportId]: { report_id: reportId, status: 'FAILED', error: 'Failed to queue' },
+      }));
+    }
+    loadRagStatuses();
   };
 
   const handleSync = async () => {
@@ -42,7 +86,18 @@ const Report: React.FC = () => {
 
   React.useEffect(() => {
     loadReports();
-  }, []);
+    loadRagStatuses();
+  }, [loadRagStatuses]);
+
+  // Poll RAG statuses while any job is in progress.
+  React.useEffect(() => {
+    const anyRunning = Object.values(ragStatuses).some((s) =>
+      RAG_IN_PROGRESS.includes(s.status),
+    );
+    if (!anyRunning) return;
+    const id = window.setInterval(loadRagStatuses, 4000);
+    return () => window.clearInterval(id);
+  }, [ragStatuses, loadRagStatuses]);
 
   return (
     <Container maxWidth="xl">
@@ -51,19 +106,35 @@ const Report: React.FC = () => {
           <Typography variant="h4" component="h1">
             Research Reports
           </Typography>
-          <Button
-            variant="outlined"
-            startIcon={isSyncing ? <CircularProgress size={20} /> : <SyncIcon />}
-            onClick={handleSync}
-            disabled={isSyncing}
-          >
-            {isSyncing ? 'Syncing...' : 'Sync Latest'}
-          </Button>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+            <TextField
+              select
+              size="small"
+              label="Parser"
+              value={parser}
+              onChange={(e) => setParser(e.target.value as PdfParser)}
+              sx={{ width: 150 }}
+              helperText="For ✨ Embed"
+            >
+              <MenuItem value="marker">marker (local)</MenuItem>
+              <MenuItem value="llamaparse">LlamaParse (cloud)</MenuItem>
+            </TextField>
+            <Button
+              variant="outlined"
+              startIcon={isSyncing ? <CircularProgress size={20} /> : <SyncIcon />}
+              onClick={handleSync}
+              disabled={isSyncing}
+            >
+              {isSyncing ? 'Syncing...' : 'Sync Latest'}
+            </Button>
+          </Box>
         </Box>
         <ReportTable
           reports={reports}
           isLoading={isLoading}
           onSymbolSearch={(symbol) => loadReports(symbol)}
+          ragStatuses={ragStatuses}
+          onEmbed={handleEmbed}
         />
       </Box>
 

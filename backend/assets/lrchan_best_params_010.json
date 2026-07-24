@@ -1,10 +1,10 @@
 {
-  "reg_window": 100,
+  "reg_window": 90,
   "confidence": 0.81,
-  "slope_min_pct": -0.13999999999999999,
-  "use_atr_pct_gate": false,
-  "atr_pct_period": 14,
-  "atr_pct_max": 5,
+  "slope_min_pct": -0.21999999999999997,
+  "use_atr_pct_gate": true,
+  "atr_pct_period": 7,
+  "atr_pct_max": 10,
   "low_stop_lookback": 2,
-  "max_sl": 0.05
+  "max_sl": 0.04
 }

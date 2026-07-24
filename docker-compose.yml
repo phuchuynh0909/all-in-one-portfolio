@@ -7,6 +7,9 @@ services:
       - "8000:8000"
     volumes:
       - ./backend:/app
+      # Vendored TradingAgents source (repo root, outside the build context) —
+      # mounted so the sys.path shim in app/services/tradingagents can import it.
+      - ./vendor:/app/vendor
     environment:
       - APP_ENVIRONMENT=development
       - APP_PROJECT_NAME=Investment Tracker API
