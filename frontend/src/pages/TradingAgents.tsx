@@ -51,8 +51,8 @@ interface AgentMeta {
 
 const AGENT_META: Record<string, AgentMeta> = {
   market: { icon: '📈', label: 'Market Analyst', subtitle: 'Price action & technical indicators' },
-  news: { icon: '📰', label: 'News & Sentiment', subtitle: 'Knowledge base first, web fallback' },
-  sector: { icon: '🏭', label: 'Sector Analyst', subtitle: 'Peer performance & sector research' },
+  news: { icon: '📰', label: 'News & Sentiment', subtitle: 'Company + sector research, KB first' },
+  fundamentals: { icon: '📊', label: 'Fundamentals Analyst', subtitle: 'Balance sheet, income & cash flow' },
   research_debate: { icon: '⚖️', label: 'Bull vs Bear Debate', subtitle: 'Research-manager verdict' },
   research_manager: { icon: '🧭', label: 'Investment Plan', subtitle: 'Synthesized research thesis' },
   trader: { icon: '💹', label: 'Trader', subtitle: 'Concrete trade proposal' },
@@ -61,7 +61,7 @@ const AGENT_META: Record<string, AgentMeta> = {
 };
 
 const PIPELINE: { group: string; tint: string; items: string[] }[] = [
-  { group: 'Data Analysis', tint: '#3b82f6', items: ['market', 'news', 'sector'] },
+  { group: 'Data Analysis', tint: '#3b82f6', items: ['market', 'news', 'fundamentals'] },
   { group: 'Research Debate', tint: '#f59e0b', items: ['research_debate', 'research_manager'] },
   { group: 'Action', tint: '#8b5cf6', items: ['trader'] },
   { group: 'Risk Check', tint: '#ef4444', items: ['risk_debate'] },

@@ -68,6 +68,16 @@ export interface TimeseriesResponse {
       ci_upper: (number | null)[];
       ci_lower: (number | null)[];
     };
+    gaussian_frama?: {
+      frama: (number | null)[];
+      long_v: (number | null)[];
+      short_v: (number | null)[];
+      qb: (number | null)[];
+    };
+    hull_butterfly?: {
+      hso: (number | null)[];
+      os: (number | null)[];
+    };
   };
 }
 
@@ -82,6 +92,43 @@ export interface TimeseriesRequest {
   end_date?: string;
   indicators?: IndicatorParams[];
 }
+
+/** One page of bars: `count_back` bars ending just before `to` (unix seconds). */
+export interface BarsRequest {
+  interval?: string;
+  indicators?: IndicatorParams[];
+  /** Exclusive upper bound, unix seconds. */
+  to?: number;
+  /** Number of bars to return, ending at `to`. Takes priority over `from`. */
+  count_back?: number;
+  /** Inclusive lower bound, unix seconds. Used only when `count_back` is omitted. */
+  from?: number;
+}
+
+export interface BarsResponse extends TimeseriesResponse {
+  /** True when the requested window holds no bars. */
+  no_data: boolean;
+  /** Unix seconds of the closest available bar when `no_data` — lets the chart skip gaps. */
+  next_time?: number | null;
+  /** True when older bars exist before this page. */
+  has_more_history: boolean;
+}
+
+export const fetchBars = async (symbol: string, params: BarsRequest): Promise<BarsResponse> => {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/${symbol}/bars`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+};
 
 export const fetchTimeseries = async (symbol: string, params: TimeseriesRequest): Promise<TimeseriesResponse> => {
   const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/${symbol}`, {

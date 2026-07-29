@@ -28,7 +28,10 @@ class AnalyzeRequest(BaseModel):
     )
     analysts: Optional[List[str]] = Field(
         None,
-        description="Analyst subset; defaults to ['market','news'] (the ones with VN data)",
+        description=(
+            "Analyst subset; defaults to runner.DEFAULT_ANALYSTS (the ones backed "
+            "by VN data)"
+        ),
     )
 
 
@@ -81,9 +84,13 @@ def get_analysis(analysis_id: str) -> dict:
 @router.post("/analyze/stream")
 def analyze_stream(request: AnalyzeRequest) -> StreamingResponse:
     """Run a multi-agent analysis for one symbol, streaming progress via SSE."""
+    from app.services.tradingagents.runner import DEFAULT_ANALYSTS
+
     symbol = request.symbol.strip().upper()
     trade_date = request.trade_date or date.today().strftime("%Y-%m-%d")
-    analysts = tuple(request.analysts) if request.analysts else ("market", "news")
+    # Fall back to the runner's list rather than a second hardcoded copy, so
+    # enabling an analyst there actually reaches this endpoint.
+    analysts = tuple(request.analysts) if request.analysts else DEFAULT_ANALYSTS
 
     def event_generator() -> Generator[str, None, None]:
         # Import here so a heavy/broken TradingAgents install can't crash app

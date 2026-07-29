@@ -22,6 +22,9 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    // src is a bind mount in docker-compose; macOS/Docker drops inotify events,
+    // so edits can be served from a stale transform until the server restarts.
+    watch: { usePolling: true, interval: 300 },
   },
   preview: {
     host: true,

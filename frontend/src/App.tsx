@@ -1,4 +1,5 @@
-import { BrowserRouter, Routes, Route, Link } from 'react-router-dom';
+import { useState } from 'react';
+import { BrowserRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import {
   CssBaseline,
@@ -9,8 +10,14 @@ import {
   Typography,
   Box,
   Container,
-  Button,
+  IconButton,
+  Drawer,
+  List,
+  ListItem,
+  ListItemButton,
+  ListItemText,
 } from '@mui/material';
+import MenuIcon from '@mui/icons-material/Menu';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
@@ -79,6 +86,96 @@ const queryClient = new QueryClient({
   },
 });
 
+const drawerWidth = 260;
+
+function AppShell() {
+  const [navOpen, setNavOpen] = useState(false);
+  const location = useLocation();
+
+  return (
+    <>
+      <Box sx={{ flexGrow: 1 }}>
+        <AppBar position="static">
+          <Container maxWidth="xl">
+            <Toolbar disableGutters>
+              <IconButton
+                color="inherit"
+                edge="start"
+                onClick={() => setNavOpen(true)}
+                sx={{ mr: 2 }}
+              >
+                <MenuIcon />
+              </IconButton>
+              <Typography
+                variant="h6"
+                noWrap
+                component={Link}
+                to="/"
+                sx={{
+                  color: 'inherit',
+                  textDecoration: 'none',
+                }}
+              >
+                Investment Tracker
+              </Typography>
+            </Toolbar>
+          </Container>
+        </AppBar>
+      </Box>
+
+      <Drawer
+        anchor="left"
+        open={navOpen}
+        onClose={() => setNavOpen(false)}
+        PaperProps={{ sx: { width: drawerWidth } }}
+      >
+        <List sx={{ pt: 1 }}>
+          {navItems.map((item) => (
+            <ListItem key={item.path} disablePadding>
+              <ListItemButton
+                component={Link}
+                to={item.path}
+                selected={location.pathname === item.path}
+                onClick={() => setNavOpen(false)}
+              >
+                <ListItemText primary={item.label} />
+              </ListItemButton>
+            </ListItem>
+          ))}
+        </List>
+      </Drawer>
+
+      <Box component="main" sx={{ py: 3 }}>
+        <Routes>
+          <Route path="/" element={<Home />} />
+          <Route path="/portfolio" element={<Portfolio />} />
+          <Route path="/chart" element={<Chart />} />
+          <Route path="/sector" element={<Sector />} />
+          <Route path="/report" element={<Report />} />
+          <Route path="/report/:reportId" element={<ReportDetail />} />
+          <Route path="/backtest" element={<Backtest />} />
+          <Route path="/backtest-viz" element={<BacktestVisualization />} />
+          <Route path="/financial" element={<FinancialStatements />} />
+          <Route path="/scanner" element={<Scanner />} />
+          <Route path="/regime" element={<Regime />} />
+          <Route path="/future" element={<Future />} />
+          <Route path="/cw" element={<CW />} />
+          <Route path="/trading-agents" element={<TradingAgents />} />
+          <Route path="/alerts" element={<Alerts />} />
+          <Route
+            path="/chat"
+            element={
+              <Box sx={{ my: -3, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
+                <ChatAgents />
+              </Box>
+            }
+          />
+        </Routes>
+      </Box>
+    </>
+  );
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
@@ -86,67 +183,7 @@ export default function App() {
       <LocalizationProvider dateAdapter={AdapterDateFns}>
         <CssBaseline />
         <BrowserRouter>
-          <Box sx={{ flexGrow: 1 }}>
-            <AppBar position="static">
-              <Container maxWidth="xl">
-                <Toolbar disableGutters>
-                  <Typography
-                    variant="h6"
-                    noWrap
-                    component={Link}
-                    to="/"
-                    sx={{
-                      mr: 2,
-                      color: 'inherit',
-                      textDecoration: 'none',
-                    }}
-                  >
-                    Investment Tracker
-                  </Typography>
-                  <Box sx={{ flexGrow: 1, display: 'flex', gap: 2 }}>
-                    {navItems.map((item) => (
-                      <Button
-                        key={item.path}
-                        component={Link}
-                        to={item.path}
-                        sx={{ color: 'white' }}
-                      >
-                        {item.label}
-                      </Button>
-                    ))}
-                  </Box>
-                </Toolbar>
-              </Container>
-            </AppBar>
-          </Box>
-
-          <Box component="main" sx={{ py: 3 }}>
-            <Routes>
-              <Route path="/" element={<Home />} />
-              <Route path="/portfolio" element={<Portfolio />} />
-              <Route path="/chart" element={<Chart />} />
-              <Route path="/sector" element={<Sector />} />
-              <Route path="/report" element={<Report />} />
-              <Route path="/report/:reportId" element={<ReportDetail />} />
-              <Route path="/backtest" element={<Backtest />} />
-              <Route path="/backtest-viz" element={<BacktestVisualization />} />
-              <Route path="/financial" element={<FinancialStatements />} />
-              <Route path="/scanner" element={<Scanner />} />
-              <Route path="/regime" element={<Regime />} />
-              <Route path="/future" element={<Future />} />
-              <Route path="/cw" element={<CW />} />
-              <Route path="/trading-agents" element={<TradingAgents />} />
-              <Route path="/alerts" element={<Alerts />} />
-              <Route
-                path="/chat"
-                element={
-                  <Box sx={{ my: -3, height: 'calc(100vh - 64px)', overflow: 'hidden' }}>
-                    <ChatAgents />
-                  </Box>
-                }
-              />
-            </Routes>
-          </Box>
+          <AppShell />
         </BrowserRouter>
       </LocalizationProvider>
     </ThemeProvider>

@@ -9,7 +9,10 @@ Responsibilities:
 
 Only the ``market`` and ``news`` analysts run by default — those are the two the
 platform has real Vietnamese data for (OHLCV/indicators and research reports).
-The full researcher debate → trader → risk-management → portfolio-manager
+Sector analysis is not a separate agent: upstream's analyst team has no sector
+role, so the VN ``get_news`` tool serves sector context (industry, sector metrics,
+sector research) alongside company news and the News Analyst folds it into its own
+report. The full researcher debate → trader → risk-management → portfolio-manager
 pipeline downstream is unchanged.
 
 Prerequisite: a running Ollama server with the configured models pulled. See
@@ -27,17 +30,7 @@ from . import vn_data
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ANALYSTS = ("market", "news")
-
-
-def _sector_enabled() -> bool:
-    """Whether to append the standalone sector-analyst section (default yes)."""
-    return os.getenv("TRADINGAGENTS_SECTOR_ANALYST", "1").strip().lower() not in (
-        "0",
-        "false",
-        "no",
-        "off",
-    )
+DEFAULT_ANALYSTS = ("market", "news", "fundamentals")
 
 # The backend runs in Docker while Ollama runs on the host, so reach it via
 # host.docker.internal by default. Override with TRADINGAGENTS_LLM_BACKEND_URL or
@@ -55,7 +48,7 @@ _LOCAL_PROVIDERS_FOR_URL = ("ollama", "openai_compatible")
 # having to pick model names. (deep = manager/debate, quick = analysts.)
 _PROVIDER_MODEL_DEFAULTS: dict[str, tuple[str, str]] = {
     "ollama": ("llama3-groq-tool-use", "llama3-groq-tool-use"),
-    "deepseek": ("deepseek-reasoner", "deepseek-chat"),
+    "deepseek": ("deepseek-v4-pro", "deepseek-v4-flash"),
     "openai": ("gpt-5.5", "gpt-5.4-mini"),
     "anthropic": ("claude-opus-4-8", "claude-haiku-4-5-20251001"),
     "google": ("gemini-3.1-pro-preview", "gemini-3.5-flash"),
@@ -141,34 +134,91 @@ def register_vn_vendor() -> None:
 
 
 def apply_structured_method(cfg: dict) -> None:
-    """Make local models use a reliable structured-output method.
+    """Steer the configured models onto a structured-output method that holds.
 
-    Registers a capability override for the configured model IDs so the
-    structured agents (Research Manager, Trader, Portfolio Manager) use
-    ``json_schema`` (or the env-selected method) instead of the default
-    ``function_calling``, which local models handle poorly. No-op for hosted
-    providers and when the method is left at ``function_calling``.
+    The structured agents (Research Manager, Trader, Portfolio Manager) parse the
+    model's reply into a Pydantic schema; a miss is survivable (they retry as free
+    text) but loses the typed plan, so it's worth avoiding.
+
+    ``function_calling`` is the weakest option whenever the model also rejects
+    ``tool_choice`` — the schema is offered as a tool the model is never *forced*
+    to call, so it can return a partial object and fail validation (observed with
+    ``deepseek-v4-pro``: a ResearchPlan missing ``strategic_actions``). Both
+    remedies are applied here:
+
+      * **Local models** (Ollama / OpenAI-compatible) genuinely support Ollama's
+        native ``json_schema`` response format, so declare it outright.
+      * **Hosted models** get ``json_schema`` when supported, else forced
+        ``function_calling`` when ``tool_choice`` is accepted, else ``"none"`` —
+        which tells the framework to skip the structured attempt and generate free
+        text directly. Declaring ``"none"`` is not a downgrade: the agents already
+        fall back to free text on failure, so a doomed attempt only burns one
+        extra (expensive, slow) generation per structured agent before landing in
+        the same place.
+
+    DeepSeek's v4 thinking models are the case that forced this: ``json_schema``
+    400s ("This response_format type is unavailable now"), ``tool_choice`` 400s
+    ("Thinking mode does not support this tool_choice") so the schema tool can
+    never be forced and the model just answers in prose, and ``json_mode`` — while
+    accepted by the API — requires the word "json" in the prompt, which the
+    vendored agent prompts do not contain. Nothing works, so we stop paying to
+    find that out on every call.
+
+    Only ``preferred_structured_method`` is rewritten; the real support flags and
+    provider quirks (e.g. DeepSeek's reasoning-content roundtrip) are preserved, so
+    we never advertise a format the API will reject.
+
+    Override with ``TRADINGAGENTS_STRUCTURED_METHOD`` (legacy
+    ``TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD`` still honoured for local).
     """
-    provider = str(cfg.get("llm_provider", "")).lower()
-    if provider not in _LOCAL_PROVIDERS:
-        return
-
-    method = os.getenv("TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD", "json_schema").strip()
-    if method == "function_calling":
-        return  # keep the framework default
+    import dataclasses
 
     from tradingagents.llm_clients import capabilities as caps_mod
 
-    overridden = caps_mod.ModelCapabilities(
-        supports_tool_choice=True,
-        supports_json_mode=True,
-        supports_json_schema=True,
-        preferred_structured_method=method,  # type: ignore[arg-type]
-    )
-    for model in {cfg.get("deep_think_llm"), cfg.get("quick_think_llm")}:
-        if model:
-            caps_mod._BY_ID[model] = overridden
-    logger.info("Structured-output method for local models set to %r", method)
+    provider = str(cfg.get("llm_provider", "")).lower()
+    models = {m for m in (cfg.get("deep_think_llm"), cfg.get("quick_think_llm")) if m}
+    if not models:
+        return
+
+    override = os.getenv("TRADINGAGENTS_STRUCTURED_METHOD", "").strip()
+
+    if provider in _LOCAL_PROVIDERS:
+        method = (
+            override
+            or os.getenv("TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD", "json_schema").strip()
+        )
+        if method == "function_calling":
+            return  # explicitly asked for the framework default
+        replacement = caps_mod.ModelCapabilities(
+            supports_tool_choice=True,
+            supports_json_mode=True,
+            supports_json_schema=True,
+            preferred_structured_method=method,  # type: ignore[arg-type]
+        )
+        for model in models:
+            caps_mod._BY_ID[model] = replacement
+        logger.info("Structured-output method for local models set to %r", method)
+        return
+
+    for model in models:
+        caps = caps_mod.get_capabilities(model)
+        if override:
+            method = override
+        elif caps.supports_json_schema:
+            method = "json_schema"
+        elif caps.supports_tool_choice:
+            method = "function_calling"  # forcible, so the schema tool is reliable
+        else:
+            # Unforced function calling loses the schema; json_mode needs the
+            # prompt to mention JSON. Skip the attempt rather than pay for it.
+            method = "none"
+        if method == caps.preferred_structured_method:
+            continue
+        # Rewrite only the method — the support flags and provider quirks stand.
+        caps_mod._BY_ID[model] = dataclasses.replace(
+            caps, preferred_structured_method=method  # type: ignore[arg-type]
+        )
+        logger.info("Structured-output method for %s set to %r", model, method)
 
 
 def is_local_provider(provider: str) -> bool:
@@ -350,11 +400,9 @@ def run_analysis_stream(
 
     try:
         ta = TradingAgentsGraph(
-            selected_analysts=list(analysts), debug=False, config=cfg
+            selected_analysts=list(analysts), debug=True, config=cfg
         )
 
-        # Skip the yfinance identity lookup (VN tickers aren't on Yahoo): pass a
-        # ticker-only instrument context so no network call is made at run start.
         instrument_context = build_instrument_context(symbol, "stock")
         try:
             past_context = ta.memory_log.get_past_context(symbol)
@@ -414,24 +462,6 @@ def run_analysis_stream(
                     "content": str(risk["judge_decision"]),
                 }
 
-        # Sector analyst — a standalone section (not part of the vendored graph).
-        # Runs after the analysts so it can reuse the same quick-thinking LLM.
-        sector_report = ""
-        if _sector_enabled():
-            try:
-                from . import sector_analyst
-
-                sector_report = sector_analyst.run_sector_analyst(
-                    symbol,
-                    trade_date,
-                    ta.quick_thinking_llm,
-                    language=str(cfg.get("output_language", "English")),
-                )
-                if sector_report:
-                    yield "report", {"section": "sector", "content": sector_report}
-            except Exception as exc:  # noqa: BLE001 — never fail the run on the extra section
-                logger.warning("Sector analyst failed for %s: %s", symbol, exc)
-
         final_decision = final_state.get("final_trade_decision", "")
         try:
             signal = ta.process_signal(final_decision) if final_decision else "HOLD"
@@ -445,8 +475,6 @@ def run_analysis_stream(
             from . import store
 
             sections = _collect_sections(final_state)
-            if sector_report:
-                sections["sector"] = sector_report
             analysis_id = store.save_analysis(
                 symbol=symbol,
                 trade_date=trade_date,

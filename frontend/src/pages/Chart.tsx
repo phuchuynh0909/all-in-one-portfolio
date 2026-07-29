@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Box,
-  TextField,
   Container,
   Paper,
-  InputAdornment,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -17,11 +15,8 @@ import {
   Chip,
   Drawer,
   Fab,
-  IconButton,
-  ToggleButton,
-  ToggleButtonGroup,
 } from '@mui/material';
-import { Sync, Notes, Search } from '@mui/icons-material';
+import { Notes } from '@mui/icons-material';
 import { syncStock } from '../lib/services/workflows';
 import type { Report } from '../lib/services/report';
 import { getChatNotes, type ChatNoteItem } from '../lib/services/chat';
@@ -29,10 +24,8 @@ import { MarkdownContent } from '../components/chat/MarkdownContent';
 import StockChart from '../components/chart/StockChart';
 
 export default function ChartPage() {
-  const [symbol, setSymbol] = useState('VNINDEX');
   const [currentSymbol, setCurrentSymbol] = useState('VNINDEX');
   const [view, setView] = useState<'chart' | 'largeOrders'>('chart');
-  const [isFocused, setIsFocused] = useState(false);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
@@ -43,7 +36,6 @@ export default function ChartPage() {
   const [notesError, setNotesError] = useState<string | null>(null);
   const [notes, setNotes] = useState<ChatNoteItem[]>([]);
   const [drawerWidth, setDrawerWidth] = useState(560);
-  const symbolInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadNotes = useCallback(async () => {
     const sym = currentSymbol.trim().toUpperCase();
@@ -75,29 +67,6 @@ export default function ChartPage() {
     window.addEventListener('resize', updateChartHeight);
     return () => window.removeEventListener('resize', updateChartHeight);
   }, []);
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      setCurrentSymbol(symbol);
-      setIsFocused(false);
-    }
-  };
-
-  const handleFocus = () => {
-    setIsFocused(true);
-    setSymbol('');
-  };
-
-  const handleBlur = () => {
-    setIsFocused(false);
-    if (!symbol) {
-      setSymbol(currentSymbol);
-    }
-  };
-
-  const handleReportClick = (report: Report) => {
-    setSelectedReport(report);
-  };
 
   const handleSync = async () => {
     try {
@@ -150,124 +119,7 @@ export default function ChartPage() {
         flexDirection: 'column',
       }}
     >
-      <Paper
-        sx={{
-          p: 0.5,
-          mb: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 1,
-          background: 'linear-gradient(135deg, rgba(18, 18, 28, 0.98) 0%, rgba(20, 20, 32, 0.98) 100%)',
-          border: '1px solid rgba(99, 102, 241, 0.25)',
-          borderRadius: 2,
-        }}
-      >
-        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ minWidth: 0 }}>
-          <TextField
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-            onKeyDown={handleKeyDown}
-            onFocus={handleFocus}
-            onBlur={handleBlur}
-            inputRef={symbolInputRef}
-            variant="standard"
-            placeholder={isFocused ? 'Enter symbol' : currentSymbol}
-            InputProps={{
-              disableUnderline: true,
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Search sx={{ color: '#9ca3af' }} />
-                </InputAdornment>
-              ),
-              sx: {
-                color: '#e5e7eb',
-                fontSize: '1rem',
-                fontWeight: 600,
-                letterSpacing: 0.4,
-                px: 1,
-                py: 0.5,
-                minWidth: 160,
-              },
-            }}
-            sx={{
-              bgcolor: 'rgba(15, 15, 25, 0.85)',
-              border: '1px solid rgba(99, 102, 241, 0.25)',
-              borderRadius: 2,
-              '&:hover': {
-                borderColor: 'rgba(99, 102, 241, 0.45)',
-              },
-              '&.Mui-focused': {
-                borderColor: '#6366f1',
-              },
-            }}
-          />
-          <Chip
-            label={currentSymbol}
-            onClick={() => {
-              setIsFocused(true);
-              setSymbol('');
-              symbolInputRef.current?.focus();
-            }}
-            sx={{
-              bgcolor: 'rgba(99, 102, 241, 0.18)',
-              color: '#a5b4fc',
-              fontWeight: 600,
-              fontSize: '0.875rem',
-              cursor: 'pointer',
-            }}
-          />
-        </Stack>
-
-        <Stack direction="row" spacing={1} alignItems="center">
-          <ToggleButtonGroup
-            value={view}
-            exclusive
-            size="small"
-            onChange={(_, v) => { if (v) setView(v); }}
-            sx={{
-              '& .MuiToggleButton-root': {
-                color: '#9ca3af',
-                borderColor: 'rgba(99,102,241,0.3)',
-                px: 1.5,
-                py: 0.4,
-                textTransform: 'none',
-                '&.Mui-selected': {
-                  color: '#a5b4fc',
-                  bgcolor: 'rgba(99,102,241,0.18)',
-                },
-              },
-            }}
-          >
-            <ToggleButton value="chart">Chart</ToggleButton>
-            <ToggleButton value="largeOrders">Large Orders</ToggleButton>
-          </ToggleButtonGroup>
-
-          <IconButton
-            onClick={handleSync}
-            disabled={syncing}
-            aria-label={`Sync ${currentSymbol}`}
-          sx={{
-            width: 40,
-            height: 40,
-            border: '1px solid rgba(99, 102, 241, 0.5)',
-            color: '#a5b4fc',
-            '&:hover': {
-              borderColor: '#6366f1',
-              bgcolor: 'rgba(99, 102, 241, 0.1)',
-            },
-            '@keyframes spin': {
-              '0%': { transform: 'rotate(0deg)' },
-              '100%': { transform: 'rotate(360deg)' },
-            },
-          }}
-        >
-            <Sync sx={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
-          </IconButton>
-        </Stack>
-      </Paper>
-
-      {/* Chart */}
+      {/* Chart — symbol picker, view toggle and sync now live in the widget header */}
       <Paper
         ref={chartPaperRef}
         sx={{
@@ -282,9 +134,12 @@ export default function ChartPage() {
       >
         <StockChart
           symbol={currentSymbol}
-          onReportClick={handleReportClick}
+          onSymbolChange={setCurrentSymbol}
           height={chartHeight}
           showLargeOrders={view === 'largeOrders'}
+          onToggleLargeOrders={(v) => setView(v ? 'largeOrders' : 'chart')}
+          onSync={handleSync}
+          syncing={syncing}
         />
       </Paper>
 

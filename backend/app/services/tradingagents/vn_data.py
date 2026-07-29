@@ -25,6 +25,7 @@ from __future__ import annotations
 import logging
 import os
 from datetime import datetime
+from typing import Any
 
 import pandas as pd
 
@@ -343,8 +344,8 @@ def _report_section(sym: str, start_date: str, end_date: str) -> str | None:
     return "\n".join(parts)
 
 
-def get_news(ticker: str, start_date: str, end_date: str) -> str:
-    """Company news for the News & Sentiment analysts, knowledge-base first.
+def _company_news(ticker: str, start_date: str, end_date: str) -> str:
+    """Company-level news, knowledge-base first.
 
     Tiered so we prefer our own curated research over the open web:
       1. **Knowledge base** — semantic search over embedded wichart research
@@ -399,6 +400,36 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
         f"No company news available for {sym} (no knowledge-base match, no research "
         f"reports, and web search disabled/unavailable). Do not fabricate headlines."
     )
+
+
+def _sector_enabled() -> bool:
+    """Whether get_news appends the sector block (default yes)."""
+    return os.getenv("TRADINGAGENTS_SECTOR_ANALYST", "1").strip().lower() not in (
+        "0",
+        "false",
+        "no",
+        "off",
+    )
+
+
+def get_news(ticker: str, start_date: str, end_date: str) -> str:
+    """Company news **plus sector context** for the News & Sentiment analysts.
+
+    Upstream's analyst team has no sector role, so rather than adding a fifth
+    graph node we widen this tool: the News Analyst — whose brief already covers
+    "market conditions" — gets the ticker's industry, sector metrics and sector
+    research alongside company news, and folds a sector view into its report.
+    Set ``TRADINGAGENTS_SECTOR_ANALYST=0`` to serve company news only.
+    """
+    sym = ticker.upper()
+    company = _company_news(sym, start_date, end_date)
+    if not _sector_enabled():
+        return company
+
+    from . import sector_analyst
+
+    sector = sector_analyst.build_sector_section(sym, end_date)
+    return f"{company}\n\n---\n\n{sector}" if sector else company
 
 
 def _lookback_days(start_date: str, end_date: str) -> int:
@@ -484,6 +515,149 @@ def get_prediction_markets(*args, **kwargs) -> str:
     )
 
 
+# ── Fundamentals (ruatichsan financial statements) ──────────────────────────
+# The API returns all three statements in one payload keyed by these short names.
+_STATEMENTS: dict[str, tuple[str, str]] = {
+    "cdkt": ("balance_sheet", "Balance sheet (Cân đối kế toán)"),
+    "kqkd": ("income_statement", "Income statement (Kết quả kinh doanh)"),
+    "lctt": ("cashflow", "Cash flow (Lưu chuyển tiền tệ)"),
+}
+
+# Periods shown per statement. The API returns 30+ quarters, which is far more
+# than an analyst prompt should carry; the most recent five drive the narrative.
+_STMT_PERIODS = int(os.getenv("TRADINGAGENTS_FUNDAMENTALS_PERIODS", "5"))
+# Rows kept in the combined get_fundamentals overview (statements are ordered
+# headline-first, so the top rows are the aggregates).
+_OVERVIEW_ROWS = 12
+
+_BILLION = 1e9
+
+# One payload serves all four tools, so memoize per (ticker, period) for the
+# process — otherwise a single analyst turn refetches the same data four times.
+_statement_cache: dict[tuple[str, str], Any] = {}
+
+
+def _resolve_freq(freq: str | None) -> str:
+    """Map the framework's annual/quarterly wording onto the API's path segment."""
+    value = str(freq or "quarterly").strip().lower()
+    return "annual" if value.startswith(("annual", "year", "yearly")) else "quarter"
+
+
+def _load_statements(ticker: str, freq: str | None) -> Any:
+    from app.services import ruatichsan_client as rts
+
+    key = (ticker.upper(), _resolve_freq(freq))
+    if key not in _statement_cache:
+        _statement_cache[key] = rts.fetch_financial_statements(key[0], key[1])
+    return _statement_cache[key]
+
+
+def _fmt_billion(value: Any) -> str:
+    if value is None:
+        return "-"
+    try:
+        return f"{float(value) / _BILLION:,.1f}"
+    except (TypeError, ValueError):
+        return str(value)
+
+
+def _statement_table(
+    payload: Any,
+    key: str,
+    title: str,
+    periods: int,
+    max_rows: int | None = None,
+) -> str:
+    """Render one statement as a markdown table, newest period last.
+
+    Rows are ``[title, _, _, *values]`` with the values aligned to the tail of
+    ``fiscalDates``; rows that are zero in every shown period are dropped, since
+    the API pads the chart of accounts with line items this company never uses.
+    """
+    dates = payload.get("fiscalDates") or []
+    rows = payload.get(key) or []
+    if not dates or not rows:
+        return f"## {title}\nNo data returned."
+
+    shown_dates = dates[-periods:]
+    header = "| Line item (bn VND) | " + " | ".join(shown_dates) + " |"
+    sep = "|---" * (len(shown_dates) + 1) + "|"
+    lines = [f"## {title}", "", header, sep]
+
+    kept = 0
+    for row in rows:
+        values = row[-len(dates):][-periods:]
+        if all(v in (0, None) for v in values):
+            continue
+        lines.append(f"| {row[0]} | " + " | ".join(_fmt_billion(v) for v in values) + " |")
+        kept += 1
+        if max_rows and kept >= max_rows:
+            lines.append(f"| … ({len(rows) - kept}+ further line items omitted) | " + " | " * len(shown_dates))
+            break
+    return "\n".join(lines)
+
+
+def _statement_tool(ticker: str, freq: str | None, key: str) -> str:
+    """Shared body for the three per-statement tools."""
+    sym = str(ticker).upper()
+    _, title = _STATEMENTS[key]
+    try:
+        payload = _load_statements(sym, freq)
+    except Exception as exc:  # noqa: BLE001 — a data gap must not kill the graph
+        logger.warning("Financial statements unavailable for %s: %s", sym, exc)
+        return (
+            f"FUNDAMENTALS_UNAVAILABLE: could not load financial statements for "
+            f"{sym} ({exc}). Do not fabricate figures."
+        )
+    body = _statement_table(payload, key, title, _STMT_PERIODS)
+    return (
+        f"# {sym} — {title}\n\n{body}\n\n"
+        f"Values in billions of VND ({_resolve_freq(freq)} periods, oldest → newest). "
+        f"Source: {payload.get('dataSource', 'ruatichsan')}."
+    )
+
+
+def get_balance_sheet(ticker: str, freq: str = "quarterly", curr_date: str | None = None) -> str:
+    return _statement_tool(ticker, freq, "cdkt")
+
+
+def get_income_statement(ticker: str, freq: str = "quarterly", curr_date: str | None = None) -> str:
+    return _statement_tool(ticker, freq, "kqkd")
+
+
+def get_cashflow(ticker: str, freq: str = "quarterly", curr_date: str | None = None) -> str:
+    return _statement_tool(ticker, freq, "lctt")
+
+
+def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
+    """Headline lines from all three statements — the Fundamentals Analyst's overview.
+
+    Deliberately truncated: this is the "what shape is this company in" call, and
+    the per-statement tools exist for depth.
+    """
+    sym = str(ticker).upper()
+    try:
+        payload = _load_statements(sym, "quarterly")
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Fundamentals unavailable for %s: %s", sym, exc)
+        return (
+            f"FUNDAMENTALS_UNAVAILABLE: could not load financial statements for "
+            f"{sym} ({exc}). Do not fabricate figures."
+        )
+
+    sections = [
+        _statement_table(payload, key, title, _STMT_PERIODS, max_rows=_OVERVIEW_ROWS)
+        for key, (_, title) in _STATEMENTS.items()
+    ]
+    return (
+        f"# {sym} — fundamentals overview\n\n" + "\n\n".join(sections) + "\n\n"
+        f"Values in billions of VND (quarterly, oldest → newest). Only headline "
+        f"lines are shown — call get_balance_sheet / get_income_statement / "
+        f"get_cashflow for the full statements (freq='annual' for yearly). "
+        f"Source: {payload.get('dataSource', 'ruatichsan')}."
+    )
+
+
 # Method name -> VN implementation. Consumed by runner.register_vn_vendor().
 VN_VENDOR_METHODS: dict[str, callable] = {
     "get_stock_data": get_stock_data,
@@ -493,4 +667,8 @@ VN_VENDOR_METHODS: dict[str, callable] = {
     "get_insider_transactions": get_insider_transactions,
     "get_macro_indicators": get_macro_indicators,
     "get_prediction_markets": get_prediction_markets,
+    "get_fundamentals": get_fundamentals,
+    "get_balance_sheet": get_balance_sheet,
+    "get_income_statement": get_income_statement,
+    "get_cashflow": get_cashflow,
 }

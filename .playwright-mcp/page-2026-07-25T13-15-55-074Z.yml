@@ -1,0 +1,154 @@
+- generic [ref=e2]:
+  - banner [ref=e4]:
+    - generic [ref=e6]:
+      - button [ref=e7] [cursor=pointer]
+      - link "Investment Tracker" [ref=e10] [cursor=pointer]:
+        - /url: /
+  - main [ref=e11]:
+    - generic [ref=e12]:
+      - iframe [active] [ref=e16]:
+        - generic [active] [ref=f2e1]:
+          - generic [ref=f2e2]:
+            - toolbar [ref=f2e6]:
+              - generic [ref=f2e10]:
+                - generic [ref=f2e11]:
+                  - button "Symbol Search" [ref=f2e12]:
+                    - generic [ref=f2e16]: VNINDEX
+                  - button "Compare or Add Symbol" [ref=f2e17]
+                - button "1 day" [ref=f2e26]:
+                  - generic [ref=f2e27]: D
+                - button "Candles" [ref=f2e33]
+                - button "Indicators & Strategies" [ref=f2e45]:
+                  - generic [ref=f2e49]: Indicators
+                - button "View" [ref=f2e53]:
+                  - generic [ref=f2e54]: Chart
+                - generic "Sync data for this symbol" [ref=f2e60] [cursor=pointer]: Sync
+                - generic [ref=f2e69]:
+                  - button "Undo change pane height" [ref=f2e70]
+                  - button [disabled] [ref=f2e74]
+                - generic [ref=f2e81]:
+                  - button "Chart settings" [ref=f2e82]
+                  - button "Fullscreen mode" [ref=f2e89]
+                  - button "Take a snapshot" [ref=f2e93]
+                - button "Chart layout" [ref=f2e102]:
+                  - generic [ref=f2e103]: Layout 3
+                - generic "Indicators" [ref=f2e109] [cursor=pointer]
+            - generic [ref=f2e114]:
+              - toolbar [ref=f2e115]:
+                - generic [ref=f2e119]:
+                  - generic [ref=f2e120]:
+                    - generic [ref=f2e123]:
+                      - button "Cross" [pressed] [ref=f2e125]
+                      - button "Cursors" [pressed] [ref=f2e132]
+                    - generic [ref=f2e138]:
+                      - button "Trend Line" [ref=f2e140]
+                      - button "Trend line tools" [ref=f2e147]
+                    - generic [ref=f2e153]:
+                      - button "Fib Retracement" [ref=f2e155]
+                      - button "Gann and Fibonacci tools" [ref=f2e165]
+                    - generic [ref=f2e171]:
+                      - button "Brush" [ref=f2e173]
+                      - button "Geometric shapes" [ref=f2e180]
+                    - generic [ref=f2e186]:
+                      - button "Text" [ref=f2e188]
+                      - button "Annotation tools" [ref=f2e193]
+                    - generic [ref=f2e199]:
+                      - button "XABCD Pattern" [ref=f2e201]
+                      - button "Patterns" [ref=f2e208]
+                    - generic [ref=f2e214]:
+                      - button "Long Position" [ref=f2e216]
+                      - button "Forecasting and measurement tools" [ref=f2e222]
+                    - generic [ref=f2e227]:
+                      - button "Icon" [ref=f2e229]
+                      - button "Icons" [ref=f2e234]
+                  - generic [ref=f2e238]:
+                    - button "Measure" [ref=f2e239]
+                    - button "Zoom In" [ref=f2e244]
+                  - generic [ref=f2e252]:
+                    - generic [ref=f2e255]:
+                      - button "Magnet Mode snaps drawings placed near price bars to the closest OHLC value" [ref=f2e257]
+                      - button [ref=f2e264]
+                    - button "Stay in Drawing Mode" [ref=f2e268]
+                    - button "Lock All Drawing Tools" [ref=f2e280]
+                    - generic [ref=f2e286]:
+                      - button "Hide all drawings" [ref=f2e288]
+                      - button [ref=f2e293]
+                  - generic [ref=f2e299]:
+                    - button "Remove 0 drawings" [ref=f2e301]
+                    - button [ref=f2e306]
+                  - button "Show Object Tree" [ref=f2e312]
+              - generic "Hide Drawings Toolbar" [ref=f2e320]
+            - generic [ref=f2e325]:
+              - toolbar [ref=f2e327]:
+                - generic [ref=f2e329]:
+                  - generic [ref=f2e330]:
+                    - button "5 years in 1 week intervals" [ref=f2e331]:
+                      - generic [ref=f2e332]: 5y
+                    - button "1 year in 1 week intervals" [ref=f2e333]:
+                      - generic [ref=f2e334]: 1y
+                  - button "Go to" [ref=f2e337]
+                - generic [ref=f2e341]:
+                  - button "Timezone" [ref=f2e344]:
+                    - generic [ref=f2e345]: 20:15:54 (UTC+7)
+                  - button "Toggle Percentage" [ref=f2e349]
+                  - button "Toggle Log Scale" [ref=f2e357]:
+                    - generic [ref=f2e358]: log
+                  - button "Toggle Auto Scale" [pressed] [ref=f2e360]:
+                    - generic [ref=f2e361]: auto
+              - table [ref=f2e365]:
+                - row [ref=f2e570]:
+                  - cell
+                  - cell "VNINDEX · 1D O1683.23H1696.78L1674.64C1686.11 −13.27 (−0.78%) Volume SMA 9 585.995M Gaussian FRAMA (bridged) 1758.95 1819.63 1727.01" [ref=f2e571]:
+                    - generic [ref=f2e368]:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic [ref=f2e372]:
+                                - generic [ref=f2e373]: VNINDEX
+                                - generic [ref=f2e374]: · 1D
+                              - generic "Market closed" [ref=f2e376]
+                            - generic [ref=f2e381]:
+                              - generic [ref=f2e382]: O1683.23
+                              - generic [ref=f2e383]: H1696.78
+                              - generic [ref=f2e384]: L1674.64
+                              - generic [ref=f2e385]: C1686.11
+                              - generic [ref=f2e386]: −13.27 (−0.78%)
+                        - generic:
+                          - generic "Hide Indicator Legend" [ref=f2e387]
+                          - generic:
+                            - generic:
+                              - generic [ref=f2e392]:
+                                - generic [ref=f2e393]: Volume
+                                - generic [ref=f2e394]: SMA 9
+                              - generic "Volume" [ref=f2e398]: 585.995M
+                            - generic:
+                              - generic: Gaussian FRAMA (bridged)
+                              - generic [ref=f2e403]:
+                                - generic "G-FRAMA" [ref=f2e573]: "1758.95"
+                                - generic "G-FRAMA Long" [ref=f2e575]: "1819.63"
+                                - generic "G-FRAMA Short" [ref=f2e577]: "1727.01"
+                      - generic [ref=f2e579]:
+                        - generic "Move pane down" [ref=f2e580]
+                        - generic "Collapse pane" [ref=f2e584]
+                        - generic "Maximize pane" [ref=f2e589]
+                  - cell [ref=f2e453]
+                - row [ref=f2e457]:
+                  - cell [ref=f2e458]
+                - row [ref=f2e594]:
+                  - cell
+                  - cell "Hull Butterfly Oscillator (bridged) −84.30" [ref=f2e595]:
+                    - generic [ref=f2e462]:
+                      - generic:
+                        - generic:
+                          - generic:
+                            - generic:
+                              - generic: Hull Butterfly Oscillator (bridged)
+                              - generic "HBO" [ref=f2e597]: −84.30
+                  - cell [ref=f2e472]
+                - row [ref=f2e545]:
+                  - cell
+                  - cell [ref=f2e546]
+                  - cell [ref=f2e550]
+          - generic: Chart layout
+      - button [ref=e17] [cursor=pointer]

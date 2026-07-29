@@ -44,6 +44,55 @@ const operators: { value: ConditionOperator; label: string }[] = [
   { value: 'contains', label: 'Contains' },
 ];
 
+/** Named condition sets ported from notebooks/backtest_010.ipynb (LR prediction
+ * channel) and notebooks/backtest_012.ipynb (Gaussian FRAMA + Hull Butterfly).
+ * A `value` that matches another feature-column name (e.g. 'pi_lower') is
+ * compared column-to-column by the backend rather than as a literal. These
+ * indicator columns are computed directly from OHLCV per scan request (see
+ * backend/app/services/scanner_service.py), not read from a feature store. */
+const presetScanners: { name: string; conditions: Omit<ConditionRow, 'id'>[] }[] = [
+  {
+    name: 'backtest_010: PI Channel — Below Lower Band (dip)',
+    conditions: [{ column: 'close', operator: 'lt', value: 'pi_lower' }],
+  },
+  {
+    name: 'backtest_010: PI Channel — Above Upper Band (extended)',
+    conditions: [{ column: 'close', operator: 'gt', value: 'pi_upper' }],
+  },
+  {
+    name: 'backtest_010: PI Channel — Bullish Slope',
+    conditions: [{ column: 'slope_pct', operator: 'gt', value: '-1' }],
+  },
+  {
+    name: 'backtest_010: Reclaim Entry Trigger (close reclaims PI lower band)',
+    conditions: [{ column: 'reclaim_entry', operator: 'eq', value: '1' }],
+  },
+  {
+    name: 'backtest_012: G-FRAMA — Bullish Cloud (Blue)',
+    conditions: [{ column: 'qb', operator: 'eq', value: '1' }],
+  },
+  {
+    name: 'backtest_012: G-FRAMA — Bearish Cloud (Red)',
+    conditions: [{ column: 'qb', operator: 'eq', value: '-1' }],
+  },
+  {
+    name: 'backtest_012: G-FRAMA Breakout Combo (Blue + above band + HBO bullish)',
+    conditions: [
+      { column: 'qb', operator: 'eq', value: '1' },
+      { column: 'close', operator: 'gt', value: 'long_v' },
+      { column: 'hso', operator: 'gt', value: '0' },
+    ],
+  },
+  {
+    name: 'backtest_012: Hull Butterfly Oscillator Bullish',
+    conditions: [{ column: 'hso', operator: 'gt', value: '0' }],
+  },
+  {
+    name: 'backtest_012: ATR Trailing-Stop Exit Watch',
+    conditions: [{ column: 'close', operator: 'lt', value: 'trail' }],
+  },
+];
+
 export default function Scanner() {
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<ConditionRow[]>([
@@ -84,6 +133,12 @@ export default function Scanner() {
 
   function removeRow(id: string) {
     setRows((prev) => prev.filter((r) => r.id !== id));
+  }
+
+  function applyPreset(name: string) {
+    const preset = presetScanners.find((p) => p.name === name);
+    if (!preset) return;
+    setRows(preset.conditions.map((c) => ({ id: crypto.randomUUID(), ...c })));
   }
 
   function parseValue(op: ConditionOperator, raw: string): unknown {
@@ -134,6 +189,20 @@ export default function Scanner() {
         <CardContent>
           <Stack spacing={2}>
             <Typography variant="subtitle1">Filters</Typography>
+            <FormControl size="small" sx={{ minWidth: 320, alignSelf: 'flex-start' }}>
+              <InputLabel id="preset-scanner">Preset scanner</InputLabel>
+              <Select
+                labelId="preset-scanner"
+                label="Preset scanner"
+                value=""
+                displayEmpty
+                onChange={(e: SelectChangeEvent<string>) => applyPreset(e.target.value)}
+              >
+                {presetScanners.map((p) => (
+                  <MenuItem key={p.name} value={p.name}>{p.name}</MenuItem>
+                ))}
+              </Select>
+            </FormControl>
             {rows.map((r, idx) => (
               <Grid container spacing={2} alignItems="center" key={r.id}>
                 <Grid item xs={12} md={4}>

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import Box from '@mui/material/Box';
 import Button from '@mui/material/Button';
 import Chip from '@mui/material/Chip';
-import { DataGrid, GridToolbar } from '@mui/x-data-grid';
+import { DataGrid } from '@mui/x-data-grid';
 import type { GridColDef } from '@mui/x-data-grid';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
@@ -165,11 +165,11 @@ export default function TransactionList() {
         );
       },
     },
-    { 
-      field: 'notes', 
-      headerName: 'Notes', 
+    {
+      field: 'notes',
+      headerName: 'Notes',
       flex: 2,
-      minWidth: 150 
+      minWidth: 150
     },
     {
       field: 'actions',
@@ -193,18 +193,6 @@ export default function TransactionList() {
 
   return (
     <Box sx={{ width: '100%' }}>
-      <Box sx={{ mb: 2 }}>
-        <Button
-          variant="contained"
-          onClick={() => {
-            setEditTransaction(undefined);
-            setFormOpen(true);
-          }}
-        >
-          Add Transaction
-        </Button>
-      </Box>
-
       <DataGrid
         rows={transactions}
         columns={columns}
@@ -220,24 +208,19 @@ export default function TransactionList() {
         onPageChange={(page) => {
           console.log('Page changed:', page);
         }}
-        components={{
-          Toolbar: GridToolbar,
-        }}
-        componentsProps={{
-          toolbar: {
-            showQuickFilter: true,
-            quickFilterProps: { debounceMs: 500 },
-          },
-        }}
-        sx={{
-          '& .MuiDataGrid-toolbarContainer': {
-            padding: 2,
-            backgroundColor: 'background.paper',
-            borderBottom: 1,
-            borderColor: 'divider',
-          },
-        }}
       />
+
+      <Box sx={{ mt: 2 }}>
+        <Button
+          variant="contained"
+          onClick={() => {
+            setEditTransaction(undefined);
+            setFormOpen(true);
+          }}
+        >
+          Add Transaction
+        </Button>
+      </Box>
 
       <TransactionForm
         open={formOpen}

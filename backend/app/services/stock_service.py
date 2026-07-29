@@ -14,7 +14,13 @@ from sqlalchemy.orm import Session
 
 from app.core.settings import settings
 from app.schemas.sector import SectorTimeseries, SectorTimeseriesData
-from app.schemas.timeseries import Indicators, IndicatorParams, IndicatorsOnlyResponse, TimeseriesResponse
+from app.schemas.timeseries import (
+    BarsResponse,
+    Indicators,
+    IndicatorParams,
+    IndicatorsOnlyResponse,
+    TimeseriesResponse,
+)
 
 from .timeseries_indicators import compute_stock_indicators
 from .utils import convert_nans
@@ -249,6 +255,109 @@ async def get_stock_timeseries(
     except Exception as e:
         logger.error("Error getting timeseries data for {}: {}", symbol, e)
         raise
+
+def _slice_aligned(node, start: int, end: int):
+    """Slice every per-bar array inside a (possibly nested) indicator payload."""
+    if isinstance(node, list):
+        return node[start:end]
+    if isinstance(node, dict):
+        return {key: _slice_aligned(value, start, end) for key, value in node.items()}
+    return node
+
+
+def _empty_timeseries() -> dict:
+    return {"open": [], "high": [], "low": [], "close": [], "volume": []}
+
+
+async def get_stock_bars(
+    symbol: str,
+    interval: str = "1d",
+    indicators: Optional[List[IndicatorParams]] = None,
+    to_ts: Optional[int] = None,
+    count_back: Optional[int] = None,
+    from_ts: Optional[int] = None,
+) -> BarsResponse:
+    """
+    One page of bars ending at ``to_ts`` (exclusive), newest page first as the
+    chart scrolls back. Paging happens here rather than in the browser so the
+    frontend never has to hold the whole history.
+
+    Indicators are computed over the symbol's *full* history and only then
+    sliced to the page, so every page carries the same values it would have in
+    a single full-history response — no warmup artifacts at page boundaries and
+    no drift for cumulative indicators.
+    """
+    indicators = indicators or []
+    try:
+        df = _load_delta_stocks(
+            symbols=[symbol],
+            columns=["date", "open", "high", "low", "close", "volume", "symbol"],
+        )
+        df = df[df["symbol"] == symbol].drop(columns=["symbol"])
+
+        if df.empty:
+            return BarsResponse(
+                symbol=symbol,
+                interval=interval,
+                timestamps=[],
+                timeseries=_empty_timeseries(),
+                no_data=True,
+            )
+
+        dates = df["date"]
+        # `to` is exclusive: a bar stamped exactly at `to` belongs to the next page.
+        to_dt = pd.Timestamp(to_ts, unit="s").normalize() if to_ts is not None else None
+        end_idx = int((dates < to_dt).sum()) if to_dt is not None else len(df)
+
+        if count_back is not None:
+            start_idx = max(0, end_idx - count_back)
+        elif from_ts is not None:
+            start_idx = int((dates < pd.Timestamp(from_ts, unit="s").normalize()).sum())
+        else:
+            start_idx = 0
+
+        if start_idx >= end_idx:
+            # Nothing in the window. If bars exist after it, tell the chart where
+            # to resume so it can skip the gap instead of giving up.
+            next_time = None
+            if to_dt is not None:
+                later = dates[dates >= to_dt]
+                if not later.empty:
+                    next_time = int(later.iloc[0].timestamp())
+            return BarsResponse(
+                symbol=symbol,
+                interval=interval,
+                timestamps=[],
+                timeseries=_empty_timeseries(),
+                no_data=True,
+                next_time=next_time,
+            )
+
+        indicator_data = _slice_aligned(
+            compute_stock_indicators(df, indicators), start_idx, end_idx
+        )
+        window = df.iloc[start_idx:end_idx]
+
+        return BarsResponse(
+            symbol=symbol,
+            interval=interval,
+            meta={"total_bars": len(df), "start_index": start_idx, "end_index": end_idx},
+            timestamps=window["date"].dt.strftime("%Y-%m-%d").tolist(),
+            timeseries={
+                "open": window["open"].tolist(),
+                "high": window["high"].tolist(),
+                "low": window["low"].tolist(),
+                "close": window["close"].tolist(),
+                "volume": window["volume"].tolist(),
+            },
+            indicators=Indicators(**indicator_data) if indicator_data else None,
+            no_data=False,
+            has_more_history=start_idx > 0,
+        )
+    except Exception as e:
+        logger.error("Error getting bars page for {}: {}", symbol, e)
+        raise
+
 
 async def get_stock_indicators(
     symbol: str,

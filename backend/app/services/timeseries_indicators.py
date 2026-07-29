@@ -20,7 +20,9 @@ from .indicators import (
     calculate_yz_volatility,
     calculate_gkyz_volatility,
     chandelier_exit,
+    gaussian_frama,
     hawkes_BVC,
+    hull_butterfly,
     kalman_zscore,
     linreg_channel_2d,
     matrix_series,
@@ -306,6 +308,37 @@ def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]
                     "pi_lower": convert_nans(pi_l.reshape(-1)),
                     "ci_upper": convert_nans(ci_u.reshape(-1)),
                     "ci_lower": convert_nans(ci_l.reshape(-1)),
+                }
+
+            elif ind.name == "gaussian_frama":
+                gframa = gaussian_frama(
+                    close_prices,
+                    high_prices,
+                    low_prices,
+                    gaussian_length=int(ind.params.get("gaussian_length", 4)),
+                    sigma=float(ind.params.get("sigma", 2.0)),
+                    fm_len=int(ind.params.get("fm_len", 20)),
+                    upper_limit=int(ind.params.get("upper_limit", 8)),
+                    lower_limit=int(ind.params.get("lower_limit", 40)),
+                    atr_period=int(ind.params.get("atr_period", 14)),
+                    atr_mult=float(ind.params.get("atr_mult", 1.9)),
+                )
+                indicator_data["gaussian_frama"] = {
+                    "frama":   convert_nans(gframa["frama"].reshape(-1)),
+                    "long_v":  convert_nans(gframa["long_v"].reshape(-1)),
+                    "short_v": convert_nans(gframa["short_v"].reshape(-1)),
+                    "qb":      convert_nans(gframa["qb"].reshape(-1)),
+                }
+
+            elif ind.name == "hull_butterfly":
+                hso, os_state = hull_butterfly(
+                    close_prices,
+                    length=int(ind.params.get("length", 14)),
+                    mult=float(ind.params.get("mult", 2.0)),
+                )
+                indicator_data["hull_butterfly"] = {
+                    "hso": convert_nans(hso.reshape(-1)),
+                    "os":  convert_nans(os_state.reshape(-1)),
                 }
 
             elif ind.name == "williams_vix_fix":

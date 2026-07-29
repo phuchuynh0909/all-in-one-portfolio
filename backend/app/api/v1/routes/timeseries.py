@@ -2,15 +2,23 @@ from fastapi import APIRouter, Depends
 from fastapi_cache.decorator import cache
 from sqlalchemy.orm import Session
 from app.schemas.timeseries import (
-    TimeseriesResponse, 
-    TimeseriesRequest, 
-    IndicatorsOnlyResponse, 
+    TimeseriesResponse,
+    TimeseriesRequest,
+    BarsRequest,
+    BarsResponse,
+    IndicatorsOnlyResponse,
     IndicatorsRequest,
     MarketBreadthResponse,
     MarketBreadthRequest,
 )
 from app.schemas.sector import SectorTimeseries
-from app.services.stock_service import get_stock_timeseries, get_sector_timeseries, get_stock_indicators, get_market_indicators
+from app.services.stock_service import (
+    get_stock_timeseries,
+    get_stock_bars,
+    get_sector_timeseries,
+    get_stock_indicators,
+    get_market_indicators,
+)
 from app.db.base import get_db
 
 router = APIRouter(prefix="/timeseries", tags=["timeseries"])
@@ -30,6 +38,29 @@ async def get_symbol_timeseries(
         indicators=request.indicators,
         start_date=request.start_date,
         end_date=request.end_date
+    )
+
+
+@router.post("/{symbol}/bars", response_model=BarsResponse)
+@cache(expire=300)  # Cache for 5 minutes
+async def get_symbol_bars(
+    symbol: str,
+    request: BarsRequest
+) -> BarsResponse:
+    """
+    Get one page of bars (with indicators) for a symbol.
+
+    Paginates server-side for the TradingView datafeed: returns `count_back`
+    bars ending just before `to`, plus `has_more_history` / `next_time` so the
+    chart knows whether to keep scrolling back.
+    """
+    return await get_stock_bars(
+        symbol=symbol,
+        interval=request.interval,
+        indicators=request.indicators,
+        to_ts=request.to,
+        count_back=request.count_back,
+        from_ts=request.from_ts,
     )
 
 
