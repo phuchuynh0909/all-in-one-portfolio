@@ -1,0 +1,131 @@
+[     157ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:21579
+[     241ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[     241ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[     420ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[     440ms] [WARNING] 2026-07-29T08:44:09.697Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[    4967ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[ 1812816ms] [LOG] [vite] server connection lost. polling for restart... @ http://localhost:5173/@vite/client:287
+[ 1813116ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:21579
+[ 1813230ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[ 1813230ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[ 1813384ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[ 1813390ms] [WARNING] 2026-07-29T09:14:22.647Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[ 1850107ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[ 2628405ms] [LOG] [vite] server connection lost. polling for restart... @ http://localhost:5173/@vite/client:287
+[ 2628728ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:21579
+[ 2628785ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[ 2628785ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[ 2628914ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[ 2628919ms] [WARNING] 2026-07-29T09:27:58.176Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[ 3029573ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[ 3594636ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[ 3594643ms] [WARNING] 2026-07-29T09:44:03.901Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[ 3608166ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[ 3649747ms] ReferenceError: watchlistOpen is not defined
+    at ChartPage (http://localhost:5173/src/pages/Chart.tsx?t=1785318298926:176:11)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:11568:26)
+    at updateFunctionComponent (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:14602:28)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:15944:22)
+    at HTMLUnknownElement.callCallback2 (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:3674:22)
+    at Object.invokeGuardedCallbackDev (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:3699:24)
+    at invokeGuardedCallback (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:3733:39)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19793:15)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19226:20)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19165:13)
+[ 3649748ms] ReferenceError: watchlistOpen is not defined
+    at ChartPage (http://localhost:5173/src/pages/Chart.tsx?t=1785318298926:176:11)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:11568:26)
+    at updateFunctionComponent (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:14602:28)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:15944:22)
+    at HTMLUnknownElement.callCallback2 (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:3674:22)
+    at Object.invokeGuardedCallbackDev (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:3699:24)
+    at invokeGuardedCallback (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:3733:39)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19793:15)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19226:20)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19165:13)
+[ 3649752ms] [ERROR] The above error occurred in the <ChartPage> component:
+
+    at ChartPage (http://localhost:5173/src/pages/Chart.tsx?t=1785318298926:43:45)
+    at RenderedRoute (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4103:5)
+    at Routes (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4574:5)
+    at main
+    at http://localhost:5173/node_modules/.vite/deps/chunk-UVI2FK2Q.js?v=bdb123d5:3425:49
+    at Box3 (http://localhost:5173/node_modules/.vite/deps/chunk-3BKXZXHX.js?v=bdb123d5:707:19)
+    at AppShell (http://localhost:5173/src/App.tsx?t=1785314566819:103:33)
+    at Router (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4517:15)
+    at BrowserRouter (http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:5266:5)
+    at LocalizationProvider2 (http://localhost:5173/node_modules/.vite/deps/chunk-AAO7PA7K.js?v=bdb123d5:36:17)
+    at DefaultPropsProvider (http://localhost:5173/node_modules/.vite/deps/chunk-UVI2FK2Q.js?v=bdb123d5:7031:3)
+    at RtlProvider (http://localhost:5173/node_modules/.vite/deps/chunk-3BKXZXHX.js?v=bdb123d5:1091:5)
+    at ThemeProvider (http://localhost:5173/node_modules/.vite/deps/chunk-3BKXZXHX.js?v=bdb123d5:1041:5)
+    at ThemeProvider2 (http://localhost:5173/node_modules/.vite/deps/chunk-3BKXZXHX.js?v=bdb123d5:1181:5)
+    at ThemeProvider (http://localhost:5173/node_modules/.vite/deps/chunk-SEMBU3H3.js?v=bdb123d5:329:12)
+    at QueryClientProvider (http://localhost:5173/node_modules/.vite/deps/@tanstack_react-query.js?v=bdb123d5:2951:3)
+    at App
+    at DefaultPropsProvider (http://localhost:5173/node_modules/.vite/deps/chunk-UVI2FK2Q.js?v=bdb123d5:7031:3)
+    at RtlProvider (http://localhost:5173/node_modules/.vite/deps/chunk-3BKXZXHX.js?v=bdb123d5:1091:5)
+    at ThemeProvider (http://localhost:5173/node_modules/.vite/deps/chunk-3BKXZXHX.js?v=bdb123d5:1041:5)
+    at ThemeProvider2 (http://localhost:5173/node_modules/.vite/deps/chunk-3BKXZXHX.js?v=bdb123d5:1181:5)
+    at ThemeProvider (http://localhost:5173/node_modules/.vite/deps/chunk-SEMBU3H3.js?v=bdb123d5:329:12)
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://reactjs.org/link/error-boundaries to learn more about error boundaries. @ http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:14051
+[ 3649753ms] ReferenceError: watchlistOpen is not defined
+    at ChartPage (http://localhost:5173/src/pages/Chart.tsx?t=1785318298926:176:11)
+    at renderWithHooks (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:11568:26)
+    at updateFunctionComponent (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:14602:28)
+    at beginWork (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:15944:22)
+    at beginWork$1 (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19781:22)
+    at performUnitOfWork (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19226:20)
+    at workLoopSync (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19165:13)
+    at renderRootSync (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:19144:15)
+    at recoverFromConcurrentError (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:18764:28)
+    at performSyncWorkOnRoot (http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:18907:28)
+[ 3665810ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[ 3665817ms] [WARNING] 2026-07-29T09:45:15.074Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[ 3674981ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[ 3680390ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[ 3680394ms] [WARNING] 2026-07-29T09:45:29.651Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[ 3689257ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[ 5755211ms] [LOG] [vite] server connection lost. polling for restart... @ http://localhost:5173/@vite/client:287
+[ 5755926ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:21579
+[ 5756035ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[ 5756035ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[ 5756217ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[ 5756223ms] [WARNING] 2026-07-29T10:20:05.480Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[ 5766968ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[ 7096922ms] [LOG] [vite] server connection lost. polling for restart... @ http://localhost:5173/@vite/client:287
+[ 7099596ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:21579
+[ 7099724ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[ 7099724ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[ 7099955ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[ 7099965ms] [WARNING] 2026-07-29T10:42:29.222Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[ 7108644ms] [ERROR] Access to fetch at 'http://localhost:8000/api/v1/timeseries/VNINDEX/bars' from origin 'http://localhost:5173' has been blocked by CORS policy: No 'Access-Control-Allow-Origin' header is present on the requested resource. @ http://localhost:5173/chart:0
+[ 7108645ms] [ERROR] Failed to load resource: net::ERR_FAILED @ http://localhost:8000/api/v1/timeseries/VNINDEX/bars:0
+[63874181ms] [WARNING] Unknown subscription symbol=VNINDEX, resolution=1D, key=1 @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:39
+[63874183ms] [WARNING] Unknown subscription symbol=VNINDEX, resolution=1D, key=0 @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:39
+[63874406ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[63874416ms] [WARNING] 2026-07-30T02:28:43.673Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[63882169ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[63882173ms] [WARNING] 2026-07-30T02:28:51.430Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[63893601ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[63893605ms] [WARNING] 2026-07-30T02:29:02.862Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[63895527ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63900648ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[63900651ms] [WARNING] 2026-07-30T02:29:09.909Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[63908611ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63908611ms] TypeError: Cannot read properties of null (reading 'tradingViewApi')
+    at s._innerAPI (http://localhost:5173/charting_library/charting_library.esm.js:1:8678)
+    at s.activeChart (http://localhost:5173/charting_library/charting_library.esm.js:1:5824)
+    at drawPositions (http://localhost:5173/src/components/chart/StockChart.tsx?t=1785378542704:411:26)
+[63917847ms] [ERROR] Failed to load resource: the server responded with a status of 502 (Bad Gateway) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63920886ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63923878ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63924091ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63924264ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63928894ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63933859ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63938861ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63943870ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63948860ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[63953856ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0

@@ -16,12 +16,14 @@ import {
   Drawer,
   Fab,
 } from '@mui/material';
-import { Notes } from '@mui/icons-material';
+import { Notes, ViewList } from '@mui/icons-material';
 import { syncStock } from '../lib/services/workflows';
 import type { Report } from '../lib/services/report';
 import { getChatNotes, type ChatNoteItem } from '../lib/services/chat';
 import { MarkdownContent } from '../components/chat/MarkdownContent';
 import StockChart from '../components/chart/StockChart';
+import Watchlist from '../components/chart/Watchlist';
+import ChartSideRail from '../components/chart/ChartSideRail';
 
 export default function ChartPage() {
   const [currentSymbol, setCurrentSymbol] = useState('VNINDEX');
@@ -32,6 +34,9 @@ export default function ChartPage() {
   const chartPaperRef = useRef<HTMLDivElement | null>(null);
   const [chartHeight, setChartHeight] = useState(800);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [watchlistOpen, setWatchlistOpen] = useState(() => {
+    try { return localStorage.getItem('chartWatchlistOpen') !== '0'; } catch { return true; }
+  });
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
   const [notes, setNotes] = useState<ChatNoteItem[]>([]);
@@ -83,6 +88,14 @@ export default function ChartPage() {
     }
   };
 
+  const handleToggleWatchlist = () => {
+    setWatchlistOpen((prev) => {
+      const next = !prev;
+      try { localStorage.setItem('chartWatchlistOpen', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  };
+
   const handleOpenNotes = async () => {
     setNotesOpen(true);
     await loadNotes();
@@ -119,29 +132,62 @@ export default function ChartPage() {
         flexDirection: 'column',
       }}
     >
-      {/* Chart — symbol picker, view toggle and sync now live in the widget header */}
-      <Paper
-        ref={chartPaperRef}
-        sx={{
-          p: 2,
-          flex: 1,
-          minHeight: 0,
-          position: 'relative',
-          background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
-          border: '1px solid rgba(99, 102, 241, 0.2)',
-          borderRadius: 2,
-        }}
-      >
-        <StockChart
-          symbol={currentSymbol}
-          onSymbolChange={setCurrentSymbol}
-          height={chartHeight}
-          showLargeOrders={view === 'largeOrders'}
-          onToggleLargeOrders={(v) => setView(v ? 'largeOrders' : 'chart')}
-          onSync={handleSync}
-          syncing={syncing}
+      {/* Chart — symbol picker, view toggle and sync now live in the widget header.
+          The watchlist sits beside it: the library's own Watch List widget ships
+          only with Trading Terminal, so it is an app-side panel here. */}
+      <Box sx={{ display: 'flex', gap: 2, flex: 1, minHeight: 0 }}>
+        <Paper
+          ref={chartPaperRef}
+          sx={{
+            p: 2,
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            position: 'relative',
+            background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
+            border: '1px solid rgba(99, 102, 241, 0.2)',
+            borderRadius: 2,
+          }}
+        >
+          <StockChart
+            symbol={currentSymbol}
+            onSymbolChange={setCurrentSymbol}
+            height={chartHeight}
+            showLargeOrders={view === 'largeOrders'}
+            onToggleLargeOrders={(v) => setView(v ? 'largeOrders' : 'chart')}
+            onSync={handleSync}
+            syncing={syncing}
+          />
+        </Paper>
+
+        {watchlistOpen && (
+          <Paper
+            sx={{
+              width: 240,
+              flexShrink: 0,
+              p: 1,
+              display: 'flex',
+              minHeight: 0,
+              background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
+              border: '1px solid rgba(99, 102, 241, 0.2)',
+              borderRadius: 2,
+            }}
+          >
+            <Watchlist activeSymbol={currentSymbol} onSelect={setCurrentSymbol} />
+          </Paper>
+        )}
+
+        {/* Right-edge rail: one icon per side panel, highlighted while open. */}
+        <ChartSideRail
+          items={[{
+            id: 'watchlist',
+            label: watchlistOpen ? 'Hide watchlist' : 'Show watchlist',
+            icon: <ViewList sx={{ fontSize: 19 }} />,
+            active: watchlistOpen,
+            onClick: handleToggleWatchlist,
+          }]}
         />
-      </Paper>
+      </Box>
 
       <Fab
         color="primary"

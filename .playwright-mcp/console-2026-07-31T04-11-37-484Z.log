@@ -1,0 +1,29 @@
+[     126ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:21579
+[     188ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[     188ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[     300ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[     308ms] [WARNING] 2026-07-31T04:11:37.792Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[    8951ms] [WARNING] Failed to create study smart_money_flow: Error: Value is undefined
+    at n (http://localhost:5173/charting_library/bundles/9401.1a253c12a3b43291d008.js:1:142)
+    at new $e (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:766:892)
+    at v._createViews (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:780:101)
+    at new v (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:802:1677)
+    at le (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:743:2519)
+    at T.insertStudyWithParams (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:456:2389)
+    at pt.redo (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:484:2560)
+    at Object.h [as pushUndoCommand] (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:823:440)
+    at t.ChartUndoModel._pushUndoCommand (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:504:1764)
+    at t.ChartUndoModel._insertStudy (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:498:1577) @ http://localhost:5173/src/components/chart/StockChart.tsx?t=1785471089187:362
+[    8964ms] [WARNING] Failed to create study smart_money_flow: Error: Value is undefined
+    at n (http://localhost:5173/charting_library/bundles/9401.1a253c12a3b43291d008.js:1:142)
+    at new $e (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:766:892)
+    at v._createViews (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:780:101)
+    at new v (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:802:1677)
+    at le (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:743:2519)
+    at T.insertStudyWithParams (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:456:2389)
+    at pt.redo (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:484:2560)
+    at Object.h [as pushUndoCommand] (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:823:440)
+    at t.ChartUndoModel._pushUndoCommand (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:504:1764)
+    at t.ChartUndoModel._insertStudy (http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:498:1577) @ http://localhost:5173/src/components/chart/StockChart.tsx?t=1785471089187:362
+[   52463ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[   52466ms] [WARNING] 2026-07-31T04:12:29.950Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155

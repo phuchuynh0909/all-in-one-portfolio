@@ -5,7 +5,8 @@ Given a wichart report id, this flow:
   2. Downloads and parses the PDF into markdown with **marker** (marker-pdf),
      with pagination on so page boundaries are preserved.
   3. Splits the markdown **per page** (page-level chunking) and embeds each page
-     via **Ollama** (Qwen3-Embedding-8B by default).
+     with Qwen3-Embedding-8B — either through an **Ollama** server or a local
+     **HuggingFace** model in-process (``RAG_EMBED_BACKEND``).
   4. Upserts the chunks (+ vectors) into Qdrant (re-embedding replaces prior).
 
 Status + the parsed markdown are tracked per report in ClickHouse via
@@ -20,14 +21,17 @@ Config (env):
     RAG_LLAMAPARSE_LANGUAGE     optional OCR language hint (e.g. "vi")
     QDRANT_URL                  default http://192.168.1.3:6333
     QDRANT_REPORTS_COLLECTION   default wichart_reports
+    RAG_EMBED_BACKEND           "ollama" (default) or "huggingface" (local model)
     RAG_EMBED_MODEL             Ollama model, default qwen3-embedding:8b
     RAG_OLLAMA_URL              default OLLAMA_BASE_URL or http://host.docker.internal:11434
-    RAG_EMBED_BATCH             texts per Ollama /api/embed call (default 4)
+    RAG_HF_EMBED_MODEL          HF backend model, default Qwen/Qwen3-Embedding-8B
+    RAG_EMBED_BATCH             texts per embed call (default 4)
     RAG_EMBED_RETRIES           retries on transient embed EOF/OOM (default 3)
     RAG_MAX_PAGE_CHARS          page-chunk cap; longer pages are sub-split (default 6000)
     TORCH_DEVICE                forwarded to marker (cpu / cuda / mps)
 
-Prerequisite: `ollama pull qwen3-embedding:8b` on the Ollama host.
+See ``app/services/embeddings.py`` for the full set of embedding knobs.
+Prerequisite (ollama backend): `ollama pull qwen3-embedding:8b` on the Ollama host.
 """
 from __future__ import annotations
 
@@ -36,7 +40,6 @@ import os
 import re
 import sys
 import tempfile
-import time
 import uuid
 from typing import Optional
 
@@ -53,6 +56,7 @@ PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
+from app.services import embeddings  # noqa: E402
 from app.services import report_rag_service as rag  # noqa: E402
 
 QDRANT_URL = os.getenv("QDRANT_URL", "http://192.168.1.3:6333")
@@ -63,91 +67,9 @@ COLLECTION = os.getenv("QDRANT_REPORTS_COLLECTION", "wichart_reports")
 PDF_PARSER = os.getenv("RAG_PDF_PARSER", "marker").lower()
 LLAMAPARSE_API_KEY = os.getenv("RAG_LLAMAPARSE_API_KEY") or os.getenv("LLAMA_CLOUD_API_KEY")
 LLAMAPARSE_LANGUAGE = os.getenv("RAG_LLAMAPARSE_LANGUAGE")  # optional OCR language hint, e.g. "vi"
-# Embeddings come from Ollama (Qwen3-Embedding-8B). Any Ollama embedding model
-# works via RAG_EMBED_MODEL; the vector size is detected from the model output.
-EMBED_MODEL = os.getenv("RAG_EMBED_MODEL", "qwen3-embedding:8b")
-# Keep the default small: after marker, RAM is tight and a large batch can kill
-# Ollama's model runner (EOF on the ephemeral /v1/embeddings port).
-EMBED_BATCH = int(os.getenv("RAG_EMBED_BATCH", "4"))
-EMBED_RETRIES = int(os.getenv("RAG_EMBED_RETRIES", "3"))
 # Page-level chunking: one chunk per page. A page longer than this is sub-split
 # so a single embedding call never silently truncates a huge page.
 MAX_PAGE_CHARS = int(os.getenv("RAG_MAX_PAGE_CHARS", "6000"))
-
-
-def _ollama_base() -> str:
-    """Root URL of the Ollama server (native /api, not the OpenAI /v1 path)."""
-    base = (
-        os.getenv("RAG_OLLAMA_URL")
-        or os.getenv("OLLAMA_BASE_URL")
-        or "http://localhost:11434"
-    ).rstrip("/")
-    # TradingAgents often sets OLLAMA_BASE_URL with a trailing /v1 — strip it so
-    # we hit Ollama's native /api/embed, not the OpenAI-compat shim.
-    if base.endswith("/v1"):
-        base = base[:-3]
-    return base
-
-
-def _ollama_embed_once(texts: list[str]) -> list[list[float]]:
-    """POST /api/embed once. Raises on HTTP / connection errors."""
-    url = f"{_ollama_base()}/api/embed"
-    resp = requests.post(
-        url,
-        json={"model": EMBED_MODEL, "input": texts},
-        timeout=300,
-    )
-    if resp.status_code >= 400:
-        raise RuntimeError(
-            f"Ollama embed failed ({resp.status_code}) at {url}: {resp.text[:400]}"
-        )
-    data = resp.json()
-    embeddings = data.get("embeddings")
-    if not embeddings:
-        raise RuntimeError(f"Ollama embed returned no embeddings: {data!r}"[:400])
-    return [list(vec) for vec in embeddings]
-
-
-def _ollama_embed(texts: list[str]) -> list[list[float]]:
-    """Embed texts via Ollama ``/api/embed``, with retries on transient EOF/OOM.
-
-    On repeated failure with a multi-text batch, falls back to one text at a
-    time so a single huge page doesn't wipe the whole job.
-    """
-    last_err: Optional[BaseException] = None
-    for attempt in range(1, EMBED_RETRIES + 1):
-        try:
-            return _ollama_embed_once(texts)
-        except (requests.RequestException, RuntimeError, OSError) as exc:
-            last_err = exc
-            msg = str(exc).lower()
-            # A crashed Ollama model runner (OOM / contention) reports back as
-            # "llama-server process no longer running" or a 500/503 — Ollama
-            # restarts the runner on the next call, so treat these as transient
-            # and back off rather than giving up immediately.
-            transient = any(
-                tok in msg
-                for tok in (
-                    "eof", "connection", "reset", "timeout", "refused",
-                    "no longer running", "llama runner", "runner process",
-                    "(500)", "(502)", "(503)",
-                )
-            )
-            if not transient or attempt >= EMBED_RETRIES:
-                break
-            time.sleep(2 * attempt)
-
-    # Batch failed — try one-by-one (common when runner OOMs on large batches).
-    if len(texts) > 1:
-        out: list[list[float]] = []
-        for t in texts:
-            out.extend(_ollama_embed([t]))
-        return out
-
-    raise RuntimeError(
-        f"Ollama embed failed for model={EMBED_MODEL!r} at {_ollama_base()}/api/embed "
-        f"({len(texts)} text(s)): {last_err}"
-    ) from last_err
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +106,11 @@ def _get_converter():
 
 
 def _release_converter() -> None:
-    """Drop the marker singleton so Ollama can load the embedding model.
+    """Drop the marker singleton so the embedding model has room to load.
 
-    Marker + Qwen3-Embedding-8B together often OOM the Ollama runner (seen as
-    ``EOF`` on an ephemeral ``127.0.0.1:<port>/v1/embeddings`` URL).
+    Marker + Qwen3-Embedding-8B together often OOM: with the ollama backend that
+    surfaces as ``EOF`` on an ephemeral ``127.0.0.1:<port>/v1/embeddings`` URL;
+    with the huggingface backend the local model allocation itself fails.
     """
     global _CONVERTER
     if _CONVERTER is None:
@@ -335,7 +258,7 @@ def embed_and_upsert(
     pdf_url: str,
     chunks: list[dict],
 ) -> int:
-    """Embed page chunks via Ollama and upsert them into Qdrant.
+    """Embed page chunks with the configured backend and upsert them into Qdrant.
 
     Existing points for this report are deleted first so re-embedding replaces
     rather than duplicates. The collection is created on first use with the
@@ -344,9 +267,7 @@ def embed_and_upsert(
     from qdrant_client import QdrantClient, models
 
     texts = [c["text"] for c in chunks]
-    vectors: list[list[float]] = []
-    for i in range(0, len(texts), EMBED_BATCH):
-        vectors.extend(_ollama_embed(texts[i : i + EMBED_BATCH]))
+    vectors = embeddings.embed_documents(texts)
     if not vectors:
         return 0
 
@@ -435,7 +356,7 @@ def rag_pipeline_flow(
             "Parsing PDF (%s) for report %s: %s", which_parser, report_id, meta["pdf_url"]
         )
         markdown = parse_pdf(meta["pdf_url"], parser)
-        # Free marker's ML models before loading the embedding model in Ollama.
+        # Free marker's ML models before the embedding model is loaded.
         if which_parser == "marker":
             _release_converter()
             logger.info("Released marker models before embedding")
@@ -448,14 +369,12 @@ def rag_pipeline_flow(
 
         rag.set_status(report_id, rag.EMBEDDING)
         logger.info(
-            "Embedding %d page-chunks for report %s -> %s  "
-            "(model=%s host=%s batch=%d)",
+            "Embedding %d page-chunks for report %s -> %s  (%s batch=%d)",
             len(chunks),
             report_id,
             COLLECTION,
-            EMBED_MODEL,
-            _ollama_base(),
-            EMBED_BATCH,
+            embeddings.describe(),
+            embeddings.batch_size(),
         )
         n_chunks = embed_and_upsert(
             report_id, meta["symbol"], meta["title"], meta["pdf_url"], chunks

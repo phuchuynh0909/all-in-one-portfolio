@@ -7,6 +7,7 @@ import PerformanceCharts from '../components/portfolio/PerformanceCharts';
 import PositionsTable from '../components/portfolio/PositionsTable';
 import PortfolioPieChart from '../components/portfolio/PortfolioPieChart';
 import CurrentPortfolioPieChart from '../components/portfolio/CurrentPortfolioPieChart';
+import MvfLstmPanel from '../components/portfolio/MvfLstmPanel';
 import { getPositions, type Position } from '../lib/services/portfolio';
 
 type TabPanelProps = {
@@ -108,6 +109,12 @@ export default function Portfolio() {
           No open positions yet — add one from the Positions tab below.
         </Alert>
       )}
+
+      {/* Forward-looking allocation — deliberately outside the positions guard above,
+          since it proposes what to hold rather than reporting what is held. */}
+      <Box sx={{ mb: 4 }}>
+        <MvfLstmPanel />
+      </Box>
 
       {/* Holdings & Manage — side by side */}
       <Box sx={{ display: 'flex', flexDirection: { xs: 'column', lg: 'row' }, gap: 3, mb: 4 }}>

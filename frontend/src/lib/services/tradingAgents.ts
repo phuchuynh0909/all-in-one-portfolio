@@ -1,9 +1,51 @@
 import { API_BASE_URL, apiGet } from '../api';
 
+/**
+ * Every model field takes a bare model name (served by the backend's default
+ * provider) or a `provider:model` spec — so roles can run on different
+ * providers, e.g. deep on `openai:…` and quick on `deepseek:…`.
+ */
 export interface AnalyzeRequest {
   symbol: string;
   trade_date?: string;
   analysts?: string[];
+  /** Default analyst model (also researchers/trader/risk). Omit for the server default. */
+  quick_think_llm?: string;
+  /** Research- + portfolio-manager model. Omit for the server default. */
+  deep_think_llm?: string;
+  /** Per-analyst model, e.g. { market: 'ollama:qwen3:latest' }. Wins over quick_think_llm. */
+  analyst_models?: Record<string, string>;
+}
+
+/** What a role resolved to. */
+export interface TALlmRole {
+  provider: string;
+  model: string;
+}
+
+export interface TAProviderModels {
+  quick: string[];
+  deep: string[];
+  key_env: string | null;
+  /** API key present (or none needed) — a run on this provider can start. */
+  ready: boolean;
+}
+
+/** Model choices per provider (GET /trading-agents/models). */
+export interface TAModelOptions {
+  /** Provider used for bare model names. */
+  provider: string;
+  providers: Record<string, TAProviderModels>;
+  /** The default provider's catalog. Suggestions, not a whitelist. */
+  options: { quick: string[]; deep: string[] };
+  defaults: {
+    deep_think_llm: string;
+    quick_think_llm: string;
+    analyst_llms: Record<string, string>;
+    llm_roles: Record<string, TALlmRole>;
+  };
+  analyst_keys: string[];
+  default_analysts: string[];
 }
 
 export interface TAReport {
@@ -19,13 +61,31 @@ export interface TADecision {
 export interface TAHealth {
   ollama_reachable: boolean;
   message: string;
+  /** Provider for bare model names; a run may use several. */
   provider: string;
+  providers?: string[];
   deep_think_llm: string;
   quick_think_llm: string;
+  /** Analysts pinned to their own model by env; the rest run on quick_think_llm. */
+  analyst_llms?: Record<string, string>;
+  llm_roles?: Record<string, TALlmRole>;
+}
+
+/** `started` event payload — echoes the models actually resolved for the run. */
+export interface TAStarted {
+  symbol: string;
+  date: string;
+  analysts: string[];
+  provider?: string;
+  deep_think_llm?: string;
+  quick_think_llm?: string;
+  analyst_llms?: Record<string, string>;
+  /** role ('deep' | 'quick' | analyst key) → provider + model actually used. */
+  llm_roles?: Record<string, TALlmRole>;
 }
 
 export interface TAHandlers {
-  onStarted?: (data: { symbol: string; date: string; analysts: string[] }) => void;
+  onStarted?: (data: TAStarted) => void;
   onNode?: (node: string) => void;
   onReport?: (report: TAReport) => void;
   onDecision?: (decision: TADecision) => void;
@@ -82,10 +142,10 @@ export const SECTION_LABELS: Record<string, string> = {
   sentiment: 'Sentiment Analyst',
   news: 'News Analyst',
   fundamentals: 'Fundamentals Analyst',
-  research_debate: 'Research Manager (Bull vs Bear)',
+  research_debate: 'Bull vs Bear Debate',
   research_manager: 'Investment Plan',
   trader: 'Trader',
-  risk_debate: 'Risk Management',
+  risk_debate: 'Risk Debate',
   final: 'Portfolio Manager — Final Decision',
 };
 
@@ -103,6 +163,37 @@ export const SECTION_ORDER: string[] = [
 
 export const fetchTradingAgentsHealth = async (): Promise<TAHealth> =>
   apiGet<TAHealth>('/trading-agents/health');
+
+export const fetchModelOptions = async (): Promise<TAModelOptions> =>
+  apiGet<TAModelOptions>('/trading-agents/models');
+
+export interface ModelChoice {
+  /** What to send: always provider-qualified, so the pick is unambiguous. */
+  spec: string;
+  provider: string;
+  model: string;
+}
+
+/**
+ * Flatten the catalog into `provider:model` choices for one role tier.
+ *
+ * Only providers whose API key is present are offered — a run on an
+ * unauthenticated provider is rejected by the backend's readiness check — except
+ * the default provider, whose catalog is always shown since it is what bare
+ * model names resolve to. Providers with no catalog entries (Ollama customs,
+ * OpenRouter, …) contribute nothing; those model IDs are typed in freehand.
+ */
+export const modelChoices = (
+  opts: TAModelOptions | null,
+  mode: 'quick' | 'deep',
+): ModelChoice[] => {
+  if (!opts) return [];
+  return Object.entries(opts.providers ?? {})
+    .filter(([name, p]) => p.ready || name === opts.provider)
+    .flatMap(([name, p]) =>
+      (p[mode] ?? []).map((model) => ({ spec: `${name}:${model}`, provider: name, model })),
+    );
+};
 
 /**
  * Start a streaming multi-agent analysis. Parses the SSE stream (both the
@@ -168,7 +259,7 @@ export const startAnalysis = (
 
           switch (eventType) {
             case 'started':
-              handlers.onStarted?.(data as never);
+              handlers.onStarted?.(data as unknown as TAStarted);
               break;
             case 'node':
               handlers.onNode?.(String((data as { node?: string }).node ?? ''));

@@ -21,6 +21,9 @@ import {
   TableHead,
   TableRow,
   IconButton,
+  Autocomplete,
+  Collapse,
+  Link,
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
@@ -32,10 +35,15 @@ import { Markdown } from '../components/Markdown';
 import {
   startAnalysis,
   fetchTradingAgentsHealth,
+  fetchModelOptions,
   fetchAnalyses,
   fetchAnalysis,
+  modelChoices,
   type TADecision,
   type TAHealth,
+  type TAModelOptions,
+  type TALlmRole,
+  type ModelChoice,
   type AnalysisSummary,
 } from '../lib/services/tradingAgents';
 
@@ -53,10 +61,10 @@ const AGENT_META: Record<string, AgentMeta> = {
   market: { icon: '📈', label: 'Market Analyst', subtitle: 'Price action & technical indicators' },
   news: { icon: '📰', label: 'News & Sentiment', subtitle: 'Company + sector research, KB first' },
   fundamentals: { icon: '📊', label: 'Fundamentals Analyst', subtitle: 'Balance sheet, income & cash flow' },
-  research_debate: { icon: '⚖️', label: 'Bull vs Bear Debate', subtitle: 'Research-manager verdict' },
-  research_manager: { icon: '🧭', label: 'Investment Plan', subtitle: 'Synthesized research thesis' },
+  research_debate: { icon: '⚖️', label: 'Bull vs Bear Debate', subtitle: 'Researcher turns, verbatim' },
+  research_manager: { icon: '🧭', label: 'Investment Plan', subtitle: 'Research-manager verdict' },
   trader: { icon: '💹', label: 'Trader', subtitle: 'Concrete trade proposal' },
-  risk_debate: { icon: '🛡️', label: 'Risk Management', subtitle: 'Aggressive / neutral / conservative' },
+  risk_debate: { icon: '🛡️', label: 'Risk Debate', subtitle: 'Aggressive / conservative / neutral turns' },
   final: { icon: '✅', label: 'Portfolio Manager', subtitle: 'Final decision' },
 };
 
@@ -103,6 +111,72 @@ const formatWhen = (iso: string): string => {
 
 type StepStatus = 'done' | 'running' | 'pending';
 
+// Analysts that can be pinned to their own model, in pipeline order. Mirrors the
+// backend's ANALYST_MODEL_KEYS minus `social`, which this deployment never runs
+// (the VN news tool carries sentiment/sector context into the News Analyst).
+const MODEL_PICKABLE_ANALYSTS = ['market', 'news', 'fundamentals'] as const;
+
+/**
+ * Display a resolved role: bare model on the default provider, `provider:model`
+ * when it sits elsewhere — the provider is only worth the space when it differs.
+ */
+const specLabel = (role?: TALlmRole, defaultProvider?: string): string => {
+  if (!role) return '';
+  return role.provider === defaultProvider ? role.model : `${role.provider}:${role.model}`;
+};
+
+/**
+ * One model field. Options are `provider:model` specs grouped by provider, so
+ * roles can be spread across providers (deep on OpenAI, analysts on DeepSeek);
+ * free text is still allowed since Ollama/OpenRouter serve arbitrary model IDs,
+ * and a bare name goes to the backend's default provider. Empty means "leave it
+ * to the backend", shown as the default in the placeholder.
+ */
+const ModelPicker: React.FC<{
+  label: string;
+  placeholder: string;
+  value: string;
+  onChange: (model: string) => void;
+  choices: ModelChoice[];
+  disabled?: boolean;
+}> = ({ label, placeholder, value, onChange, choices, disabled }) => (
+  <Autocomplete<ModelChoice, false, false, true>
+    freeSolo
+    size="small"
+    disabled={disabled}
+    options={choices}
+    // The input text is the spec — that is what gets sent and parsed. The row
+    // shows the model alone, since the group header already names the provider.
+    getOptionLabel={(option) => (typeof option === 'string' ? option : option.spec)}
+    groupBy={(option) => option.provider}
+    renderOption={(props, option) => (
+      <li {...props} key={option.spec}>
+        {option.model}
+      </li>
+    )}
+    // Text and selection are one piece of state: null while the text is a
+    // free-typed model ID, which is legal here and must not be reset to a pick.
+    value={choices.find((c) => c.spec === value) ?? null}
+    inputValue={value}
+    onChange={(_e, next) =>
+      onChange(typeof next === 'string' ? next : next?.spec ?? '')
+    }
+    onInputChange={(_e, next, reason) => {
+      // MUI re-syncs the input from `value` on blur; ignoring that empty reset
+      // keeps a typed-but-unlisted model (Ollama tags, OpenRouter IDs) intact.
+      if (reason === 'reset' && !next) return;
+      onChange(next);
+    }}
+    autoHighlight
+    selectOnFocus
+    handleHomeEndKeys
+    sx={{ minWidth: 230, flex: '1 1 230px' }}
+    renderInput={(params) => (
+      <TextField {...params} label={label} placeholder={placeholder} />
+    )}
+  />
+);
+
 const TradingAgents: React.FC = () => {
   const [symbol, setSymbol] = React.useState('');
   const [tradeDate, setTradeDate] = React.useState<string>('');
@@ -118,6 +192,20 @@ const TradingAgents: React.FC = () => {
   const [loadingId, setLoadingId] = React.useState<string | null>(null);
   const [viewingId, setViewingId] = React.useState<string | null>(null);
 
+  // Per-run model selection. Empty string = "use the server default", so a run
+  // never pins a model the user did not choose.
+  const [modelOptions, setModelOptions] = React.useState<TAModelOptions | null>(null);
+  const [showModels, setShowModels] = React.useState(false);
+  const [quickModel, setQuickModel] = React.useState('');
+  const [deepModel, setDeepModel] = React.useState('');
+  const [analystModels, setAnalystModels] = React.useState<Record<string, string>>({});
+  // Models the *last run* resolved to (echoed by the `started` event).
+  const [ranModels, setRanModels] = React.useState<{
+    quick: string;
+    deep: string;
+    analysts: Record<string, string>;
+  } | null>(null);
+
   const controllerRef = React.useRef<AbortController | null>(null);
   const startMsRef = React.useRef<number>(0);
 
@@ -131,6 +219,9 @@ const TradingAgents: React.FC = () => {
     fetchTradingAgentsHealth()
       .then(setHealth)
       .catch(() => setHealth(null));
+    fetchModelOptions()
+      .then(setModelOptions)
+      .catch(() => setModelOptions(null));
     loadHistory();
     return () => controllerRef.current?.abort();
   }, [loadHistory]);
@@ -146,6 +237,8 @@ const TradingAgents: React.FC = () => {
       setSections(a.sections);
       setDecision({ signal: a.signal, full: a.final_decision });
       setStarted({ symbol: a.symbol, date: a.trade_date });
+      // Saved rows only record the manager model, so show that and nothing more.
+      setRanModels({ quick: '', deep: a.model, analysts: {} });
       setElapsed(a.duration_ms ? `${Math.round(a.duration_ms / 1000)}s` : '');
       setViewingId(id);
       window.scrollTo({ top: 0, behavior: 'smooth' });
@@ -169,11 +262,35 @@ const TradingAgents: React.FC = () => {
     setStatus('Connecting…');
     startMsRef.current = Date.now();
 
+    // Only send what the user actually picked — anything omitted falls back to
+    // the backend's env-configured model.
+    const pinned = Object.fromEntries(
+      Object.entries(analystModels).filter(([, model]) => model.trim()),
+    );
+
     const { controller } = startAnalysis(
-      { symbol: sym, trade_date: tradeDate || undefined },
+      {
+        symbol: sym,
+        trade_date: tradeDate || undefined,
+        quick_think_llm: quickModel.trim() || undefined,
+        deep_think_llm: deepModel.trim() || undefined,
+        analyst_models: Object.keys(pinned).length ? pinned : undefined,
+      },
       {
         onStarted: (d) => {
           setStarted({ symbol: d.symbol, date: d.date });
+          // Roles carry the provider each model ran on; fall back to the flat
+          // fields if an older backend omits them.
+          const roles = d.llm_roles ?? {};
+          setRanModels({
+            quick: specLabel(roles.quick, d.provider) || d.quick_think_llm || '',
+            deep: specLabel(roles.deep, d.provider) || d.deep_think_llm || '',
+            analysts: Object.fromEntries(
+              Object.entries(roles)
+                .filter(([role]) => role !== 'quick' && role !== 'deep')
+                .map(([role, spec]) => [role, specLabel(spec, d.provider)]),
+            ),
+          });
           setStatus(`Convening the council for ${d.symbol} as of ${d.date}…`);
         },
         onNode: (node) => setStatus(`Working… (${node})`),
@@ -214,10 +331,39 @@ const TradingAgents: React.FC = () => {
   const asOf = started?.date ?? tradeDate ?? '';
   const displaySymbol = started?.symbol ?? symbol.trim().toUpperCase();
 
+  // Analysts share the quick tier's catalog.
+  const quickChoices = React.useMemo(
+    () => modelChoices(modelOptions, 'quick'),
+    [modelOptions],
+  );
+
+  /** What a role runs on unless overridden, provider-qualified when mixed. */
+  const roleDefault = (role: string): string =>
+    specLabel(modelOptions?.defaults.llm_roles?.[role], modelOptions?.provider);
+
+  // Number of models explicitly chosen for the next run (badge on the toggle).
+  const pinnedCount =
+    (quickModel.trim() ? 1 : 0) +
+    (deepModel.trim() ? 1 : 0) +
+    Object.values(analystModels).filter((m) => m.trim()).length;
+
+  // Everything the run used besides the manager model shown on the card.
+  const analystModelSummary = [
+    ...(ranModels?.quick ? [`Analysts: ${ranModels.quick}`] : []),
+    ...Object.entries(ranModels?.analysts ?? {}).map(
+      ([key, model]) => `${AGENT_META[key]?.label ?? key}: ${model}`,
+    ),
+  ].join(' · ');
+
   const statCards = [
     { label: 'Recommendation', value: decision?.signal ?? (running ? '…' : '—'), accent: signalHex(decision?.signal) },
     { label: 'As of', value: asOf || '—' },
-    { label: 'Model', value: health?.deep_think_llm ?? health?.provider ?? '—' },
+    {
+      label: 'Model',
+      // Prefer what the run reported over the page-load default.
+      value: ranModels?.deep || health?.deep_think_llm || health?.provider || '—',
+      hint: analystModelSummary,
+    },
     { label: 'Duration', value: elapsed || (running ? '…' : '—') },
   ];
 
@@ -241,8 +387,10 @@ const TradingAgents: React.FC = () => {
                 size="small"
                 label={
                   health.ollama_reachable
-                    ? `${health.provider} · ${health.deep_think_llm}`
-                    : `${health.provider} not ready`
+                    ? `${(health.providers ?? [health.provider]).join(' + ')} · ${
+                        health.deep_think_llm
+                      }`
+                    : `${(health.providers ?? [health.provider]).join(' + ')} not ready`
                 }
                 color={health.ollama_reachable ? 'success' : 'error'}
                 variant="outlined"
@@ -297,7 +445,67 @@ const TradingAgents: React.FC = () => {
                 </Typography>
               </Box>
             )}
+            <Box sx={{ flexGrow: 1 }} />
+            <Link
+              component="button"
+              type="button"
+              variant="body2"
+              underline="hover"
+              onClick={() => setShowModels((v) => !v)}
+              sx={{ whiteSpace: 'nowrap' }}
+            >
+              {showModels ? 'Hide models' : `Models${pinnedCount ? ` (${pinnedCount})` : ''}`}
+            </Link>
           </Stack>
+
+          {/* Per-run model selection. Blank = the backend's configured default. */}
+          <Collapse in={showModels}>
+            <Divider sx={{ my: 2 }} />
+            <Typography variant="caption" color="text.secondary">
+              Models for this run — leave blank to use the server default. Roles may
+              sit on different providers: pick a <code>provider:model</code> entry, or
+              type any model ID (a bare name goes to
+              {modelOptions ? ` ${modelOptions.provider}` : ' the default provider'}).
+              Only providers with an API key configured are listed.
+            </Typography>
+            <Stack
+              direction={{ xs: 'column', md: 'row' }}
+              spacing={2}
+              sx={{ mt: 1.5, flexWrap: 'wrap' }}
+            >
+              <ModelPicker
+                label="Analysts (default)"
+                placeholder={roleDefault('quick')}
+                value={quickModel}
+                onChange={setQuickModel}
+                choices={quickChoices}
+                disabled={running}
+              />
+              <ModelPicker
+                label="Managers (deep)"
+                placeholder={roleDefault('deep')}
+                value={deepModel}
+                onChange={setDeepModel}
+                choices={modelChoices(modelOptions, 'deep')}
+                disabled={running}
+              />
+              {MODEL_PICKABLE_ANALYSTS.map((key) => (
+                <ModelPicker
+                  key={key}
+                  label={AGENT_META[key]?.label ?? key}
+                  // Falls back through: env pin for this analyst → whatever the
+                  // user picked for analysts → the server's quick default.
+                  placeholder={roleDefault(key) || quickModel || roleDefault('quick')}
+                  value={analystModels[key] ?? ''}
+                  onChange={(model) =>
+                    setAnalystModels((prev) => ({ ...prev, [key]: model }))
+                  }
+                  choices={quickChoices}
+                  disabled={running}
+                />
+              ))}
+            </Stack>
+          </Collapse>
         </Paper>
 
         {error && (
@@ -459,6 +667,12 @@ const TradingAgents: React.FC = () => {
                     >
                       {s.value}
                     </Typography>
+                    {/* Only set when analysts ran on their own models. */}
+                    {s.hint && (
+                      <Typography variant="caption" sx={{ opacity: 0.7, wordBreak: 'break-word' }}>
+                        {s.hint}
+                      </Typography>
+                    )}
                   </Box>
                 ))}
               </Box>

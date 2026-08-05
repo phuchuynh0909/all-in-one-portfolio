@@ -8,7 +8,7 @@ per row) or the API; runs as a background Prefect flow.
 Report PDF (url)
    → download + parse to markdown        (marker, paginated)
    → page-level chunking                  (one chunk per page; huge pages sub-split)
-   → embed                                (Ollama, Qwen3-Embedding-8B)
+   → embed                                (Qwen3-Embedding-8B: Ollama or local HF)
    → upsert into Qdrant                    (re-embed replaces prior chunks)
 ```
 
@@ -26,16 +26,34 @@ an override. Only the selected parser's library is imported at runtime.
 
 **Chunking:** page-level — each
 page becomes one chunk (a page longer than `RAG_MAX_PAGE_CHARS` is sub-split,
-keeping its page number). **Embeddings:** Ollama (`qwen3-embedding:8b` by
-default) via `/api/embed`; the Qdrant collection is created on first use with the
+keeping its page number). The Qdrant collection is created on first use with the
 vector size reported by the model (Cosine distance). Each point's payload carries
 `report_id, symbol, title, pdf_url, page, chunk_index, text`.
+
+**Embeddings (choose one)** — `RAG_EMBED_BACKEND`, implemented once in
+`app/services/embeddings.py` and shared with the read side
+(`app/services/tradingagents/kb_search.py`), so ingest and search always agree:
+
+- **ollama** (default) — HTTP `POST /api/embed` on an Ollama server,
+  `RAG_EMBED_MODEL=qwen3-embedding:8b`. Nothing heavy in this process.
+- **huggingface** — no API at all: the model runs **in-process** via
+  sentence-transformers, `RAG_HF_EMBED_MODEL=Qwen/Qwen3-Embedding-8B` (any HF
+  repo id or local path). The model is a lazy per-process singleton; the first
+  call downloads the weights to the HF cache (~16 GB for the 8B) and loads them
+  onto the best available device (cuda / mps / cpu), where they stay resident.
+
+Both defaults are the same model, so vectors stay 4096-d and a collection built
+with one backend is still searchable with the other. Re-embed if retrieval
+quality looks off after a switch — runtime pooling/normalization details differ
+slightly. The backend is per-process, so the Docker API can keep using `ollama`
+for KB search while a host worker embeds with `huggingface`.
 
 > **Ollama prerequisite:** `ollama pull qwen3-embedding:8b`, and the server must
 > support embeddings — recent Ollama exposes `/api/embed` out of the box; older
 > builds need to be started with `--embeddings` (the flow surfaces Ollama's own
 > error message on failure). In Docker the backend reaches host Ollama at
-> `host.docker.internal:11434` (override with `RAG_OLLAMA_URL`).
+> `host.docker.internal:11434`, on the host at `localhost:11434` (override with
+> `RAG_OLLAMA_URL`).
 
 Status + the parsed markdown for every report are tracked in ClickHouse
 (`report_rag`, ReplacingMergeTree) so the list shows which reports are embedded.
@@ -72,18 +90,24 @@ Status + the parsed markdown for every report are tracked in ClickHouse
 | `RAG_PDF_PARSER` | `marker` | `marker` (local) or `llamaparse` (cloud) |
 | `LLAMA_CLOUD_API_KEY` / `RAG_LLAMAPARSE_API_KEY` | _(unset)_ | required for `llamaparse` |
 | `RAG_LLAMAPARSE_LANGUAGE` | _(unset)_ | optional OCR language hint, e.g. `vi` |
-| `RAG_EMBED_MODEL` | `qwen3-embedding:8b` | Ollama embedding model (must be pulled) |
-| `RAG_OLLAMA_URL` | `OLLAMA_BASE_URL` or `http://host.docker.internal:11434` | Ollama server (native `/api`) |
-| `RAG_EMBED_BATCH` | `4` | texts per `/api/embed` call (keep small after marker) |
-| `RAG_EMBED_RETRIES` | `3` | retries on transient EOF / connection errors |
+| `RAG_EMBED_BACKEND` | `ollama` | `ollama` (HTTP API) or `huggingface` (local, in-process) |
+| `RAG_EMBED_MODEL` | `qwen3-embedding:8b` | ollama backend: model tag (must be pulled) |
+| `RAG_OLLAMA_URL` | `OLLAMA_BASE_URL`, else `host.docker.internal:11434` in Docker / `localhost:11434` on the host | Ollama server (native `/api`) |
+| `RAG_HF_EMBED_MODEL` | `Qwen/Qwen3-Embedding-8B` | hf backend: HF repo id or local path |
+| `RAG_HF_DTYPE` | `auto` (model config's own: bf16 for Qwen3) | `float16` / `bfloat16` / `float32` |
+| `RAG_EMBED_BATCH` | `4` | texts per embed call (keep small after marker) |
+| `RAG_EMBED_RETRIES` | `3` | retries on transient EOF / connection / OOM errors |
 | `RAG_MAX_PAGE_CHARS` | `6000` | page-chunk safety cap; longer pages are sub-split |
 | `TORCH_DEVICE` | (marker default) | `cpu` / `cuda` / `mps` for marker |
 | `CLICKHOUSE_REPORT_RAG_TABLE` | `report_rag` | status table name |
 
 **marker is heavy** — it pulls `torch` and downloads its models on first parse
-(cached afterwards, GPU used automatically if available). The **embedding model
-runs on your Ollama host** (`ollama pull qwen3-embedding:8b`). The Qdrant
-collection and the ClickHouse table are created automatically on first use.
+(cached afterwards, GPU used automatically if available). With the default
+backend the **embedding model runs on your Ollama host**
+(`ollama pull qwen3-embedding:8b`); with `RAG_EMBED_BACKEND=huggingface` it runs
+in this process instead, so marker's models are released before it loads (the two
+together will OOM most machines). The Qdrant collection and the ClickHouse table
+are created automatically on first use.
 
 ## Run standalone
 
@@ -123,7 +147,7 @@ extra_hosts:
 ```
 
 The **worker runs on the host**, so it reaches Ollama at `localhost:11434` (the
-`_ollama_base` default) and Qdrant at `192.168.1.3:6333` directly — start it with
+non-Docker default) and Qdrant at `192.168.1.3:6333` directly — start it with
 the backend `.env` loaded so ClickHouse/Qdrant/Ollama config is present:
 
 ```bash
@@ -133,6 +157,7 @@ prefect worker start --pool my-worker
 
 ## Deploy note
 
-New deps (`qdrant-client`, `ollama`, `marker-pdf`, `llama-parse`) — rebuild the
-backend image (or `pip install -r requirements.txt` from `backend/`). Ensure the
-backend/worker can reach Qdrant (`192.168.1.3:6333`) and Ollama.
+New deps (`qdrant-client`, `ollama`, `marker-pdf`, `llama-parse`, and
+`sentence-transformers` for the local embedder) — rebuild the backend image (or
+`pip install -r requirements.txt` from `backend/`). Ensure the backend/worker can
+reach Qdrant (`192.168.1.3:6333`) and, on the default backend, Ollama.

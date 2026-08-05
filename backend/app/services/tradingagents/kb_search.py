@@ -1,11 +1,12 @@
 """Knowledge-base retrieval for the TradingAgents news/sentiment + sector analysts.
 
 The report RAG pipeline (``tasks/rag_pipeline.py``) embeds wichart research-report
-pages into a Qdrant collection (``wichart_reports``) using an Ollama embedding
-model (Qwen3-Embedding-8B). This module is the *read* side: it embeds a query the
-same way and runs a semantic search over that collection so the analysts can pull
-company/sector research from our own knowledge base **before** falling back to a
-live web search.
+pages into a Qdrant collection (``wichart_reports``) with Qwen3-Embedding-8B.
+This module is the *read* side: it embeds a query the same way — through the
+shared ``app.services.embeddings`` helper, so both sides use the same backend
+(Ollama API or a local HuggingFace model) — and runs a semantic search over that
+collection so the analysts can pull company/sector research from our own
+knowledge base **before** falling back to a live web search.
 
 Everything degrades gracefully — if the KB is disabled, unreachable, empty, or
 returns nothing above the score threshold, callers get an empty result and fall
@@ -14,8 +15,8 @@ back to web search rather than crashing the run.
 Config (env, shared with the RAG pipeline so both sides agree):
     QDRANT_URL                  default http://192.168.1.3:6333
     QDRANT_REPORTS_COLLECTION   default wichart_reports
-    RAG_EMBED_MODEL             Ollama embed model, default qwen3-embedding:8b
-    RAG_OLLAMA_URL / OLLAMA_BASE_URL   Ollama root, default host.docker.internal:11434
+    RAG_EMBED_BACKEND           "ollama" (default) or "huggingface" (local model);
+                                see app/services/embeddings.py for its own knobs
     TRADINGAGENTS_KB_SEARCH     "1" (default) / "0" to disable KB retrieval
     TRADINGAGENTS_KB_MIN_SCORE  cosine-score floor for a "match" (default 0.35)
     TRADINGAGENTS_KB_TOP_K      max chunks returned per query (default 6)
@@ -44,7 +45,6 @@ def _clean_text(text: str) -> str:
 
 _QDRANT_URL = os.getenv("QDRANT_URL", "http://192.168.1.3:6333")
 _COLLECTION = os.getenv("QDRANT_REPORTS_COLLECTION", "wichart_reports")
-_EMBED_MODEL = os.getenv("RAG_EMBED_MODEL", "qwen3-embedding:8b")
 
 DEFAULT_TOP_K = int(os.getenv("TRADINGAGENTS_KB_TOP_K", "6"))
 DEFAULT_MIN_SCORE = float(os.getenv("TRADINGAGENTS_KB_MIN_SCORE", "0.6"))
@@ -60,36 +60,14 @@ def kb_enabled() -> bool:
     )
 
 
-def _ollama_base() -> str:
-    """Root URL of the Ollama server (native ``/api``, not the OpenAI ``/v1`` path)."""
-    base = (
-        os.getenv("RAG_OLLAMA_URL")
-        or os.getenv("OLLAMA_BASE_URL")
-        or "http://host.docker.internal:11434"
-    ).rstrip("/")
-    if base.endswith("/v1"):
-        base = base[:-3]
-    return base
-
-
 def _embed_query(text: str) -> Optional[list[float]]:
-    """Embed one query string via Ollama ``/api/embed``; None on any failure."""
-    import requests
+    """Embed one query string with the configured backend; None on any failure."""
+    from app.services import embeddings
 
-    try:
-        resp = requests.post(
-            f"{_ollama_base()}/api/embed",
-            json={"model": _EMBED_MODEL, "input": [text]},
-            timeout=60,
-        )
-        resp.raise_for_status()
-        embeddings = resp.json().get("embeddings") or []
-        if not embeddings:
-            return None
-        return list(embeddings[0])
-    except Exception as exc:  # noqa: BLE001 — retrieval is best-effort
-        logger.warning("KB embed failed (%s); skipping knowledge base", exc)
-        return None
+    vector = embeddings.embed_query(text)
+    if vector is None:
+        logger.warning("KB embed failed; skipping knowledge base")
+    return vector
 
 
 def _client():

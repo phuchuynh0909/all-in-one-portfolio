@@ -9,10 +9,16 @@ import type {
   IExecutionLineAdapter,
   LanguageCode,
   ResolutionString,
+  StudyInputId,
 } from '../../lib/tv';
 import { createDatafeed } from '../../lib/tv/datafeed';
 import { tvStore, HISTORY_YEARS } from '../../lib/tv/store';
-import { STUDY_SPECS, STUDY_NAME_BY_ID, customIndicatorsGetter } from '../../lib/tv/studies';
+import {
+  STUDY_CATALOGUE,
+  STUDY_NAME_BY_ID,
+  computedStudyInputs,
+  customIndicatorsGetter,
+} from '../../lib/tv/studies';
 import { formatChartTime, type IndicatorParams } from '../../lib/services/timeseries';
 import {
   getPositions,
@@ -51,13 +57,23 @@ export interface IndicatorConfig {
   params: Record<string, number>;
   visible: boolean;
   paramDefs: ParamDef[];
+  /**
+   * True when the study computes itself in the browser (PineJS). Its params are
+   * passed as study inputs and it is left out of the backend indicator request.
+   */
+  computed?: boolean;
 }
 
 const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   {
-    id: 'rsi', name: 'rsi', label: 'RSI',
-    params: { period: 14 }, visible: true,
-    paramDefs: [{ key: 'period', label: 'Period', min: 2, max: 200, step: 1 }],
+    // Computed in-browser by PineJS (see COMPUTED_STUDY_SPECS) — the params below
+    // become study inputs instead of a backend indicator request.
+    id: 'rsi', name: 'rsi', label: 'RSI', computed: true,
+    params: { period: 14, fast_period: 5 }, visible: true,
+    paramDefs: [
+      { key: 'period', label: 'Period', min: 2, max: 200, step: 1 },
+      { key: 'fast_period', label: 'Fast Period', min: 2, max: 200, step: 1 },
+    ],
   },
   {
     id: 'atr_trailing', name: 'atr_trailing', label: 'ATR Trailing Stop',
@@ -224,12 +240,18 @@ const CHART_LAYOUTS: ChartLayout[] = [
 
 const DAILY = '1D' as ResolutionString;
 
-/** Maps app indicator configs → the datafeed's indicator request payload. */
+/**
+ * Maps app indicator configs → the datafeed's indicator request payload.
+ * In-browser (computed) studies are skipped: the backend has nothing to compute
+ * for them, so requesting them would only inflate the response.
+ */
 function toIndicatorParams(configs: IndicatorConfig[]): IndicatorParams[] {
-  return configs.map((c) => ({
-    name: c.name,
-    ...(Object.keys(c.params).length > 0 ? { params: c.params } : {}),
-  }));
+  return configs
+    .filter((c) => !c.computed)
+    .map((c) => ({
+      name: c.name,
+      ...(Object.keys(c.params).length > 0 ? { params: c.params } : {}),
+    }));
 }
 
 export default function StockChart({
@@ -306,8 +328,18 @@ export default function StockChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const indicatorParamsKey = useMemo(
-    () => JSON.stringify(indicatorConfigs.map((c) => ({ id: c.id, params: c.params }))),
+  // Params are split by study kind: only the backend-computed ones require a
+  // refetch, so a change to an in-browser study must not reset the data store.
+  const bridgedParamsKey = useMemo(
+    () => JSON.stringify(
+      indicatorConfigs.filter((c) => !c.computed).map((c) => ({ id: c.id, params: c.params })),
+    ),
+    [indicatorConfigs],
+  );
+  const computedParamsKey = useMemo(
+    () => JSON.stringify(
+      indicatorConfigs.filter((c) => c.computed).map((c) => ({ id: c.id, params: c.params })),
+    ),
     [indicatorConfigs],
   );
   const visibilityKey = useMemo(
@@ -330,12 +362,15 @@ export default function StockChart({
     const entities = studyEntitiesRef.current;
     const visibleById = new Map(indicatorConfigs.map((c) => [c.id, c.visible]));
 
-    for (const spec of STUDY_SPECS) {
+    const paramsById = new Map(indicatorConfigs.map((c) => [c.id, c.params]));
+
+    for (const spec of STUDY_CATALOGUE) {
       const shouldShow = visibleById.get(spec.id) ?? false;
       const existing = entities.get(spec.id);
       if (shouldShow && !existing) {
         try {
-          const id = await chart.createStudy(STUDY_NAME_BY_ID[spec.id], false, false, {});
+          const inputs = computedStudyInputs(spec.id, paramsById.get(spec.id) ?? {}) ?? {};
+          const id = await chart.createStudy(STUDY_NAME_BY_ID[spec.id], false, false, inputs);
           if (id) entities.set(spec.id, id);
         } catch (e) {
           console.warn(`Failed to create study ${spec.id}:`, e);
@@ -574,7 +609,32 @@ export default function StockChart({
     tvStore.reset();
     try { widgetRef.current?.activeChart().resetData(); } catch { /* not ready */ }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [indicatorParamsKey]);
+  }, [bridgedParamsKey]);
+
+  // ── Computed-study param change → push new study inputs ─────────────────────
+  // These recalculate in the browser, so no refetch: just hand the study its new
+  // inputs and the library re-runs it over the bars it already has.
+  useEffect(() => {
+    const widget = widgetRef.current;
+    if (!ready || !widget) return;
+    const chart = widget.activeChart();
+    for (const config of indicatorConfigs) {
+      const entity = studyEntitiesRef.current.get(config.id);
+      const inputs = entity ? computedStudyInputs(config.id, config.params) : null;
+      if (!entity || !inputs) continue;
+      try {
+        chart.getStudyById(entity).setInputValues(
+          Object.entries(inputs).map(([id, value]) => ({
+            id: id as StudyInputId,
+            value,
+          })),
+        );
+      } catch (e) {
+        console.warn(`Failed to update inputs for study ${config.id}:`, e);
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [computedParamsKey, ready]);
 
   // ── Indicator visibility change → add/remove studies ────────────────────────
   useEffect(() => {

@@ -54,8 +54,10 @@ statsmodels>=0.14.6
 prefect>=2.14.0
 
 # RAG pipeline (report PDF -> markdown -> embeddings -> Qdrant)
-qdrant-client>=1.9.0       # embeddings come from Ollama (Qwen3-Embedding-8B), not fastembed
-ollama>=0.3.0              # Ollama Python client (embeddings)
+qdrant-client>=1.9.0       # embeddings come from Qwen3-Embedding-8B, not fastembed
+ollama>=0.3.0              # Ollama Python client (RAG_EMBED_BACKEND=ollama)
+sentence-transformers>=3.0 # local in-process embedder (RAG_EMBED_BACKEND=huggingface)
+transformers>=4.56.0       # Qwen3 support + from_pretrained(dtype=) for the local embedder
 marker-pdf>=1.2.0          # PDF->markdown parser option "marker" (pulls torch + models; heavy)
 llama-parse>=0.5.0         # PDF->markdown parser option "llamaparse" (cloud API; needs LLAMA_CLOUD_API_KEY)
 

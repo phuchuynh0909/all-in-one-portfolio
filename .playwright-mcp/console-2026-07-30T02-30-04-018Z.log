@@ -1,0 +1,17 @@
+[     163ms] [INFO] %cDownload the React DevTools for a better development experience: https://reactjs.org/link/react-devtools font-weight:bold @ http://localhost:5173/node_modules/.vite/deps/chunk-ICOORQWA.js?v=bdb123d5:21579
+[     234ms] [WARNING] ⚠️ React Router Future Flag Warning: React Router will begin wrapping state updates in `React.startTransition` in v7. You can use the `v7_startTransition` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_starttransition. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[     234ms] [WARNING] ⚠️ React Router Future Flag Warning: Relative route resolution within Splat routes is changing in v7. You can use the `v7_relativeSplatPath` future flag to opt-in early. For more information, see https://reactrouter.com/v6/upgrading/future#v7_relativesplatpath. @ http://localhost:5173/node_modules/.vite/deps/react-router-dom.js?v=bdb123d5:4408
+[     345ms] [LOG] 16 custom indicators loaded. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:844
+[     352ms] [WARNING] 2026-07-30T02:30:04.370Z:Chart.Defaults:Path `mainSeriesProperties.candleStyle.borderVisible` does not exist. @ http://localhost:5173/charting_library/bundles/library.922da4a8fbaf39eb2333.js:155
+[    5287ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[    7883ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   12875ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   17880ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   22983ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   27882ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   32881ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   37876ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   42864ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   57201ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   57400ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0
+[   58244ms] [ERROR] Failed to load resource: the server responded with a status of 404 (Not Found) @ http://localhost:8000/api/v1/quote/VNINDEX/latest:0

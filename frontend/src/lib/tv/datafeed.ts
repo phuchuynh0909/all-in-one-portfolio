@@ -6,6 +6,10 @@
  * `POST /timeseries/{symbol}/bars` and answers with exactly that page. Pages
  * accumulate in {@link TvDataStore} for the bridged custom studies to read.
  * Research reports are surfaced as chart marks via `getMarks`.
+ *
+ * Real time comes from polling `GET /quote/{symbol}/latest` (the backend's
+ * signed DNSE proxy) and pushing the current day's bar through the
+ * `subscribeBars` tick callback — see {@link subscribeBars} below.
  */
 import type {
   Bar,
@@ -23,11 +27,18 @@ import type {
   SearchSymbolsCallback,
   SubscribeBarsCallback,
 } from './charting_library';
-import { formatReportDateForChart } from '../services/timeseries';
+import { formatChartTime, formatReportDateForChart } from '../services/timeseries';
 import { fetchReports, type Report } from '../services/report';
+import { fetchLatestQuote, isVnMarketSession, type LatestQuote } from '../services/quote';
 import type { BarsPage, LoadedSeries, TvDataStore } from './store';
 
 const SUPPORTED_RESOLUTIONS = ['1D', '1W', '1M'] as ResolutionString[];
+
+/** The only resolution real-time ticks are emitted for (see `subscribeBars`). */
+const DAILY = '1D' as ResolutionString;
+
+/** How often the latest quote is polled while the market is open. */
+const REALTIME_POLL_MS = 5_000;
 
 const CONFIGURATION: DatafeedConfiguration = {
   supported_resolutions: SUPPORTED_RESOLUTIONS,
@@ -58,6 +69,67 @@ function barsFor(page: BarsPage): Bar[] {
   return bars;
 }
 
+/** The bar the store already holds for `timeMs`, if any. */
+function loadedBarAt(store: TvDataStore, symbol: string, timeMs: number): Bar | null {
+  const series = store.loaded;
+  if (!series || series.symbol !== symbol) return null;
+  const i = series.indexByTimeMs.get(timeMs);
+  if (i === undefined) return null;
+  const { open, high, low, close, volume } = series.response.timeseries;
+  if (typeof open[i] !== 'number' || typeof close[i] !== 'number') return null;
+  return {
+    time: timeMs,
+    open: open[i],
+    high: high[i],
+    low: low[i],
+    close: close[i],
+    volume: volume?.[i],
+  };
+}
+
+/** Newest bar time (ms) loaded for `symbol`, or null when nothing is loaded. */
+function newestLoadedTime(store: TvDataStore, symbol: string): number | null {
+  const series = store.loaded;
+  if (!series || series.symbol !== symbol || series.timesMs.length === 0) return null;
+  return series.timesMs[series.timesMs.length - 1];
+}
+
+function definedNumbers(...values: (number | null | undefined)[]): number[] {
+  return values.filter((v): v is number => typeof v === 'number');
+}
+
+/**
+ * Builds the current daily bar from a quote, merged with whatever the backend
+ * already knows about that day.
+ *
+ * The quote carries the board's session open/high/low plus cumulative volume, so
+ * a full bar can be reconstructed from a single response. When the backend has
+ * already published a bar for the same day, its open wins (it is the settled
+ * value) and the extremes are widened rather than replaced, so a late-session
+ * poll can never shrink the bar's range.
+ */
+function barFromQuote(quote: LatestQuote, existing: Bar | null): Bar {
+  const time = formatChartTime(quote.trading_date) * 1000;
+  const close = quote.price;
+  return {
+    time,
+    open: existing?.open ?? quote.open ?? close,
+    high: Math.max(...definedNumbers(close, quote.high, existing?.high)),
+    low: Math.min(...definedNumbers(close, quote.low, existing?.low)),
+    close,
+    volume: Math.max(...definedNumbers(quote.volume, existing?.volume, 0)),
+  };
+}
+
+function sameBar(a: Bar, b: Bar): boolean {
+  return a.time === b.time
+    && a.open === b.open
+    && a.high === b.high
+    && a.low === b.low
+    && a.close === b.close
+    && a.volume === b.volume;
+}
+
 /** Snap a report to the nearest existing bar time (marks must sit on a bar). */
 function snapToBar(series: LoadedSeries, targetMs: number): number | null {
   if (series.indexByTimeMs.has(targetMs)) return targetMs;
@@ -76,6 +148,8 @@ function snapToBar(series: LoadedSeries, targetMs: number): number | null {
 
 export function createDatafeed(store: TvDataStore): IBasicDataFeed {
   const reportsBySymbol = new Map<string, Report[]>();
+  /** Live subscriptions by listener GUID, so `unsubscribeBars` can stop them. */
+  const subscriptions = new Map<string, () => void>();
 
   async function ensureReports(symbol: string): Promise<Report[]> {
     const cached = reportsBySymbol.get(symbol);
@@ -138,7 +212,9 @@ export function createDatafeed(store: TvDataStore): IBasicDataFeed {
         visible_plots_set: 'ohlcv',
         supported_resolutions: SUPPORTED_RESOLUTIONS,
         volume_precision: 0,
-        data_status: 'endofday',
+        // The daily bar is kept live from the quote feed (see `subscribeBars`),
+        // so the library should show the streaming badge rather than "EOD".
+        data_status: 'streaming',
       };
       setTimeout(() => onResolve(info), 0);
     },
@@ -210,18 +286,63 @@ export function createDatafeed(store: TvDataStore): IBasicDataFeed {
       onDataCallback(marks);
     },
 
+    /**
+     * Keeps the current daily bar live by polling the latest matched trade.
+     *
+     * Only `1D` streams: the weekly/monthly resolutions would need the tick time
+     * bucketed to the start of the week/month the library is drawing, and a
+     * mis-aligned time silently appends a spurious bar.
+     */
     subscribeBars(
-      _symbolInfo: LibrarySymbolInfo,
-      _resolution: ResolutionString,
-      _onTick: SubscribeBarsCallback,
-      _listenerGuid: string,
+      symbolInfo: LibrarySymbolInfo,
+      resolution: ResolutionString,
+      onTick: SubscribeBarsCallback,
+      listenerGuid: string,
       _onResetCacheNeededCallback: () => void,
     ): void {
-      // End-of-day data: no real-time updates.
+      if (resolution !== DAILY) return;
+      const symbol = (symbolInfo.ticker ?? symbolInfo.name).toUpperCase();
+
+      let stopped = false;
+      let lastTick: Bar | null = null;
+
+      const poll = async (): Promise<void> => {
+        try {
+          const quote = await fetchLatestQuote(symbol);
+          if (stopped) return;
+
+          const bar = barFromQuote(quote, loadedBarAt(store, symbol, formatChartTime(quote.trading_date) * 1000));
+
+          // A quote older than the newest bar we hold means the market is shut
+          // and the provider is echoing a previous session — the library rejects
+          // out-of-order times anyway, so drop it.
+          const newest = newestLoadedTime(store, symbol);
+          if (newest != null && bar.time < newest) return;
+          if (lastTick && (bar.time < lastTick.time || sameBar(bar, lastTick))) return;
+
+          lastTick = bar;
+          onTick(bar);
+        } catch {
+          // Transient upstream/network failure: the next poll retries.
+        }
+      };
+
+      // Prime once regardless of session state so the chart shows the last
+      // traded price immediately, then keep polling only while the market runs.
+      void poll();
+      const timer = window.setInterval(() => {
+        if (isVnMarketSession()) void poll();
+      }, REALTIME_POLL_MS);
+
+      subscriptions.set(listenerGuid, () => {
+        stopped = true;
+        window.clearInterval(timer);
+      });
     },
 
-    unsubscribeBars(_listenerGuid: string): void {
-      // No-op — nothing subscribed.
+    unsubscribeBars(listenerGuid: string): void {
+      subscriptions.get(listenerGuid)?.();
+      subscriptions.delete(listenerGuid);
     },
   };
 }

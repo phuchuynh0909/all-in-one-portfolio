@@ -1,0 +1,33 @@
+- generic [ref=f28e2]:
+  - banner [ref=f28e4]:
+    - generic [ref=f28e6]:
+      - button [ref=f28e7] [cursor=pointer]
+      - link "Investment Tracker" [ref=f28e10] [cursor=pointer]:
+        - /url: /
+  - main [ref=f28e11]:
+    - generic [ref=f28e12]:
+      - generic [ref=f28e13]:
+        - iframe [ref=f28e17]:
+          - progressbar [ref=f30e3]
+        - generic [ref=f28e19]:
+          - generic [ref=f28e20]:
+            - heading "Watchlist" [level=6] [ref=f28e21]
+            - button "Add symbol" [ref=f28e22] [cursor=pointer]
+          - list [ref=f28e25]:
+            - button [ref=f28e26] [cursor=pointer]:
+              - paragraph [ref=f28e29]: VNINDEX
+              - paragraph [ref=f28e31]: —
+              - button "Remove" [ref=f28e32]
+            - button [ref=f28e35] [cursor=pointer]:
+              - paragraph [ref=f28e38]: VCG
+              - paragraph [ref=f28e40]: —
+              - button "Remove" [ref=f28e41]
+            - button [ref=f28e44] [cursor=pointer]:
+              - paragraph [ref=f28e47]: SHS
+              - paragraph [ref=f28e49]: —
+              - button "Remove" [ref=f28e50]
+            - button [ref=f28e53] [cursor=pointer]:
+              - paragraph [ref=f28e56]: HPG
+              - paragraph [ref=f28e58]: —
+              - button "Remove" [ref=f28e59]
+      - button [ref=f28e62] [cursor=pointer]
