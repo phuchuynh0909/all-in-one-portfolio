@@ -91,3 +91,58 @@ ENGINE = ReplacingMergeTree(received_at)
 ORDER BY (symbol, sending_time, match_price, match_qty, side)
 PARTITION BY toYYYYMMDD(sending_time)
 """
+
+# ---------------------------------------------------------------------------
+# Large orders ("Layer 3" block tape) — trades are merged into fixed-second
+# blocks per (symbol, side, time-bucket); only blocks whose total notional
+# value clears a configurable threshold are stored. One row per block:
+#   sending_time = bucket start, vwap = volume-weighted price,
+#   total_qty / dollar_value = block sums, num_trades = fills merged.
+# ---------------------------------------------------------------------------
+
+LARGE_ORDERS_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("sending_time", pa.timestamp("us", tz="UTC"), nullable=False),
+        pa.field("side", pa.int32(), nullable=False),
+        pa.field("vwap", pa.float64(), nullable=False),
+        pa.field("total_qty", pa.int64(), nullable=False),
+        pa.field("dollar_value", pa.float64(), nullable=False),
+        pa.field("num_trades", pa.int64(), nullable=False),
+        pa.field("received_at", pa.timestamp("us", tz="UTC"), nullable=False),
+    ]
+)
+
+LARGE_ORDERS_CLICKHOUSE_SCHEMA = """
+    symbol String,
+    sending_time DateTime64(6, 'UTC'),
+    side Int32,
+    vwap Float64,
+    total_qty Int64,
+    dollar_value Float64,
+    num_trades Int64,
+    received_at DateTime64(6, 'UTC'),
+"""
+
+LARGE_ORDERS_CLICKHOUSE_TABLE = "large_orders"
+
+# One block per (symbol, bucket, side) — that tuple is the dedup key.
+# ReplacingMergeTree(received_at) lets the reconciler overwrite a partial
+# live block with the authoritative end-of-day aggregate.
+LARGE_ORDERS_CLICKHOUSE_ORDER_BY = "symbol, sending_time, side"
+
+LARGE_ORDERS_CREATE_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {database}.large_orders (
+    symbol String,
+    sending_time DateTime64(6, 'UTC'),
+    side Int32,
+    vwap Float64,
+    total_qty Int64,
+    dollar_value Float64,
+    num_trades Int64,
+    received_at DateTime64(6, 'UTC')
+)
+ENGINE = ReplacingMergeTree(received_at)
+ORDER BY (symbol, sending_time, side)
+PARTITION BY toYYYYMMDD(sending_time)
+"""

@@ -36,7 +36,7 @@ SECTORS_DATA = {
     (8000, 8300): ['SHB', 'VPB', 'STB', 'VCB', 'TCB', 'CTG', 'MBB', 'ACB', 'HDB', 'BID', 'TPB', 'EIB', 'VIB', 'LPB', 'MSB', 'EVF', 'SSB', 'OCB', 'NAB', 'ABB', 'BVB', 'KLB', 'VAB', 'NVB', 'VBB', 'PGB', 'TIN', 'SGB', 'BAB'],  # Financials/Banking
     (8000, 8500): ['BVH', 'BMI', 'BIC', 'PVI', 'MIG', 'ABI', 'VNR', 'PGI', 'PTI', 'AIC', 'PRE', 'BLI', 'BHI'],  # Financials/Insurance
     (8000, 8600): ['VIC', 'VHM', 'DXG', 'DIG', 'PDR', 'NVL', 'CEO', 'VRE', 'KBC', 'VPI', 'TCH', 'HDG', 'SCR', 'HDC', 'KDH', 'NLG', 'QCG', 'KHG', 'IDC', 'DXS', 'IJC', 'SIP', 'TAL', 'VC3', 'SZC', 'NTL', 'KOS', 'BCM', 'LDG', 'HQC', 'SGR', 'TDC'],  # Financials/Real Estate
-    (8000, 8700): ['VIX', 'SSI', 'VND', 'SHS', 'VCI', 'HCM', 'MBS', 'FTS', 'AAS', 'ORS', 'BSI', 'DSE', 'VDS', 'VFS', 'CTS', 'BCG', 'AGR', 'BVS', 'IPA', 'APS', 'SBS', 'TVS', 'TCI', 'TVC', 'APG', 'BMS', 'EVS', 'DSC', 'IVS', 'F88'],  # Financials/Services
+    (8000, 8700): ['VIX', 'SSI', 'VND', 'SHS', 'VCI', 'HCM', 'MBS', 'FTS', 'AAS', 'ORS', 'BSI', 'DSE', 'VDS', 'VFS', 'CTS', 'AGR', 'BVS', 'IPA', 'APS', 'SBS', 'TVS', 'TCI', 'TVC', 'APG', 'BMS', 'EVS', 'DSC', 'IVS', 'F88'],  # Financials/Services
     (9000, 9500): ['FPT', 'CMG', 'ELC', 'VGI', 'SAM', 'ICT', 'SRA', 'ST8', 'MFS', 'ITD', 'SBD', 'POT', 'UNI'],  # Technology
 }
 

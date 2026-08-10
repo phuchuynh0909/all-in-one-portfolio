@@ -11,6 +11,8 @@ __pycache__/
 backend/tasks/wichart_storage.json
 */*.h5
 */*.pyc
+# Fitted MVF per-asset LSTM weights — regenerable, keyed by a data fingerprint
+backend/models/lstm_cache/
 */.cache/
 */.numba_cache/
 */.mplconfig/

@@ -23,6 +23,11 @@ class Settings(BaseSettings):
     clickhouse_password: str = os.getenv("CLICKHOUSE_PASSWORD", "mypassword")
     clickhouse_db: str = os.getenv("CLICKHOUSE_DB", "default")
 
+    # DNSE OpenAPI (real-time matched prices; secret must stay server-side)
+    dnse_api_key: str = os.getenv("DNSE_API_KEY", "")
+    dnse_api_secret: str = os.getenv("DNSE_API_SECRET", "")
+    dnse_api_version: str = os.getenv("DNSE_API_VERSION", "2026-05-07")
+
     # CORS
     backend_cors_origins: List[AnyHttpUrl | str] = [
         "http://localhost:5173",

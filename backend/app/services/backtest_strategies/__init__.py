@@ -7,6 +7,11 @@ from .breakout_ttm import (
     BreakoutTTMV2StrategyBT,
     BreakoutTTMV3StrategyBT,
 )
+from .breakout_ttm_kama import (
+    BreakoutTTMKamaStrategyBT,
+    BreakoutTTMKamaV1StrategyBT,
+    BreakoutTTMKamaV3StrategyBT,
+)
 from .episodic_pivot import EpisodicPivotStrategyBT
 from .williams_vix import WilliamsVixStrategyBT
 
@@ -18,6 +23,9 @@ __all__ = [
     'BreakoutTTMV1cStrategyBT',
     'BreakoutTTMV2StrategyBT',
     'BreakoutTTMV3StrategyBT',
+    'BreakoutTTMKamaStrategyBT',
+    'BreakoutTTMKamaV1StrategyBT',
+    'BreakoutTTMKamaV3StrategyBT',
     'EpisodicPivotStrategyBT',
     'WilliamsVixStrategyBT',
 ]

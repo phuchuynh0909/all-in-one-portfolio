@@ -19,6 +19,7 @@ export interface TimeseriesResponse {
     atr_trailing?: (number | null)[];
     vwap_highest?: (number | null)[];
     vwap_lowest?: (number | null)[];
+    kama?: (number | null)[];
     bvc?: (number | null)[];
     kalman_zscore?: (number | null)[];
     yz_volatility?: (number | null)[];
@@ -44,7 +45,7 @@ export interface TimeseriesResponse {
     };
     squeeze_ttm?: {
       histogram: (number | null)[];
-      squeeze_on: boolean[];
+      squeeze_state: number[]; // 0=diff==0, 1=diff<0 (on), 2=diff>0 (off)
     };
     smart_money_flow?: {
       last_signal: (number | null)[];
@@ -59,6 +60,23 @@ export interface TimeseriesResponse {
       bull_dot: boolean[];
       bear_dot: boolean[];
       strength_signed: (number | null)[];
+    };
+    linreg_channel?: {
+      reg: (number | null)[];
+      pi_upper: (number | null)[];
+      pi_lower: (number | null)[];
+      ci_upper: (number | null)[];
+      ci_lower: (number | null)[];
+    };
+    gaussian_frama?: {
+      frama: (number | null)[];
+      long_v: (number | null)[];
+      short_v: (number | null)[];
+      qb: (number | null)[];
+    };
+    hull_butterfly?: {
+      hso: (number | null)[];
+      os: (number | null)[];
     };
   };
 }
@@ -75,103 +93,44 @@ export interface TimeseriesRequest {
   indicators?: IndicatorParams[];
 }
 
-// ============================================================================
-// Cache configuration and utilities
-// ============================================================================
-const CACHE_PREFIX = 'timeseries_cache_';
-const CACHE_DURATION_MS = 60 * 60 * 1000; // 1 hour in milliseconds
-
-interface CachedData<T> {
-  data: T;
-  timestamp: number;
+/** One page of bars: `count_back` bars ending just before `to` (unix seconds). */
+export interface BarsRequest {
+  interval?: string;
+  indicators?: IndicatorParams[];
+  /** Exclusive upper bound, unix seconds. */
+  to?: number;
+  /** Number of bars to return, ending at `to`. Takes priority over `from`. */
+  count_back?: number;
+  /** Inclusive lower bound, unix seconds. Used only when `count_back` is omitted. */
+  from?: number;
 }
 
-/**
- * Generate a cache key from symbol and request params
- */
-const getCacheKey = (symbol: string, params: TimeseriesRequest): string => {
-  const paramsStr = JSON.stringify(params);
-  return `${CACHE_PREFIX}${symbol}_${btoa(paramsStr).slice(0, 32)}`;
-};
+export interface BarsResponse extends TimeseriesResponse {
+  /** True when the requested window holds no bars. */
+  no_data: boolean;
+  /** Unix seconds of the closest available bar when `no_data` — lets the chart skip gaps. */
+  next_time?: number | null;
+  /** True when older bars exist before this page. */
+  has_more_history: boolean;
+}
 
-/**
- * Get cached data if valid (not expired)
- */
-const getFromCache = <T>(key: string): T | null => {
-  try {
-    const cached = localStorage.getItem(key);
-    if (!cached) return null;
-    
-    const { data, timestamp }: CachedData<T> = JSON.parse(cached);
-    const age = Date.now() - timestamp;
-    
-    if (age > CACHE_DURATION_MS) {
-      // Cache expired, remove it
-      localStorage.removeItem(key);
-      return null;
-    }
-    
-    return data;
-  } catch {
-    return null;
+export const fetchBars = async (symbol: string, params: BarsRequest): Promise<BarsResponse> => {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/${symbol}/bars`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error ${response.status}: ${await response.text()}`);
   }
-};
 
-/**
- * Save data to cache with timestamp
- */
-const saveToCache = <T>(key: string, data: T): void => {
-  try {
-    const cached: CachedData<T> = {
-      data,
-      timestamp: Date.now(),
-    };
-    localStorage.setItem(key, JSON.stringify(cached));
-  } catch (e) {
-    // Handle localStorage quota exceeded
-    console.warn('Failed to cache timeseries data:', e);
-    clearOldCache();
-  }
+  return response.json();
 };
-
-/**
- * Clear old cache entries when storage is full
- */
-const clearOldCache = (): void => {
-  const keys = Object.keys(localStorage).filter(k => k.startsWith(CACHE_PREFIX));
-  const now = Date.now();
-  
-  for (const key of keys) {
-    try {
-      const cached = localStorage.getItem(key);
-      if (cached) {
-        const { timestamp } = JSON.parse(cached);
-        if (now - timestamp > CACHE_DURATION_MS) {
-          localStorage.removeItem(key);
-        }
-      }
-    } catch {
-      localStorage.removeItem(key);
-    }
-  }
-};
-
-// ============================================================================
-// API Functions with caching
-// ============================================================================
 
 export const fetchTimeseries = async (symbol: string, params: TimeseriesRequest): Promise<TimeseriesResponse> => {
-  const cacheKey = getCacheKey(symbol, params);
-  
-  // Check cache first
-  const cached = getFromCache<TimeseriesResponse>(cacheKey);
-  if (cached) {
-    console.debug(`[Cache HIT] Timeseries for ${symbol}`);
-    return cached;
-  }
-  
-  console.debug(`[Cache MISS] Fetching timeseries for ${symbol}`);
-  
   const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/${symbol}`, {
     method: 'POST',
     headers: {
@@ -184,21 +143,7 @@ export const fetchTimeseries = async (symbol: string, params: TimeseriesRequest)
     throw new Error(`Error ${response.status}: ${await response.text()}`);
   }
 
-  const data = await response.json();
-  
-  // Save to cache
-  saveToCache(cacheKey, data);
-  
-  return data;
-};
-
-/**
- * Clear all timeseries cache (useful for manual refresh)
- */
-export const clearTimeseriesCache = (): void => {
-  const keys = Object.keys(localStorage).filter(k => k.startsWith(CACHE_PREFIX));
-  keys.forEach(key => localStorage.removeItem(key));
-  console.debug(`[Cache] Cleared ${keys.length} cached entries`);
+  return response.json();
 };
 
 // Helper function to format indicator data

@@ -1,0 +1,103 @@
+- generic [ref=f2e1]:
+  - generic [ref=f2e2]:
+    - banner [ref=f2e4]:
+      - generic [ref=f2e6]:
+        - button [ref=f2e7] [cursor=pointer]
+        - link [ref=f2e96] [cursor=pointer]:
+          - /url: /
+          - text: Investment Tracker
+    - main [ref=f2e11]:
+      - generic [ref=f2e12]:
+        - heading [level=5] [ref=f2e97]: Feature Scanner
+        - generic [ref=f2e16]:
+          - heading [level=6] [ref=f2e98]: Filters
+          - generic [ref=f2e18]:
+            - generic [ref=f2e99]: Preset scanner
+            - generic [ref=f2e19]:
+              - combobox [expanded] [ref=f2e100] [cursor=pointer]
+              - textbox
+              - group:
+                - generic: Preset scanner
+          - generic [ref=f2e21]:
+            - generic [ref=f2e23]:
+              - generic: Column
+              - generic [ref=f2e24]:
+                - combobox [ref=f2e101] [cursor=pointer]
+                - textbox
+                - group:
+                  - generic: Column
+            - generic [ref=f2e27]:
+              - generic [ref=f2e28]: Operator
+              - generic [ref=f2e29]:
+                - combobox [ref=f2e102] [cursor=pointer]: ">"
+                - textbox: gt
+                - group:
+                  - generic: Operator
+            - generic [ref=f2e32]:
+              - generic: Value (number or text)
+              - generic [ref=f2e33]:
+                - textbox [ref=f2e103]
+                - group:
+                  - generic: Value (number or text)
+            - button [ref=f2e104] [cursor=pointer]
+          - button [ref=f2e105] [cursor=pointer]: Add condition
+          - separator [ref=f2e43]
+          - generic [ref=f2e44]:
+            - generic [ref=f2e46]:
+              - generic: Start date
+              - group [ref=f2e106]:
+                - generic [ref=f2e48]:
+                  - generic [ref=f2e49]:
+                    - spinbutton [ref=f2e107]: MM
+                    - text: /
+                  - generic [ref=f2e51]:
+                    - spinbutton [ref=f2e108]: DD
+                    - text: /
+                  - spinbutton [ref=f2e109]: YYYY
+                - button [ref=f2e110] [cursor=pointer]
+                - group:
+                  - generic: Start date
+                - textbox [ref=f2e59]
+            - generic [ref=f2e61]:
+              - generic: End date
+              - group [ref=f2e111]:
+                - generic [ref=f2e63]:
+                  - generic [ref=f2e64]:
+                    - spinbutton [ref=f2e112]: MM
+                    - text: /
+                  - generic [ref=f2e66]:
+                    - spinbutton [ref=f2e113]: DD
+                    - text: /
+                  - spinbutton [ref=f2e114]: YYYY
+                - button [ref=f2e115] [cursor=pointer]
+                - group:
+                  - generic: End date
+                - textbox [ref=f2e74]
+            - generic [ref=f2e76]:
+              - generic: Symbols (comma-separated)
+              - generic [ref=f2e77]:
+                - textbox [ref=f2e116]
+                - group:
+                  - generic: Symbols (comma-separated)
+            - generic [ref=f2e80]:
+              - generic: Extra columns (comma-separated)
+              - generic [ref=f2e81]:
+                - textbox [ref=f2e117]
+                - group:
+                  - generic: Extra columns (comma-separated)
+          - generic [ref=f2e83] [cursor=pointer]:
+            - checkbox [checked] [ref=f2e118]
+            - generic [ref=f2e88]: Latest row per symbol
+          - button [ref=f2e119] [cursor=pointer]: Scan
+        - generic [ref=f2e92]:
+          - heading [level=6] [ref=f2e120]: Results (0)
+          - paragraph [ref=f2e95]: No results
+  - listbox "Preset scanner" [ref=f2e123]:
+    - 'option "backtest_010: PI Channel — Below Lower Band (dip)" [active] [ref=f2e124] [cursor=pointer]'
+    - 'option "backtest_010: PI Channel — Above Upper Band (extended)" [ref=f2e125] [cursor=pointer]'
+    - 'option "backtest_010: PI Channel — Bullish Slope" [ref=f2e126] [cursor=pointer]'
+    - 'option "backtest_012: G-FRAMA — Bullish Cloud (Blue)" [ref=f2e127] [cursor=pointer]'
+    - 'option "backtest_012: G-FRAMA — Bearish Cloud (Red)" [ref=f2e128] [cursor=pointer]'
+    - 'option "backtest_012: G-FRAMA Breakout Combo (Blue + above band + HBO bullish)" [ref=f2e129] [cursor=pointer]'
+    - 'option "backtest_012: Hull Butterfly Oscillator Bullish" [ref=f2e130] [cursor=pointer]'
+    - 'option "backtest_012: ATR Trailing-Stop Exit Watch" [ref=f2e131] [cursor=pointer]'

@@ -5,6 +5,7 @@ import talib
 from app.services.indicators.trailing_sl import trailing_sl
 from app.services.indicators.smart_money_flow import smart_money_flow
 from app.services.indicators.markov_kama_regime import markov_kama_regime
+from app.services.indicators.vwap import avwap as compute_avwap
 
 import numba
 @numba.njit
@@ -130,6 +131,7 @@ class BreakoutTTMV1StrategyBT(Strategy):
     v1 — TTM squeeze + positive momentum breakout, fully gated by KAMA flat slope.
     Best params: Total Return 417.87%, Sortino 1.053
     """
+    avwap_window          = 200
     # BB
     bb_period             = 15
     bb_multiplier         = 1.0
@@ -156,6 +158,7 @@ class BreakoutTTMV1StrategyBT(Strategy):
         close = np.asarray(self.data.Close, dtype=np.float64)
         high  = np.asarray(self.data.High,  dtype=np.float64)
         low   = np.asarray(self.data.Low,   dtype=np.float64)
+        vol   = np.asarray(self.data.Volume, dtype=np.float64)
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
@@ -186,6 +189,7 @@ class BreakoutTTMV1StrategyBT(Strategy):
         self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
 
         regime, low_var_prob, high_var_prob, regime_trend, _ = markov_kama_regime(close)
+        avwap_line = compute_avwap(close, high, low, vol, is_highest=False, window=self.avwap_window)
 
         self.I(_identity, ttms,              name='TTMS',        overlay=False, color='#4fc3f7')
         self.I(_identity, kama,              name='KAMA',        overlay=True,  color='#f7c59f')
@@ -196,6 +200,7 @@ class BreakoutTTMV1StrategyBT(Strategy):
         # self.I(_identity, regime_trend,      name='MK Trend', overlay=False, color='#9c27b0')
         self.I(_identity, self.buy_signal.astype(float), name='Buy Signal', overlay=False, color='blue')
         self.I(_identity, self.atr_trail,    name='ATR Trail',   overlay=True,  color='red')
+        self.I(_identity, avwap_line,        name='AVWAP',       overlay=True,  color='#00bcd4')
 
     def next(self):
         idx = len(self.data.Close) - 1
@@ -223,6 +228,7 @@ class BreakoutTTMV1bStrategyBT(Strategy):
     (price is above the trailing line, confirming uptrend at entry).
     TTM/BB/KC/KAMA/exit params match V1 (same optimization sweep).
     """
+    avwap_window          = 50
     # BB
     bb_period             = 23
     bb_multiplier         = 1.2
@@ -249,6 +255,7 @@ class BreakoutTTMV1bStrategyBT(Strategy):
         close = np.asarray(self.data.Close, dtype=np.float64)
         high  = np.asarray(self.data.High,  dtype=np.float64)
         low   = np.asarray(self.data.Low,   dtype=np.float64)
+        vol   = np.asarray(self.data.Volume, dtype=np.float64)
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
@@ -277,6 +284,7 @@ class BreakoutTTMV1bStrategyBT(Strategy):
         self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
 
         regime, low_var_prob, high_var_prob, regime_trend, _ = markov_kama_regime(close)
+        avwap_line = compute_avwap(close, high, low, vol, is_highest=False, window=self.avwap_window)
 
         # Entry: same as V1 + price must be above ATR trailing (uptrend confirmed)
         above_trail = close > self.atr_trail
@@ -293,6 +301,7 @@ class BreakoutTTMV1bStrategyBT(Strategy):
         # self.I(_identity, regime_trend,       name='MK Trend', overlay=False, color='#9c27b0')
         self.I(_identity, self.buy_signal.astype(float), name='Buy Signal',  overlay=False, color='blue')
         self.I(_identity, self.atr_trail,     name='ATR Trail',  overlay=True,  color='red')
+        self.I(_identity, avwap_line,         name='AVWAP',      overlay=True,  color='#00bcd4')
 
     def next(self):
         idx = len(self.data.Close) - 1
@@ -325,6 +334,7 @@ class BreakoutTTMV1cStrategyBT(Strategy):
 
     TTM/BB/KC/KAMA/exit params match V1; SMF params from same optimization sweep.
     """
+    avwap_window          = 200
     # BB
     bb_period             = 23
     bb_multiplier         = 1.2
@@ -428,8 +438,11 @@ class BreakoutTTMV1cStrategyBT(Strategy):
         # self.I(_identity, low_var_prob,             name='MK Low Var Prob', overlay=False, color='#22c55e')
         # self.I(_identity, high_var_prob,            name='MK High Var Prob', overlay=False, color='#ef4444')
         # self.I(_identity, regime_trend,             name='MK Trend', overlay=False, color='#9c27b0')
+        avwap_line = compute_avwap(close, high, low, vol, is_highest=False, window=self.avwap_window)
+
         self.I(_identity, self.buy_signal.astype(float), name='Buy Signal', overlay=False, color='blue')
         self.I(_identity, self.atr_trail,           name='ATR Trail',   overlay=True,  color='red')
+        self.I(_identity, avwap_line,               name='AVWAP',       overlay=True,  color='#00bcd4')
 
     def next(self):
         idx = len(self.data.Close) - 1
@@ -460,6 +473,7 @@ class BreakoutTTMV2StrategyBT(Strategy):
     v2 — Momentum zero-cross breakout, fully gated by KAMA flat slope.
     Best params: Total Return 441.00%, Sortino 0.997
     """
+    avwap_window          = 200
     # BB
     bb_period             = 15
     bb_multiplier         = 1.3
@@ -488,6 +502,7 @@ class BreakoutTTMV2StrategyBT(Strategy):
         close = np.asarray(self.data.Close, dtype=np.float64)
         high  = np.asarray(self.data.High,  dtype=np.float64)
         low   = np.asarray(self.data.Low,   dtype=np.float64)
+        vol   = np.asarray(self.data.Volume, dtype=np.float64)
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
@@ -526,12 +541,14 @@ class BreakoutTTMV2StrategyBT(Strategy):
         atr_exit       = talib.ATR(high, low, close, timeperiod=self.atr_period)
         self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
         self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
+        avwap_line     = compute_avwap(close, high, low, vol, is_highest=False, window=self.avwap_window)
 
         self.I(_identity, ttms,              name='TTMS',       overlay=False, color='#4fc3f7')
         self.I(_identity, kama,              name='KAMA',       overlay=True,  color='#f7c59f')
         self.I(_identity, flat.astype(float),name='KAMA Flat',  overlay=False, color='#3ddc84')
         self.I(_identity, self.buy_signal.astype(float), name='Buy Signal', overlay=False, color='blue')
         self.I(_identity, self.atr_trail,    name='ATR Trail',  overlay=True,  color='red')
+        self.I(_identity, avwap_line,        name='AVWAP',      overlay=True,  color='#00bcd4')
 
     def next(self):
         idx = len(self.data.Close) - 1
@@ -561,6 +578,7 @@ class BreakoutTTMV3StrategyBT(Strategy):
       WVF (volatility spike / contrarian) — no KAMA filter
     Best params: Total Return 422.02%, Sortino 1.028
     """
+    avwap_window          = 200
     # BB
     bb_period             = 10
     bb_multiplier         = 1.2
@@ -573,24 +591,19 @@ class BreakoutTTMV3StrategyBT(Strategy):
     donichan_period       = 14
     osc_smoothing_period  = 15
     # Exit
-    atr_period            = 11
-    atr_multiplier        = 2.6
+    atr_period            = 18
+    atr_multiplier        = 1.9
     low_stop_lookback     = 5
     # entry_2 threshold
     consecutive_neg_threshold = 4
     # WVF
-    william_vix_period    = 17
-    # KAMA slope filter (entry_1 only)
-    kama_period           = 16
-    kama_fast             = 5
-    kama_slow             = 39
-    kama_slope_win        = 5
-    flat_threshold_pct    = 1.8
+    william_vix_period    = 20
 
     def init(self):
         close = np.asarray(self.data.Close, dtype=np.float64)
         high  = np.asarray(self.data.High,  dtype=np.float64)
         low   = np.asarray(self.data.Low,   dtype=np.float64)
+        vol   = np.asarray(self.data.Volume, dtype=np.float64)
 
         bb_upper, _, bb_lower = talib.BBANDS(
             close, timeperiod=self.bb_period,
@@ -609,18 +622,8 @@ class BreakoutTTMV3StrategyBT(Strategy):
         squeeze_diff = bb_upper - kc_upper
         consec_neg   = consecutive_bar_ttm_np(ttms)
 
-        kama = kama_1d(close, self.kama_period, self.kama_fast, self.kama_slow)
-        flat = slope_flat_1d(kama, self.kama_slope_win, self.flat_threshold_pct)
-
-        # entry_1: breakout on squeeze release — KAMA gated
+        # entry_1: bottom fishing — no KAMA filter
         entry_1 = (
-            (shift_numba(squeeze_diff, 1) < 0)
-            & (squeeze_diff > 0)
-            & (ttms > 0)
-            & flat
-        )
-        # entry_2: bottom fishing — no KAMA filter
-        entry_2 = (
             (shift_numba(squeeze_diff, 1) < 0)
             & (squeeze_diff > 0)
             & (consec_neg > self.consecutive_neg_threshold)
@@ -632,20 +635,19 @@ class BreakoutTTMV3StrategyBT(Strategy):
             bbl=self.bb_period, lb=20, ph=0.85, ltLB=33, mtLB=10, strength_str=1,
         )
 
-        self.buy_signal = entry_1 | entry_2 | wvf_entry
+        self.buy_signal = entry_1 | wvf_entry
 
         atr_exit       = talib.ATR(high, low, close, timeperiod=self.atr_period)
         self.atr_trail = trailing_sl(close, atr_exit, atr_multiplier=self.atr_multiplier)
         self.low_sl    = talib.MIN(low, timeperiod=self.low_stop_lookback)
+        avwap_line     = compute_avwap(close, high, low, vol, is_highest=False, window=self.avwap_window)
 
         self.I(_identity, ttms,               name='TTMS',       overlay=False, color='#4fc3f7')
         self.I(_identity, wvf,                name='WVF',        overlay=False, color='#f7c59f')
-        self.I(_identity, kama,               name='KAMA',       overlay=True,  color='#ffe082')
-        self.I(_identity, flat.astype(float), name='KAMA Flat',  overlay=False, color='#3ddc84')
-        self.I(_identity, entry_1.astype(float), name='Entry 1 (Breakout)', overlay=False, color='blue')
-        self.I(_identity, entry_2.astype(float), name='Entry 2 (Bottom)',   overlay=False, color='purple')
-        self.I(_identity, wvf_entry.astype(float), name='Entry 3 (WVF)',    overlay=False, color='orange')
+        self.I(_identity, entry_1.astype(float), name='Entry 1 (Bottom)',   overlay=False, color='purple')
+        self.I(_identity, wvf_entry.astype(float), name='Entry 2 (WVF)',    overlay=False, color='orange')
         self.I(_identity, self.atr_trail,     name='ATR Trail',  overlay=True,  color='red')
+        self.I(_identity, avwap_line,         name='AVWAP',      overlay=True,  color='#00bcd4')
 
     def next(self):
         idx = len(self.data.Close) - 1
@@ -668,6 +670,7 @@ class BreakoutTTMV3StrategyBT(Strategy):
 
 # ── Legacy class (kept for backward compatibility) ────────────────────────────
 class BreakoutTTMStrategyBT(Strategy):
+    avwap_window = 200
     bb_period = 10
     bb_multiplier = 1.8
     kc_period = 14
@@ -683,6 +686,7 @@ class BreakoutTTMStrategyBT(Strategy):
         close = np.asarray(self.data.Close.round(2), dtype=np.float64)
         high = np.asarray(self.data.High.round(2), dtype=np.float64)
         low = np.asarray(self.data.Low.round(2), dtype=np.float64)
+        vol = np.asarray(self.data.Volume, dtype=np.float64)
 
         ## Squeeze
         bb_indicator = talib.BBANDS(close, timeperiod=self.bb_period, nbdevup=self.bb_multiplier, nbdevdn=self.bb_multiplier, matype=self.matype)
@@ -743,8 +747,11 @@ class BreakoutTTMStrategyBT(Strategy):
         # self.I(_identity, low_var_prob, name='MK Low Var Prob', overlay=False, color='#22c55e')
         # self.I(_identity, high_var_prob, name='MK High Var Prob', overlay=False, color='#ef4444')
         # self.I(_identity, regime_trend, name='MK Trend', overlay=False, color='#9c27b0')
+        avwap_line = compute_avwap(close, high, low, vol, is_highest=False, window=self.avwap_window)
+
         self.I(_identity, self.buy_signal, name='Buy Signal', overlay=False, color='blue')
         self.I(_identity, self.atr_trailing, name='ATR Trailing Stop', overlay=True, color='red')
+        self.I(_identity, avwap_line,        name='AVWAP',             overlay=True, color='#00bcd4')
 
         ## Max low stoploss
         self.lowest_low = talib.MIN(low, timeperiod=self.donichan_period)

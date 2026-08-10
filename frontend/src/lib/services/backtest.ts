@@ -137,6 +137,7 @@ export interface BacktestPlotResponse {
   strategy: string;
   html: string;
   stats?: Record<string, unknown> | null;
+  params?: Record<string, unknown> | null;
 }
 
 // Fetch available symbols from watchlist
@@ -215,5 +216,26 @@ export const useBacktestPlot = (symbol: string, startDate?: string, strategy?: s
     queryFn: () => fetchBacktestPlot(symbol, startDate, strategy),
     staleTime: 5 * 60 * 1000,
     gcTime: 30 * 60 * 1000,
+  });
+};
+
+// Fetch the ordered list of strategies available on the visualisation page
+export const fetchBacktestPlotStrategies = async (): Promise<string[]> => {
+  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/backtest/plot/strategies`);
+
+  if (!response.ok) {
+    throw new Error(`Error ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+};
+
+// Hook to get available plot strategies (backend is the source of truth)
+export const useBacktestPlotStrategies = () => {
+  return useQuery({
+    queryKey: ['backtest-plot-strategies'],
+    queryFn: fetchBacktestPlotStrategies,
+    staleTime: 30 * 60 * 1000,
+    gcTime: 60 * 60 * 1000,
   });
 };

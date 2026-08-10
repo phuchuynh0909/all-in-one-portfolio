@@ -12,7 +12,6 @@
     "APH",
     "ASM",
     "BAF",
-    "BCG",
     "BCM",
     "BFC",
     "BID",
@@ -64,7 +63,6 @@
     "GEG",
     "GEX",
     "GIL",
-    "GKM",
     "GMD",
     "GVR",
     "HAG",
@@ -89,7 +87,6 @@
     "IDI",
     "IDJ",
     "IJC",
-    "ITA",
     "KBC",
     "KDC",
     "KDH",
@@ -128,7 +125,6 @@
     "PLX",
     "PNJ",
     "POW",
-    "PSH",
     "PTB",
     "PVB",
     "PVC",
@@ -195,12 +191,10 @@
     "QTP",
     "KSV",
     "LHG",
-    "VNINDEX",
-    "VN30",
-    "PAT",
     "STK",
     "PAC",
-    "TLG"
+    "TLG",
+    "TCX"
   ]
 }
 

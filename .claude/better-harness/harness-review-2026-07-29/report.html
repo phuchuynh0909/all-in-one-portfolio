@@ -1,0 +1,586 @@
+<!doctype html>
+<html lang="en" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="generator" content="better-harness codex-html">
+  <title>Harness Insights · all-in-one-portfolio</title>
+  <style>
+    :root { color-scheme: dark; --bg:#111315; --panel:#1a1d20; --panel-2:#21252a; --line:#31363d; --text:#f5f7fa; --muted:#9aa3ad; --blue:#6cb8ff; --blue-2:#1b6ca8; --orange:#ff9a5a; --green:#53d69b; --red:#ff6b6b; }
+    * { box-sizing:border-box; }
+    html { background:var(--bg); scroll-behavior:smooth; }
+    body { margin:0; min-width:320px; font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; color:var(--text); background:radial-gradient(circle at 12% -10%,#22364a 0,transparent 34rem),var(--bg); line-height:1.55; }
+    .sr-only { position:absolute!important; width:1px!important; height:1px!important; padding:0!important; margin:-1px!important; overflow:hidden!important; clip:rect(0,0,0,0)!important; white-space:nowrap!important; border:0!important; }
+    body::before { content:""; position:fixed; inset:0; pointer-events:none; opacity:.22; background-image:linear-gradient(rgba(255,255,255,.025) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.025) 1px,transparent 1px); background-size:28px 28px; }
+    main { position:relative; width:min(1180px,calc(100% - 40px)); margin:0 auto; padding:52px 0 88px; }
+    h1,h2,h3,p { margin-top:0; }
+    .eyebrow,.label { color:var(--blue); font-size:12px; font-weight:700; letter-spacing:.11em; text-transform:uppercase; }
+    .hero { display:grid; grid-template-columns:minmax(0,1fr) 190px; gap:36px; align-items:end; min-height:270px; padding:42px; border:1px solid var(--line); border-radius:28px; background:linear-gradient(135deg,rgba(36,43,51,.96),rgba(21,24,27,.94)); box-shadow:0 28px 70px rgba(0,0,0,.28); }
+    .hero h1 { margin:12px 0 10px; font-size:clamp(42px,7vw,82px); line-height:.96; letter-spacing:-.055em; }
+    .hero p { max-width:760px; margin-bottom:22px; color:#c9d0d8; font-size:18px; }
+    .hero-tags { display:flex; flex-wrap:wrap; gap:8px; }
+    .score-orbit { width:174px; aspect-ratio:1; display:grid; place-content:center; text-align:center; border:14px solid #343a41; border-top-color:var(--blue); border-right-color:var(--blue-2); border-radius:50%; background:#1a2026; box-shadow:inset 0 0 0 1px var(--line); }
+    .score-orbit strong { font-size:44px; line-height:1; }
+    .score-orbit span { width:110px; margin-top:7px; color:var(--muted); font-size:12px; }
+    .pill { display:inline-flex; align-items:center; min-height:26px; padding:3px 10px; border-radius:999px; color:#d4dae0; background:#30353b; font-size:12px; font-weight:700; }
+    .pill.accent { color:#c9e8ff; background:#164e75; }.pill.good { color:#c9f9e5; background:#165c43; }.pill.warning { color:#ffe1c8; background:#754322; }.pill.danger { color:#ffd4d4; background:#762e31; }.pill.muted,.pill.neutral { color:#c8cdd3; background:#34383d; }
+    .metrics { display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin:18px 0 54px; }
+    .metric { min-height:126px; padding:22px 24px; border:1px solid var(--line); border-radius:20px; background:rgba(30,34,38,.9); }
+    .metric span,.metric small { display:block; color:var(--muted); }.metric strong { display:block; margin:5px 0 2px; font-size:34px; line-height:1.1; }.metric small { font-size:12px; }
+    .section { margin-top:64px; scroll-margin-top:24px; }.section-heading { display:flex; justify-content:space-between; gap:30px; align-items:end; margin-bottom:20px; }.section-heading h2 { margin:5px 0 0; font-size:30px; letter-spacing:-.025em; }.section-heading > p { max-width:420px; margin:0; color:var(--muted); text-align:right; font-size:14px; }
+    .dimension-grid { display:grid; grid-template-columns:repeat(5,minmax(0,1fr)); gap:12px; }.dimension-card { min-height:230px; padding:19px; border:1px solid var(--line); border-radius:19px; background:linear-gradient(180deg,var(--panel-2),var(--panel)); }.dimension-top { display:flex; min-height:52px; justify-content:space-between; gap:8px; align-items:flex-start; font-weight:700; }.score-line { display:flex; align-items:baseline; gap:4px; margin-top:14px; }.score-line strong { font-size:34px; }.score-line span { color:var(--muted); font-size:12px; }.track { height:8px; margin:8px 0 16px; overflow:hidden; border-radius:999px; background:#30353a; }.track i { display:block; height:100%; border-radius:inherit; background:linear-gradient(90deg,var(--blue-2),var(--blue)); }.dimension-card p { margin:0; color:var(--muted); font-size:13px; }
+    .activity-layout { display:grid; grid-template-columns:minmax(0,1.8fr) minmax(230px,.7fr); gap:14px; }.activity-panel,.subpanel,.finding,.custom-grid article,.evidence-grid,.evidence-note { border:1px solid var(--line); border-radius:19px; background:var(--panel); }.activity-panel { padding:22px; overflow:hidden; }.heatmap { display:grid; grid-template-rows:repeat(7,13px); grid-auto-flow:column; grid-auto-columns:13px; gap:4px; min-height:115px; overflow-x:auto; padding-bottom:8px; }.heat-cell { border-radius:3px; background:#2b3035; }.heat-cell.l1{background:#174d70}.heat-cell.l2{background:#206f9e}.heat-cell.l3{background:#319bd1}.heat-cell.l4{background:#70c9ff}.heat-legend { display:flex; justify-content:space-between; color:var(--muted); font-size:11px; }.stacked-metrics { display:grid; gap:14px; }.stacked-metrics .metric { min-height:0; }
+    .two-column { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-top:14px; }.subpanel { padding:22px; }.subpanel h3 { font-size:15px; }.usage-list { display:grid; gap:12px; }.usage-row { display:grid; grid-template-columns:minmax(100px,.75fr) 1fr 52px; gap:12px; align-items:center; font-size:12px; }.usage-row > span { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }.usage-row i { height:7px; overflow:hidden; border-radius:999px; background:#30353a; }.usage-row b { display:block; height:100%; background:linear-gradient(90deg,var(--blue-2),var(--blue)); }.usage-row strong { text-align:right; }
+    .finding-list { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }.finding-card { min-width:0; min-height:220px; display:flex; flex-direction:column; padding:18px; border:1px solid var(--line); border-radius:19px; background:linear-gradient(180deg,#1c2329,var(--panel)); }.finding-card-main { display:grid; gap:10px; }.finding-meta { display:flex; flex-wrap:wrap; gap:7px; }.finding-card h3 { min-height:2.8em; margin:0; display:-webkit-box; overflow:hidden; font-size:17px; line-height:1.4; -webkit-box-orient:vertical; -webkit-line-clamp:2; }.finding-preview { margin:0; color:#c7ced6; display:-webkit-box; overflow:hidden; font-size:13px; line-height:1.55; -webkit-box-orient:vertical; -webkit-line-clamp:2; }.finding-actions,.dialog-actions { display:flex; flex-wrap:wrap; justify-content:space-between; gap:10px; margin-top:auto; padding-top:16px; }.action-button { min-height:38px; padding:8px 13px; border:1px solid transparent; border-radius:10px; color:var(--text); background:#30363d; font:inherit; font-size:13px; font-weight:700; cursor:pointer; }.action-button:hover { filter:brightness(1.12); }.action-button:focus-visible { outline:2px solid var(--blue); outline-offset:2px; }.action-button.secondary { color:#cceaff; border-color:#286d9b; background:#164e75; }.action-button.ghost { color:#d4dae0; border-color:var(--line); background:transparent; }.finding-dialog,.manual-copy-dialog { width:min(880px,calc(100vw - 32px)); max-height:calc(100vh - 32px); overflow:auto; padding:24px; border:1px solid var(--line); border-radius:20px; color:var(--text); background:var(--panel); box-shadow:0 30px 90px rgba(0,0,0,.55); }.finding-dialog::backdrop,.manual-copy-dialog::backdrop { background:rgba(4,8,12,.72); }.dialog-heading { display:flex; justify-content:space-between; gap:18px; align-items:flex-start; }.dialog-heading h3 { margin:6px 0 0; font-size:24px; }.dialog-section { margin-top:18px; }.dialog-section p { margin:7px 0 0; color:#d1d7de; }.dialog-section ol,.dialog-section ul { margin:8px 0 0; padding-left:22px; color:#d1d7de; }.manual-copy-dialog textarea { width:100%; min-height:260px; margin-top:14px; padding:14px; resize:vertical; border:1px solid var(--line); border-radius:12px; color:var(--text); background:#11161b; font:13px/1.5 ui-monospace,SFMono-Regular,Consolas,monospace; }.no-js .finding-actions,.no-js .manual-copy-dialog { display:none!important; }.no-js .finding-dialog:not([open]) { display:block; position:static; width:auto; max-height:none; margin-top:16px; box-shadow:none; }
+    .suggestion-block { margin-top:28px; padding-top:24px; border-top:1px solid var(--line); }.suggestion-heading { display:flex; justify-content:space-between; gap:20px; align-items:end; margin-bottom:14px; }.suggestion-heading h3 { margin:4px 0 0; font-size:20px; }.suggestion-heading p { margin:0; color:var(--muted); font-size:12px; }.suggestion-list { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:12px; }.suggestion { padding:18px; border:1px solid var(--line); border-radius:17px; background:linear-gradient(180deg,#1b252d,var(--panel)); }.suggestion-top { display:flex; justify-content:space-between; gap:8px; }.suggestion h3 { margin:13px 0 7px; font-size:16px; }.suggestion > p { color:#c7ced6; font-size:13px; }.suggestion dl { display:grid; gap:9px; margin:14px 0 0; }.suggestion dl div { display:grid; gap:2px; }.suggestion dt { color:var(--muted); font-size:11px; font-weight:700; letter-spacing:.08em; text-transform:uppercase; }.suggestion dd { margin:0; color:#d7dde4; font-size:12px; }
+    .custom-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; }.custom-grid article { display:flex; gap:14px; align-items:center; padding:18px; }.custom-grid h3 { margin:0; font-size:15px; }.custom-grid p { margin:3px 0 0; color:var(--muted); font-size:12px; }.custom-mark { display:grid; flex:0 0 38px; aspect-ratio:1; place-content:center; border-radius:12px; color:#d9efff; background:#164e75; font-weight:800; }
+    .evidence-grid { display:grid; grid-template-columns:repeat(3,1fr); overflow:hidden; }.evidence-grid div { padding:20px; border-right:1px solid var(--line); border-bottom:1px solid var(--line); }.evidence-grid span,.evidence-grid strong { display:block; }.evidence-grid span { color:var(--muted); font-size:12px; }.evidence-grid strong { margin-top:4px; }.evidence-note { margin-top:14px; padding:20px; }.method-note,.empty { color:var(--muted); }.method-note { max-width:800px; margin:18px 0 0; font-size:13px; }
+    footer { margin-top:64px; padding-top:20px; border-top:1px solid var(--line); color:var(--muted); font-size:12px; }
+    @media (max-width:1000px) { .finding-list{grid-template-columns:repeat(2,minmax(0,1fr))} }
+    @media (max-width:900px) { .metrics,.dimension-grid{grid-template-columns:repeat(2,1fr)}.activity-layout,.two-column{grid-template-columns:1fr}.evidence-grid{grid-template-columns:repeat(2,1fr)} }
+    @media (max-width:680px) { .finding-list{grid-template-columns:1fr}.finding-card{min-height:0} }
+    @media (max-width:620px) { main{width:min(100% - 24px,1180px);padding-top:18px}.hero{grid-template-columns:1fr;min-height:0;padding:25px;border-radius:22px}.hero h1{font-size:44px}.hero p{font-size:15px}.score-orbit{width:126px}.score-orbit strong{font-size:34px}.metrics{grid-template-columns:1fr;margin-bottom:42px}.metric{min-height:0}.section{margin-top:46px}.section-heading,.suggestion-heading{display:block}.section-heading > p,.suggestion-heading > p{text-align:left;margin-top:8px}.dimension-grid{grid-template-columns:1fr}.dimension-card{min-height:0}.evidence-grid{grid-template-columns:1fr}.usage-row{grid-template-columns:minmax(92px,.7fr) 1fr 44px}.finding-dialog{padding:18px}.dialog-heading{display:grid} }
+    @media print { :root{color-scheme:light;--bg:#fff;--panel:#fff;--panel-2:#f6f8fa;--line:#d8dee4;--text:#111;--muted:#59636e}body{background:#fff}body::before{display:none}.hero{box-shadow:none}.section{break-inside:avoid}.finding-list{display:block}.finding-card{margin-bottom:16px;break-inside:avoid}.finding-actions,.dialog-actions,.manual-copy-dialog{display:none!important}.finding-dialog:not([open]){display:block!important;position:static;width:auto;max-height:none;margin-top:16px;box-shadow:none} }
+  </style>
+</head>
+<body>
+<div id="copy-status" class="sr-only" role="status" aria-live="polite"></div>
+<main id="harness-report" data-report-mode="codex-html">
+<header class="hero" data-section="overview">
+    <div class="hero-copy">
+      <span class="eyebrow">Harness Insights · Codex HTML</span>
+      <h1>all-in-one-portfolio</h1>
+      <p>The project runs well and starts cleanly through its Makefile and compose files, but an agent working here has no owned way to prove a change is safe and no enforced boundary around the live trading credentials on disk: a reproduction script carries working DNSE API keys in a git-visible path, there is no verify command, the changed price and indicator math has no test, and the only agent configuration is two machine-local permission files that no reviewer can see.</p>
+      <div class="hero-tags"><span class="pill accent">agent-work-loop-v4</span><span class="pill muted">Evidence-bound</span></div>
+    </div>
+    <div class="score-orbit"><strong>5</strong><span>reviewed dimensions</span></div>
+  </header>
+  <div class="metrics">
+    <div class="metric">
+    <span>Loop Effectiveness</span>
+    <strong>35 / 100</strong>
+    <small>Changes after later task outcomes</small>
+  </div>
+    <div class="metric">
+    <span>Asset Health / Repair Progress</span>
+    <strong>0 / 100</strong>
+    <small>0 verified · 0 partial · 11 pending</small>
+  </div>
+    <div class="metric">
+    <span>Sessions analyzed</span>
+    <strong>0 / 0</strong>
+    
+  </div>
+    <div class="metric">
+    <span>Findings</span>
+    <strong>11</strong>
+    <small>4 High · 5 Medium</small>
+  </div>
+  </div>
+  <section class="section" data-section="fluency" aria-labelledby="section-fluency">
+    <div class="section-heading">
+      <div><span class="eyebrow">01 · Readiness</span><h2 id="section-fluency">Five-dimension fluency</h2></div>
+      <p>Scores and states come from the reviewed source.</p>
+    </div>
+    <div class="dimension-grid">
+    <article class="dimension-card" data-dimension-id="task-understanding">
+        <div class="dimension-top"><span>Task Understanding</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>42</strong><span>/ 100</span></div>
+        <div class="track" aria-label="Task Understanding 42 of 100"><i style="width:42%"></i></div>
+        <p>The one entry document describes a different system than the code, and no scoped instruction corrects it; two change surfaces (a vendored gitlink and agent scratch output) sit outside the reviewable boundary.</p>
+      </article>
+<article class="dimension-card" data-dimension-id="controlled-execution">
+        <div class="dimension-top"><span>Controlled Execution</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>34</strong><span>/ 100</span></div>
+        <div class="track" aria-label="Controlled Execution 34 of 100"><i style="width:34%"></i></div>
+        <p>Container startup and service routes are declared and reachable, but no supported verify route exists, and the permission surface is an append-only allow list with no deny rules and no gate over live credentials and a production deploy path.</p>
+      </article>
+<article class="dimension-card" data-dimension-id="change-validation">
+        <div class="dimension-top"><span>Change Validation</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>32</strong><span>/ 100</span></div>
+        <div class="track" aria-label="Change Validation 32 of 100"><i style="width:32%"></i></div>
+        <p>Type checking is genuinely exercised, but nothing covers behavior: the changed quote and indicator functions are pure, untested, and the reviewed window contains no check bound to a change.</p>
+      </article>
+<article class="dimension-card" data-dimension-id="reliable-delivery">
+        <div class="dimension-top"><span>Reliable Delivery</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>28</strong><span>/ 100</span></div>
+        <div class="track" aria-label="Reliable Delivery 28 of 100"><i style="width:28%"></i></div>
+        <p>No review, CI, or merge boundary exists to accept a change, the reviewed change-bearing episode closed at an assistant handoff, and no rollback is bound to the new externally dependent path.</p>
+      </article>
+<article class="dimension-card" data-dimension-id="learning-capture">
+        <div class="dimension-top"><span>Learning Capture</span><span class="pill muted">Reviewed</span></div>
+        <div class="score-line"><strong>38</strong><span>/ 100</span></div>
+        <div class="track" aria-label="Learning Capture 38 of 100"><i style="width:38%"></i></div>
+        <p>A bounded review completed and found one supported knowledge demand — the vendored trading-agents integration boundary, re-supplied by hand in two independent contexts — with no durable owner to route it to.</p>
+      </article>
+  </div>
+  </section>
+  
+  <section class="section" data-section="findings" aria-labelledby="section-findings">
+    <div class="section-heading">
+      <div><span class="eyebrow">03 · Action</span><h2 id="section-findings">Findings and recommendations</h2></div>
+      <p>11 findings · 0 suggestions</p>
+    </div>
+    <div class="finding-list"><article class="finding-card" data-finding-id="credentials-in-reproduction-script">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill danger">High</span>
+          <span class="pill neutral">Controlled Execution</span>
+        </div>
+        <h3>Working DNSE trading-API credentials sit in a git-visible file with nothing between them and a push</h3>
+        <p class="finding-preview">Fact: `testing/test_dnse_api.py` hardcodes an API key and secret whose values match the `DNSE_API_KEY` / `DNSE_API_SECRET` entries in `.env` and `prod.env`; `git check-ignore` exits non-zero for that path, `testing/` already tracks nine files, and no commit-time gate exists (no non-sample hook in `.git/hooks`, no `.github` workflow). The env files themselves are correctly ignored — the exposure is this one script. Inference: a single `git add -A &amp;&amp; git commit &amp;&amp; git push` would place live credentials in remote history permanently. Owner: `.gitignore` plus the script itself, which should read from the environment. Uncertainty: whether the credentials are still valid upstream was not tested, and no evidence indicates they have already been committed. Provider scope: repository state, verified statically; nothing was executed.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="credentials-in-reproduction-script" aria-label="Copy AI Fix: Working DNSE trading-API credentials sit in a git-visible file with nothing between them and a push">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-1" aria-label="View details: Working DNSE trading-API credentials sit in a git-visible file with nothing between them and a push">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-1" data-finding-dialog-id="credentials-in-reproduction-script" aria-labelledby="finding-dialog-1-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-1-title">Working DNSE trading-API credentials sit in a git-visible file with nothing between them and a push</h3></div>
+          <span class="pill danger">High</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: `testing/test_dnse_api.py` hardcodes an API key and secret whose values match the `DNSE_API_KEY` / `DNSE_API_SECRET` entries in `.env` and `prod.env`; `git check-ignore` exits non-zero for that path, `testing/` already tracks nine files, and no commit-time gate exists (no non-sample hook in `.git/hooks`, no `.github` workflow). The env files themselves are correctly ignored — the exposure is this one script. Inference: a single `git add -A &amp;&amp; git commit &amp;&amp; git push` would place live credentials in remote history permanently. Owner: `.gitignore` plus the script itself, which should read from the environment. Uncertainty: whether the credentials are still valid upstream was not tested, and no evidence indicates they have already been committed. Provider scope: repository state, verified statically; nothing was executed.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Give the next developer a repository where the live trading credentials exist only in ignored env files, and a commit-time gate that refuses a staged credential literal.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>`git check-ignore -q testing/test_dnse_api.py` exits 0, or the file no longer contains any credential literal</li><li>Staging a file that contains a base64 JWT-shaped API key literal makes the commit-time gate exit non-zero; staging the same file with the literal removed exits 0</li><li>`git log -S` over the credential pattern confirms no historical commit contains it</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="credentials-in-reproduction-script" aria-label="Copy AI Fix: Working DNSE trading-API credentials sit in a git-visible file with nothing between them and a push">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-1">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="no-verify-entrypoint">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill danger">High</span>
+          <span class="pill neutral">Controlled Execution</span>
+        </div>
+        <h3>No command can refute a change, and the obvious one calls a live trading API with no assertions</h3>
+        <p class="finding-preview">Fact: the `Makefile` exposes only docker lifecycle targets (build/up/down/logs/clean/prod-*) with no test, lint, or typecheck target; `frontend/package.json` declares `dev`, `build`, `lint`, `preview` and no test runner in devDependencies; `backend/pytest.ini` sets only `asyncio_mode=auto` with no `testpaths`, and no root pytest/pyproject config fences collection. `testing/test_dnse_api.py` performs its signed HTTP request at module import and only prints, so it contains no assertion. The project permission list preserves the residue of hand-rolled checks (`npx tsc`, an absolute-path `tsc --noEmit`, `vite build`, timed `curl` against a local endpoint), which is where the verification procedure currently lives. Inference: `pytest` from the repo root is the discoverable default and would execute that live call while always reporting success. Owner: `Makefile` for one `verify` target, `backend/pytest.ini` for `testpaths = tests`. Uncertainty: exact root-`pytest` collection behavior was not executed, per the read-only boundary.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="no-verify-entrypoint" aria-label="Copy AI Fix: No command can refute a change, and the obvious one calls a live trading API with no assertions">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-2" aria-label="View details: No command can refute a change, and the obvious one calls a live trading API with no assertions">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-2" data-finding-dialog-id="no-verify-entrypoint" aria-labelledby="finding-dialog-2-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-2-title">No command can refute a change, and the obvious one calls a live trading API with no assertions</h3></div>
+          <span class="pill danger">High</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: the `Makefile` exposes only docker lifecycle targets (build/up/down/logs/clean/prod-*) with no test, lint, or typecheck target; `frontend/package.json` declares `dev`, `build`, `lint`, `preview` and no test runner in devDependencies; `backend/pytest.ini` sets only `asyncio_mode=auto` with no `testpaths`, and no root pytest/pyproject config fences collection. `testing/test_dnse_api.py` performs its signed HTTP request at module import and only prints, so it contains no assertion. The project permission list preserves the residue of hand-rolled checks (`npx tsc`, an absolute-path `tsc --noEmit`, `vite build`, timed `curl` against a local endpoint), which is where the verification procedure currently lives. Inference: `pytest` from the repo root is the discoverable default and would execute that live call while always reporting success. Owner: `Makefile` for one `verify` target, `backend/pytest.ini` for `testpaths = tests`. Uncertainty: exact root-`pytest` collection behavior was not executed, per the read-only boundary.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Give an agent finishing a change one named command that can fail, and that never touches a live external API.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>`make verify` exits 0 on a clean tree</li><li>Temporarily inverting an assertion in `backend/tests/test_health.py` makes `make verify` exit non-zero</li><li>`make verify` with networking disabled still completes, proving it makes no outbound call</li><li>`pytest` from the repository root no longer collects `testing/test_dnse_api.py`</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="no-verify-entrypoint" aria-label="Copy AI Fix: No command can refute a change, and the obvious one calls a live trading API with no assertions">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-2">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="changed-price-math-has-no-test">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill danger">High</span>
+          <span class="pill neutral">Change Validation</span>
+        </div>
+        <h3>The quote and indicator functions changed in this work are pure, untested, and can regress prices silently</h3>
+        <p class="finding-preview">Fact: the current change set adds four pure decision points — `_pick_trade` (board priority G1/G7/G4, put-through boards discarded) and `_to_quote` (a reported 0 mapped to &quot;not reported&quot;) in `backend/app/services/dnse_client.py`, `isVnMarketSession` (hardcoded GMT+7, inclusive 15:00 bound) in `frontend/src/lib/services/quote.ts`, and in-browser indicator math moved into `frontend/src/lib/tv/studies.ts` — while `backend/tests/` contains only a health check and the front end has no test runner at all (643 source files against 8 test files; 0 test files for JavaScript/TypeScript). `frontend/src/components/chart/StockChart.tsx` is the repository&#39;s top churn hotspot and is changed again here. Inference: a wrong board selection, a real 0 treated as a price, or an off-by-one session bound would change displayed prices and indicator values with no failing check anywhere. Uncertainty: no wrong value was observed; the confirmed defect is the absence of a verifier, not a known bug. Owner: `backend/tests/` for the two Python functions, `frontend/package.json` for the missing runner.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="changed-price-math-has-no-test" aria-label="Copy AI Fix: The quote and indicator functions changed in this work are pure, untested, and can regress prices silently">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-3" aria-label="View details: The quote and indicator functions changed in this work are pure, untested, and can regress prices silently">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-3" data-finding-dialog-id="changed-price-math-has-no-test" aria-labelledby="finding-dialog-3-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-3-title">The quote and indicator functions changed in this work are pure, untested, and can regress prices silently</h3></div>
+          <span class="pill danger">High</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: the current change set adds four pure decision points — `_pick_trade` (board priority G1/G7/G4, put-through boards discarded) and `_to_quote` (a reported 0 mapped to &quot;not reported&quot;) in `backend/app/services/dnse_client.py`, `isVnMarketSession` (hardcoded GMT+7, inclusive 15:00 bound) in `frontend/src/lib/services/quote.ts`, and in-browser indicator math moved into `frontend/src/lib/tv/studies.ts` — while `backend/tests/` contains only a health check and the front end has no test runner at all (643 source files against 8 test files; 0 test files for JavaScript/TypeScript). `frontend/src/components/chart/StockChart.tsx` is the repository&#39;s top churn hotspot and is changed again here. Inference: a wrong board selection, a real 0 treated as a price, or an off-by-one session bound would change displayed prices and indicator values with no failing check anywhere. Uncertainty: no wrong value was observed; the confirmed defect is the absence of a verifier, not a known bug. Owner: `backend/tests/` for the two Python functions, `frontend/package.json` for the missing runner.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Give the next change to price selection or session bounds a check that fails when the numbers are wrong.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>The new tests pass, and each fails when its asserted branch is deliberately inverted</li><li>The full run completes with networking disabled and no DNSE credentials present</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="changed-price-math-has-no-test" aria-label="Copy AI Fix: The quote and indicator functions changed in this work are pure, untested, and can regress prices silently">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-3">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="allow-only-permission-surface">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill danger">High</span>
+          <span class="pill neutral">Controlled Execution</span>
+        </div>
+        <h3>The agent permission surface grants shell wildcards over live credentials and the production deploy path with no deny rule and no gate</h3>
+        <p class="finding-preview">Fact: the project permission file contains `permissions.allow` only — 51 entries, no `deny` block — and the asset baseline reports `enabledHookCount: 0`, so no PreToolUse gate exists as a second layer. Among the pre-approved patterns are `Bash(python3:*)` and `Bash(python3 -)` (arbitrary code whose payload never appears in a permission decision), `Bash(xargs cat)` while `.env` and `prod.env` sit unencrypted in the tree, and `Bash(docker compose *)` while `docker-compose.prod.yml` and the Makefile&#39;s `prod-up` / `prod-down` targets are present. Inference: a secret read or a production mutation can occur with no prompt and no audit record. Uncertainty: whether any such action actually happened is unobserved — runtime use was outside the reviewed authority, and both permission files are machine-local and git-ignored, so no reviewer has ever seen this surface. Owner: a git-tracked `.claude/settings.json` carrying `permissions.deny`.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="allow-only-permission-surface" aria-label="Copy AI Fix: The agent permission surface grants shell wildcards over live credentials and the production deploy path with no deny rule and no gate">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-4" aria-label="View details: The agent permission surface grants shell wildcards over live credentials and the production deploy path with no deny rule and no gate">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-4" data-finding-dialog-id="allow-only-permission-surface" aria-labelledby="finding-dialog-4-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-4-title">The agent permission surface grants shell wildcards over live credentials and the production deploy path with no deny rule and no gate</h3></div>
+          <span class="pill danger">High</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: the project permission file contains `permissions.allow` only — 51 entries, no `deny` block — and the asset baseline reports `enabledHookCount: 0`, so no PreToolUse gate exists as a second layer. Among the pre-approved patterns are `Bash(python3:*)` and `Bash(python3 -)` (arbitrary code whose payload never appears in a permission decision), `Bash(xargs cat)` while `.env` and `prod.env` sit unencrypted in the tree, and `Bash(docker compose *)` while `docker-compose.prod.yml` and the Makefile&#39;s `prod-up` / `prod-down` targets are present. Inference: a secret read or a production mutation can occur with no prompt and no audit record. Uncertainty: whether any such action actually happened is unobserved — runtime use was outside the reviewed authority, and both permission files are machine-local and git-ignored, so no reviewer has ever seen this surface. Owner: a git-tracked `.claude/settings.json` carrying `permissions.deny`.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Give the repository one reviewable file that states which actions an agent may never take here, instead of an invisible per-machine allow list.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>`git ls-files .claude` lists `settings.json`, and its `permissions.deny` is non-empty</li><li>A `Read` of `prod.env` is refused rather than auto-approved</li><li>An attempted production compose command is refused rather than auto-approved</li><li>An `Edit` under `vendor/` is refused</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="allow-only-permission-surface" aria-label="Copy AI Fix: The agent permission surface grants shell wildcards over live credentials and the production deploy path with no deny rule and no gate">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-4">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="quote-path-emits-no-diagnostics">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill warning">Medium</span>
+          <span class="pill neutral">Change Validation</span>
+        </div>
+        <h3>When the live price stops updating, nothing distinguishes missing credentials from a filtered board or an empty upstream</h3>
+        <p class="finding-preview">Fact: in `backend/app/services/dnse_client.py` the 503 unconfigured-credential exit and the 404 `No recent trade` exit both return without emitting a log line, so `_pick_trade` discarding every put-through board is indistinguishable from an empty upstream payload; `backend/app/main.py` middleware logs only method, path, status and duration, and no request id is generated or propagated; no `logger.add` or `logger.configure` exists in `backend/app` or `worker`, so loguru writes to default stderr reachable only through `make backend-logs`, which no document names as the debug route. On the client, the poll in `frontend/src/lib/tv/datafeed.ts` ends in a bare `catch` commented &quot;transient&quot;, which swallows a permanent 503 and retries silently every interval. Inference: the failure narrative above is read from source, not observed — no request was run. Owner: `dnse_client.py` for the two silent exits and the discarded-board reason; `main.py` middleware for the missing correlation id.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="quote-path-emits-no-diagnostics" aria-label="Copy AI Fix: When the live price stops updating, nothing distinguishes missing credentials from a filtered board or an empty upstream">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-5" aria-label="View details: When the live price stops updating, nothing distinguishes missing credentials from a filtered board or an empty upstream">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-5" data-finding-dialog-id="quote-path-emits-no-diagnostics" aria-labelledby="finding-dialog-5-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-5-title">When the live price stops updating, nothing distinguishes missing credentials from a filtered board or an empty upstream</h3></div>
+          <span class="pill warning">Medium</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: in `backend/app/services/dnse_client.py` the 503 unconfigured-credential exit and the 404 `No recent trade` exit both return without emitting a log line, so `_pick_trade` discarding every put-through board is indistinguishable from an empty upstream payload; `backend/app/main.py` middleware logs only method, path, status and duration, and no request id is generated or propagated; no `logger.add` or `logger.configure` exists in `backend/app` or `worker`, so loguru writes to default stderr reachable only through `make backend-logs`, which no document names as the debug route. On the client, the poll in `frontend/src/lib/tv/datafeed.ts` ends in a bare `catch` commented &quot;transient&quot;, which swallows a permanent 503 and retries silently every interval. Inference: the failure narrative above is read from source, not observed — no request was run. Owner: `dnse_client.py` for the two silent exits and the discarded-board reason; `main.py` middleware for the missing correlation id.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Give whoever debugs a frozen live price one log line that names which of the three causes occurred.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>A `TestClient` request to the quote route with the HTTP client stubbed to a put-through-only payload returns 404 and emits a captured log record naming the discarded boards</li><li>The same route with an empty configured API key returns 503 and emits a captured record</li><li>Both cases run with no credentials and no network access</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="quote-path-emits-no-diagnostics" aria-label="Copy AI Fix: When the live price stops updating, nothing distinguishes missing credentials from a filtered board or an empty upstream">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-5">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="readme-describes-different-system">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill warning">Medium</span>
+          <span class="pill neutral">Task Understanding</span>
+        </div>
+        <h3>The repository&#39;s only entry document describes a different system than the code</h3>
+        <p class="finding-preview">Fact: `README.md` documents a PostgreSQL financial-schema tool with psql and import steps and mentions no test, lint, verify, npm, or make route, while `backend/requirements.txt` declares FastAPI and no Django dependency exists anywhere in the tree. The static profiler inherited that framing: it named the project after the README heading, detected `django` at medium confidence, and ranked `frontend/src/lib/tv/index.ts` above `backend/app/main.py` as the entry candidate. No scoped agent instruction file exists to correct it (no `CLAUDE.md`, no `AGENTS.md` at any depth inspected). Inference: an agent orienting from the repository&#39;s own documents is routed to the wrong stack; that the mismatch actually misdirected specific work was not established from session evidence in this lane. Owner: `README.md`.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="readme-describes-different-system" aria-label="Copy AI Fix: The repository&#39;s only entry document describes a different system than the code">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-6" aria-label="View details: The repository&#39;s only entry document describes a different system than the code">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-6" data-finding-dialog-id="readme-describes-different-system" aria-labelledby="finding-dialog-6-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-6-title">The repository&#39;s only entry document describes a different system than the code</h3></div>
+          <span class="pill warning">Medium</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: `README.md` documents a PostgreSQL financial-schema tool with psql and import steps and mentions no test, lint, verify, npm, or make route, while `backend/requirements.txt` declares FastAPI and no Django dependency exists anywhere in the tree. The static profiler inherited that framing: it named the project after the README heading, detected `django` at medium confidence, and ranked `frontend/src/lib/tv/index.ts` above `backend/app/main.py` as the entry candidate. No scoped agent instruction file exists to correct it (no `CLAUDE.md`, no `AGENTS.md` at any depth inspected). Inference: an agent orienting from the repository&#39;s own documents is routed to the wrong stack; that the mismatch actually misdirected specific work was not established from session evidence in this lane. Owner: `README.md`.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Give a newcomer or an agent a first document that names the real stack, the real entry points, and the command that checks a change.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>A reader following only `README.md` can name the backend framework and start the stack without opening source</li><li>Re-running the project profile no longer reports `django` as a detected framework</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="readme-describes-different-system" aria-label="Copy AI Fix: The repository&#39;s only entry document describes a different system than the code">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-6">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="vendor-gitlink-unreviewable">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill warning">Medium</span>
+          <span class="pill neutral">Task Understanding</span>
+        </div>
+        <h3>Edits inside the vendored trading-agents package never appear in a repository diff, and a fresh clone cannot initialize it</h3>
+        <p class="finding-preview">Fact: `git ls-files -s vendor` reports mode 160000 for `vendor/TradingAgents` — a gitlink — while `.gitmodules` does not exist, and the package is loaded into the backend through a `sys.path` shim. No instruction asset claims the vendored boundary. Inference: a change to code that computes trading signals shows in the super-repo only as a dirty submodule pointer, so it can ship unreviewed; and a fresh clone cannot reproduce the directory at all, so agent-run verification there diverges from the developer machine. Uncertainty: whether an agent has in fact modified `vendor/` is unobserved.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="vendor-gitlink-unreviewable" aria-label="Copy AI Fix: Edits inside the vendored trading-agents package never appear in a repository diff, and a fresh clone cannot initialize it">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-7" aria-label="View details: Edits inside the vendored trading-agents package never appear in a repository diff, and a fresh clone cannot initialize it">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-7" data-finding-dialog-id="vendor-gitlink-unreviewable" aria-labelledby="finding-dialog-7-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-7-title">Edits inside the vendored trading-agents package never appear in a repository diff, and a fresh clone cannot initialize it</h3></div>
+          <span class="pill warning">Medium</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: `git ls-files -s vendor` reports mode 160000 for `vendor/TradingAgents` — a gitlink — while `.gitmodules` does not exist, and the package is loaded into the backend through a `sys.path` shim. No instruction asset claims the vendored boundary. Inference: a change to code that computes trading signals shows in the super-repo only as a dirty submodule pointer, so it can ship unreviewed; and a fresh clone cannot reproduce the directory at all, so agent-run verification there diverges from the developer machine. Uncertainty: whether an agent has in fact modified `vendor/` is unobserved.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Make every change to third-party trading logic either visible in a diff or impossible.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>`test -f .gitmodules` passes and names `vendor/TradingAgents`</li><li>`git submodule status` reports the same commit currently recorded by `git ls-files -s vendor`</li><li>An edit attempt under `vendor/` is refused by the deny rule</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="vendor-gitlink-unreviewable" aria-label="Copy AI Fix: Edits inside the vendored trading-agents package never appear in a repository diff, and a fresh clone cannot initialize it">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-7">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="no-durable-owner-for-integration-context">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill warning">Medium</span>
+          <span class="pill neutral">Learning Capture</span>
+        </div>
+        <h3>The vendored integration boundary is re-supplied by hand each time instead of living in the project</h3>
+        <p class="finding-preview">Fact: in two Task Episodes from independent context groups in the reviewed 30-day window, the user&#39;s own prompt carried the architecture briefing the agent needed — the backend stack, that the trading-agents package is vendored and resolved through a `sys.path` shim, where to look for the runner, and a demand for exact function signatures and return shapes — and each episode still spent its trace re-reading source (34 and 9 classified reads). One ended with a change and no check; the other ended with no change. Project-scope agent assets are zero and no `CLAUDE.md` or `AGENTS.md` exists, so there is no durable owner for that boundary. Inference: the demand is knowledge-shaped, not procedure-shaped. No Skill is proposed: the two episodes share no ordered procedure, verifier, or stop rule, so procedure demand is unsupported and the correct first owner is project documentation. Uncertainty: two episodes is the minimum threshold, prompt text was redacted to summaries, and whether the two targeted the same module could not be confirmed. Provider scope: `claude` session evidence only.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="no-durable-owner-for-integration-context" aria-label="Copy AI Fix: The vendored integration boundary is re-supplied by hand each time instead of living in the project">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-8" aria-label="View details: The vendored integration boundary is re-supplied by hand each time instead of living in the project">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-8" data-finding-dialog-id="no-durable-owner-for-integration-context" aria-labelledby="finding-dialog-8-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-8-title">The vendored integration boundary is re-supplied by hand each time instead of living in the project</h3></div>
+          <span class="pill warning">Medium</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: in two Task Episodes from independent context groups in the reviewed 30-day window, the user&#39;s own prompt carried the architecture briefing the agent needed — the backend stack, that the trading-agents package is vendored and resolved through a `sys.path` shim, where to look for the runner, and a demand for exact function signatures and return shapes — and each episode still spent its trace re-reading source (34 and 9 classified reads). One ended with a change and no check; the other ended with no change. Project-scope agent assets are zero and no `CLAUDE.md` or `AGENTS.md` exists, so there is no durable owner for that boundary. Inference: the demand is knowledge-shaped, not procedure-shaped. No Skill is proposed: the two episodes share no ordered procedure, verifier, or stop rule, so procedure demand is unsupported and the correct first owner is project documentation. Uncertainty: two episodes is the minimum threshold, prompt text was redacted to summaries, and whether the two targeted the same module could not be confirmed. Provider scope: `claude` session evidence only.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Stop the user from re-typing the same architecture briefing before work on the vendored package can start.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>`git ls-files CLAUDE.md` lists the file</li><li>The named shim path, adapter module, and signature location each resolve to a file that exists</li><li>A later task against the vendored package proceeds without the user restating the architecture; that comparison is the effectiveness check and cannot be claimed until it happens</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="no-durable-owner-for-integration-context" aria-label="Copy AI Fix: The vendored integration boundary is re-supplied by hand each time instead of living in the project">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-8">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="delivery-closes-without-relevant-check">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill warning">Medium</span>
+          <span class="pill neutral">Reliable Delivery</span>
+        </div>
+        <h3>Work reaches &quot;done&quot; with no acceptance boundary — no review, no required check, no recorded decision</h3>
+        <p class="finding-preview">Fact: no `.github`, `.gitlab-ci.yml`, or `.circleci` directory exists, `.git/hooks` holds only samples, and no merge or review gate was found; in the reviewed window the one change-bearing Task Episode closed as changed-without-check and ended at an assistant handoff, and no episode contains a check bound to its own change. The two checks that do appear are passing type checks in episodes that changed nothing. Inference: the only signal that work is complete is the agent saying so, which cannot be distinguished from unfinished or wrong work. Uncertainty: the reviewed portfolio is truncated and its population contains 75 change-bearing episodes that were not individually reviewed, so the per-episode fact must not be scaled to all of them; provider scope is `claude` only. Owner: a required check trigger bound to the change, once a verify command exists.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="delivery-closes-without-relevant-check" aria-label="Copy AI Fix: Work reaches &quot;done&quot; with no acceptance boundary — no review, no required check, no recorded decision">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-9" aria-label="View details: Work reaches &quot;done&quot; with no acceptance boundary — no review, no required check, no recorded decision">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-9" data-finding-dialog-id="delivery-closes-without-relevant-check" aria-labelledby="finding-dialog-9-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-9-title">Work reaches &quot;done&quot; with no acceptance boundary — no review, no required check, no recorded decision</h3></div>
+          <span class="pill warning">Medium</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: no `.github`, `.gitlab-ci.yml`, or `.circleci` directory exists, `.git/hooks` holds only samples, and no merge or review gate was found; in the reviewed window the one change-bearing Task Episode closed as changed-without-check and ended at an assistant handoff, and no episode contains a check bound to its own change. The two checks that do appear are passing type checks in episodes that changed nothing. Inference: the only signal that work is complete is the agent saying so, which cannot be distinguished from unfinished or wrong work. Uncertainty: the reviewed portfolio is truncated and its population contains 75 change-bearing episodes that were not individually reviewed, so the per-episode fact must not be scaled to all of them; provider scope is `claude` only. Owner: a required check trigger bound to the change, once a verify command exists.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Give a finished change one recorded decision that is not the agent&#39;s own statement that it is done.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>The trigger runs `make verify` and blocks on a non-zero exit</li><li>A deliberately failing test prevents the delivery step from completing</li><li>The route is recorded in `README.md` so a second person can reproduce it</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="delivery-closes-without-relevant-check" aria-label="Copy AI Fix: Work reaches &quot;done&quot; with no acceptance boundary — no review, no required check, no recorded decision">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-9">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="divergent-scoped-permission-files">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill neutral">Low</span>
+          <span class="pill neutral">Controlled Execution</span>
+        </div>
+        <h3>Two directory-scoped permission files disagree, and one carries a malformed path pattern</h3>
+        <p class="finding-preview">Fact: `.claude/settings.local.json` (51 allow entries) and `worker/.claude/settings.local.json` (9 entries) diverge — the root allows `Bash(python3:*)` while the nested file instead allows `Bash(python *)`, `Bash(python3 -c &#39; *)` and `Bash(python3 -)` — and the nested file re-grants workspace-wide read access from a subdirectory scope using a pattern with a doubled leading slash. Inference: that malformed pattern either over-grants the whole workspace from a nested scope or never matches; both are wrong and neither is visible to anyone, because both files are git-ignored. Uncertainty: effective precedence and whether the malformed pattern matches were not executed. Owner: consolidate into the single tracked `.claude/settings.json`.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="divergent-scoped-permission-files" aria-label="Copy AI Fix: Two directory-scoped permission files disagree, and one carries a malformed path pattern">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-10" aria-label="View details: Two directory-scoped permission files disagree, and one carries a malformed path pattern">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-10" data-finding-dialog-id="divergent-scoped-permission-files" aria-labelledby="finding-dialog-10-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-10-title">Two directory-scoped permission files disagree, and one carries a malformed path pattern</h3></div>
+          <span class="pill neutral">Low</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: `.claude/settings.local.json` (51 allow entries) and `worker/.claude/settings.local.json` (9 entries) diverge — the root allows `Bash(python3:*)` while the nested file instead allows `Bash(python *)`, `Bash(python3 -c &#39; *)` and `Bash(python3 -)` — and the nested file re-grants workspace-wide read access from a subdirectory scope using a pattern with a doubled leading slash. Inference: that malformed pattern either over-grants the whole workspace from a nested scope or never matches; both are wrong and neither is visible to anyone, because both files are git-ignored. Uncertainty: effective precedence and whether the malformed pattern matches were not executed. Owner: consolidate into the single tracked `.claude/settings.json`.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Make one command mean one permission decision, wherever the agent happens to start.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>Exactly one `.claude/settings*.json` file remains outside machine-local scope, and it is tracked</li><li>The same command resolves to the same decision from the repository root and from `worker/`</li><li>No remaining path pattern contains a doubled leading slash</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="divergent-scoped-permission-files" aria-label="Copy AI Fix: Two directory-scoped permission files disagree, and one carries a malformed path pattern">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-10">Close</button>
+        </div>
+      </dialog>
+    </article>
+<article class="finding-card" data-finding-id="agent-scratch-output-in-change-set">
+      <div class="finding-card-main">
+        <div class="finding-meta">
+          <span class="pill neutral">Low</span>
+          <span class="pill neutral">Task Understanding</span>
+        </div>
+        <h3>Browser-automation scratch output is committed and inflates the change set a reviewer must read</h3>
+        <p class="finding-preview">Fact: `.playwright-mcp/` is not ignored; console log and page snapshot files from earlier sessions are already tracked, and four more untracked ones from the current session account for 4 of the 15 files in the current change set. They are the sole trigger for a documentation-drift signal in the change analysis, which asked for README updates about a Playwright dump. Inference: agent tool output accumulates in history and distorts both human review and the automated change signal. Owner: `.gitignore`, plus removal of the already-tracked files.</p>
+      </div>
+      <div class="finding-actions">
+        <button type="button" class="action-button secondary" data-copy-finding="agent-scratch-output-in-change-set" aria-label="Copy AI Fix: Browser-automation scratch output is committed and inflates the change set a reviewer must read">Copy AI Fix</button>
+        <button type="button" class="action-button ghost" data-view-finding-dialog="finding-dialog-11" aria-label="View details: Browser-automation scratch output is committed and inflates the change set a reviewer must read">View details</button>
+      </div>
+      <dialog class="finding-dialog" id="finding-dialog-11" data-finding-dialog-id="agent-scratch-output-in-change-set" aria-labelledby="finding-dialog-11-title">
+        <div class="dialog-heading">
+          <div><span class="label">Finding details</span><h3 id="finding-dialog-11-title">Browser-automation scratch output is committed and inflates the change set a reviewer must read</h3></div>
+          <span class="pill neutral">Low</span>
+        </div>
+        <div class="dialog-section"><span class="label">Cause</span><p>Fact: `.playwright-mcp/` is not ignored; console log and page snapshot files from earlier sessions are already tracked, and four more untracked ones from the current session account for 4 of the 15 files in the current change set. They are the sole trigger for a documentation-drift signal in the change analysis, which asked for README updates about a Playwright dump. Inference: agent tool output accumulates in history and distorts both human review and the automated change signal. Owner: `.gitignore`, plus removal of the already-tracked files.</p></div>
+        <div class="dialog-section"><span class="label">Expected Output</span><ol><li>Keep agent scratch output out of commits so a reviewer only reads real changes.</li></ol></div>
+        <div class="dialog-section"><span class="label">Acceptance Checks</span><ul><li>`git check-ignore -q .playwright-mcp` exits 0</li><li>`git ls-files .playwright-mcp` returns nothing</li><li>Re-running the change analysis reports 11 changed files instead of 15, and the documentation-drift signal triggered by those files is gone</li></ul></div>
+        <div class="dialog-actions">
+          <button type="button" class="action-button secondary" data-copy-finding="agent-scratch-output-in-change-set" aria-label="Copy AI Fix: Browser-automation scratch output is committed and inflates the change set a reviewer must read">Copy AI Fix</button>
+          <button type="button" class="action-button ghost" data-close-finding-dialog="finding-dialog-11">Close</button>
+        </div>
+      </dialog>
+    </article></div>
+  </section>
+  <section class="section" data-section="customize" aria-labelledby="section-customize">
+    <div class="section-heading">
+      <div><span class="eyebrow">04 · Capability</span><h2 id="section-customize">Agent Customize</h2></div>
+      <p>Inspected project and authorized host surfaces.</p>
+    </div>
+    <div class="custom-grid"><article><span class="custom-mark">R</span><div><h3>Rules</h3><p>Project · 0</p></div></article><article><span class="custom-mark">H</span><div><h3>Hooks</h3><p>Project · 0</p></div></article></div>
+  </section>
+  <section class="section" data-section="methodology" aria-labelledby="section-methodology">
+    <div class="section-heading">
+      <div><span class="eyebrow">05 · Boundary</span><h2 id="section-methodology">Evidence and methodology</h2></div>
+      <p>Reader-safe evidence only.</p>
+    </div>
+    <div class="evidence-grid"><div><span>Evidence mode</span><strong>—</strong></div><div><span>Task episodes</span><strong>0</strong></div><div><span>Edited episodes</span><strong>0</strong></div><div><span>Sampling</span><strong>0 / 0</strong></div><div><span>Confidence</span><strong>—</strong></div><div><span>Learning state</span><strong>—</strong></div></div>
+    
+    <p class="method-note">Activity totals describe volume, not quality or savings. Fluency conclusions come from the reviewed task sample and remain bounded by the retained evidence.</p>
+  </section>
+<footer>Generated from one reviewed Harness source · self-contained Codex HTML</footer>
+</main>
+<dialog id="manual-copy-dialog" class="manual-copy-dialog" aria-labelledby="manual-copy-title" aria-describedby="manual-copy-description">
+  <div class="dialog-heading">
+    <div>
+      <span class="label">Manual fallback</span>
+      <h3 id="manual-copy-title">Copy the AI Fix prompt</h3>
+    </div>
+  </div>
+  <p id="manual-copy-description">Automatic copy was blocked. The exact prompt is selected below.</p>
+  <textarea id="manual-copy-text" readonly aria-label="AI Fix prompt"></textarea>
+  <div class="dialog-actions">
+    <button type="button" class="action-button ghost" data-close-finding-dialog="manual-copy-dialog">Close</button>
+  </div>
+</dialog>
+<script id="harness-report-data" type="application/json">{"mode":"html","language":"en","dataPath":"/private/tmp/claude-501/-Users-phuchuynh-Work-all-in-one-portfolio/a5ddef2e-421d-44cb-9b65-138d8a0cdbd6/scratchpad/bh-run/findings.json","target":{"name":"all-in-one-portfolio","path":"/Users/phuchuynh/Work/all-in-one-portfolio"},"summary":{"projectName":"all-in-one-portfolio","locale":"en","modelId":"agent-work-loop-v4","reportContractVersion":25,"overview":"The project runs well and starts cleanly through its Makefile and compose files, but an agent working here has no owned way to prove a change is safe and no enforced boundary around the live trading credentials on disk: a reproduction script carries working DNSE API keys in a git-visible path, there is no verify command, the changed price and indicator math has no test, and the only agent configuration is two machine-local permission files that no reviewer can see.","dimensions":[{"id":"task-understanding","label":"Task Understanding","score":42,"summary":"The one entry document describes a different system than the code, and no scoped instruction corrects it; two change surfaces (a vendored gitlink and agent scratch output) sit outside the reviewable boundary.","findingRefs":["readme-describes-different-system","vendor-gitlink-unreviewable","no-durable-owner-for-integration-context","agent-scratch-output-in-change-set"]},{"id":"controlled-execution","label":"Controlled Execution","score":34,"summary":"Container startup and service routes are declared and reachable, but no supported verify route exists, and the permission surface is an append-only allow list with no deny rules and no gate over live credentials and a production deploy path.","findingRefs":["credentials-in-reproduction-script","no-verify-entrypoint","allow-only-permission-surface","divergent-scoped-permission-files"]},{"id":"change-validation","label":"Change Validation","score":32,"summary":"Type checking is genuinely exercised, but nothing covers behavior: the changed quote and indicator functions are pure, untested, and the reviewed window contains no check bound to a change.","findingRefs":["no-verify-entrypoint","changed-price-math-has-no-test","quote-path-emits-no-diagnostics"]},{"id":"reliable-delivery","label":"Reliable Delivery","score":28,"summary":"No review, CI, or merge boundary exists to accept a change, the reviewed change-bearing episode closed at an assistant handoff, and no rollback is bound to the new externally dependent path.","findingRefs":["allow-only-permission-surface","delivery-closes-without-relevant-check"]},{"id":"learning-capture","label":"Learning Capture","score":38,"summary":"A bounded review completed and found one supported knowledge demand — the vendored trading-agents integration boundary, re-supplied by hand in two independent contexts — with no durable owner to route it to.","findingRefs":["no-durable-owner-for-integration-context"]}],"aiAgentPractice":{"inspectedSurfaces":["Rules","Hooks"],"coverageRows":[{"surface":"Rules","scopes":["Project"],"count":0,"paths":[]},{"surface":"Hooks","scopes":["Project"],"count":0,"paths":[]}]},"assignmentSummaries":[]},"findings":[{"id":"credentials-in-reproduction-script","title":"Working DNSE trading-API credentials sit in a git-visible file with nothing between them and a push","severity":"High","reason":"Fact: `testing/test_dnse_api.py` hardcodes an API key and secret whose values match the `DNSE_API_KEY` / `DNSE_API_SECRET` entries in `.env` and `prod.env`; `git check-ignore` exits non-zero for that path, `testing/` already tracks nine files, and no commit-time gate exists (no non-sample hook in `.git/hooks`, no `.github` workflow). The env files themselves are correctly ignored — the exposure is this one script. Inference: a single `git add -A \u0026\u0026 git commit \u0026\u0026 git push` would place live credentials in remote history permanently. Owner: `.gitignore` plus the script itself, which should read from the environment. Uncertainty: whether the credentials are still valid upstream was not tested, and no evidence indicates they have already been committed. Provider scope: repository state, verified statically; nothing was executed.","dimensionRefs":["controlled-execution"],"aiFixPrompt":"/better-harness fix this issue\n\nRemove the embedded DNSE credential pair from `testing/test_dnse_api.py` so the script reads `DNSE_API_KEY` / `DNSE_API_SECRET` from the environment, add `testing/test_dnse_api.py` to `.gitignore` if the script stays local, and add one commit-time secret gate.\n\nRotation is a precondition and requires separate authorization: the key pair must be revoked and reissued in the DNSE developer console by the account owner before this repair is considered complete. Ignoring the file does not undo local exposure. Do not write to any external service as part of this fix.\n\n## Validation\n\n- `git check-ignore -q testing/test_dnse_api.py` exits 0, or the file no longer contains any credential literal\n- Staging a file that contains a base64 JWT-shaped API key literal makes the commit-time gate exit non-zero; staging the same file with the literal removed exits 0\n- `git log -S` over the credential pattern confirms no historical commit contains it","expectedArtifact":"Gate","expectedOutput":["Give the next developer a repository where the live trading credentials exist only in ignored env files, and a commit-time gate that refuses a staged credential literal."]},{"id":"no-verify-entrypoint","title":"No command can refute a change, and the obvious one calls a live trading API with no assertions","severity":"High","reason":"Fact: the `Makefile` exposes only docker lifecycle targets (build/up/down/logs/clean/prod-*) with no test, lint, or typecheck target; `frontend/package.json` declares `dev`, `build`, `lint`, `preview` and no test runner in devDependencies; `backend/pytest.ini` sets only `asyncio_mode=auto` with no `testpaths`, and no root pytest/pyproject config fences collection. `testing/test_dnse_api.py` performs its signed HTTP request at module import and only prints, so it contains no assertion. The project permission list preserves the residue of hand-rolled checks (`npx tsc`, an absolute-path `tsc --noEmit`, `vite build`, timed `curl` against a local endpoint), which is where the verification procedure currently lives. Inference: `pytest` from the repo root is the discoverable default and would execute that live call while always reporting success. Owner: `Makefile` for one `verify` target, `backend/pytest.ini` for `testpaths = tests`. Uncertainty: exact root-`pytest` collection behavior was not executed, per the read-only boundary.","dimensionRefs":["controlled-execution","change-validation"],"aiFixPrompt":"/better-harness fix this issue\n\nAdd a single `verify` target to the `Makefile` that runs the checks this project already owns — backend `pytest`, `npm run lint`, and `tsc --noEmit` — and set `testpaths = tests` in `backend/pytest.ini` so collection cannot reach `testing/`. Do not invent a runner or a script that does not exist; use only the commands present in `frontend/package.json` and the installed backend toolchain.\n\n## Validation\n\n- `make verify` exits 0 on a clean tree\n- Temporarily inverting an assertion in `backend/tests/test_health.py` makes `make verify` exit non-zero\n- `make verify` with networking disabled still completes, proving it makes no outbound call\n- `pytest` from the repository root no longer collects `testing/test_dnse_api.py`","expectedArtifact":"Command","expectedOutput":["Give an agent finishing a change one named command that can fail, and that never touches a live external API."]},{"id":"changed-price-math-has-no-test","title":"The quote and indicator functions changed in this work are pure, untested, and can regress prices silently","severity":"High","reason":"Fact: the current change set adds four pure decision points — `_pick_trade` (board priority G1/G7/G4, put-through boards discarded) and `_to_quote` (a reported 0 mapped to \"not reported\") in `backend/app/services/dnse_client.py`, `isVnMarketSession` (hardcoded GMT+7, inclusive 15:00 bound) in `frontend/src/lib/services/quote.ts`, and in-browser indicator math moved into `frontend/src/lib/tv/studies.ts` — while `backend/tests/` contains only a health check and the front end has no test runner at all (643 source files against 8 test files; 0 test files for JavaScript/TypeScript). `frontend/src/components/chart/StockChart.tsx` is the repository's top churn hotspot and is changed again here. Inference: a wrong board selection, a real 0 treated as a price, or an off-by-one session bound would change displayed prices and indicator values with no failing check anywhere. Uncertainty: no wrong value was observed; the confirmed defect is the absence of a verifier, not a known bug. Owner: `backend/tests/` for the two Python functions, `frontend/package.json` for the missing runner.","dimensionRefs":["change-validation"],"aiFixPrompt":"/better-harness fix this issue\n\nAdd table-driven tests for the pure decision points in the current change, using the test surfaces the project already has plus one front-end runner.\n\nBackend (`backend/tests/`, pytest is already configured): `_pick_trade` returns None when every trade is on a put-through board; prefers a G1 trade over a newer G7 trade; falls back to G7 only when G1 is absent. `_to_quote` maps `openPrice: 0` to None while preserving `matchPrice`.\n\nFront end: add one test runner to `frontend/package.json` and cover `isVnMarketSession` at Saturday, Sunday, 08:59, 09:00, 15:00 and 15:01 Vietnam time.\n\nEvery case must run offline with no credentials. Adding a dependency to `frontend/package.json` is the only new install; confirm it before proceeding.\n\n## Validation\n\n- The new tests pass, and each fails when its asserted branch is deliberately inverted\n- The full run completes with networking disabled and no DNSE credentials present","expectedArtifact":"Test","expectedOutput":["Give the next change to price selection or session bounds a check that fails when the numbers are wrong."]},{"id":"allow-only-permission-surface","title":"The agent permission surface grants shell wildcards over live credentials and the production deploy path with no deny rule and no gate","severity":"High","reason":"Fact: the project permission file contains `permissions.allow` only — 51 entries, no `deny` block — and the asset baseline reports `enabledHookCount: 0`, so no PreToolUse gate exists as a second layer. Among the pre-approved patterns are `Bash(python3:*)` and `Bash(python3 -)` (arbitrary code whose payload never appears in a permission decision), `Bash(xargs cat)` while `.env` and `prod.env` sit unencrypted in the tree, and `Bash(docker compose *)` while `docker-compose.prod.yml` and the Makefile's `prod-up` / `prod-down` targets are present. Inference: a secret read or a production mutation can occur with no prompt and no audit record. Uncertainty: whether any such action actually happened is unobserved — runtime use was outside the reviewed authority, and both permission files are machine-local and git-ignored, so no reviewer has ever seen this surface. Owner: a git-tracked `.claude/settings.json` carrying `permissions.deny`.","dimensionRefs":["controlled-execution","reliable-delivery"],"aiFixPrompt":"/better-harness fix this issue\n\nCreate a git-tracked `.claude/settings.json` with an explicit `permissions.deny` block covering the actions this repository must never take unprompted: reads of `.env` and `prod.env`, the production compose invocation and the `make prod-*` targets, and writes under `vendor/**`. Keep the existing machine-local allow entries where they are; this fix adds the missing deny layer rather than rewriting approvals.\n\nDo not add a hook that executes anything beyond a local check, and do not grant any new capability.\n\n## Validation\n\n- `git ls-files .claude` lists `settings.json`, and its `permissions.deny` is non-empty\n- A `Read` of `prod.env` is refused rather than auto-approved\n- An attempted production compose command is refused rather than auto-approved\n- An `Edit` under `vendor/` is refused","expectedArtifact":"Config","expectedOutput":["Give the repository one reviewable file that states which actions an agent may never take here, instead of an invisible per-machine allow list."]},{"id":"quote-path-emits-no-diagnostics","title":"When the live price stops updating, nothing distinguishes missing credentials from a filtered board or an empty upstream","severity":"Medium","reason":"Fact: in `backend/app/services/dnse_client.py` the 503 unconfigured-credential exit and the 404 `No recent trade` exit both return without emitting a log line, so `_pick_trade` discarding every put-through board is indistinguishable from an empty upstream payload; `backend/app/main.py` middleware logs only method, path, status and duration, and no request id is generated or propagated; no `logger.add` or `logger.configure` exists in `backend/app` or `worker`, so loguru writes to default stderr reachable only through `make backend-logs`, which no document names as the debug route. On the client, the poll in `frontend/src/lib/tv/datafeed.ts` ends in a bare `catch` commented \"transient\", which swallows a permanent 503 and retries silently every interval. Inference: the failure narrative above is read from source, not observed — no request was run. Owner: `dnse_client.py` for the two silent exits and the discarded-board reason; `main.py` middleware for the missing correlation id.","dimensionRefs":["change-validation"],"aiFixPrompt":"/better-harness fix this issue\n\nMake the two silent exits in `backend/app/services/dnse_client.py` attributable: log the unconfigured-credential case and the no-eligible-trade case, and in the latter record which boards were discarded. Have the client poll in `frontend/src/lib/tv/datafeed.ts` distinguish a configuration error from a transient one instead of swallowing every failure.\n\nLog no credential value, no signature, and no signing input.\n\n## Validation\n\n- A `TestClient` request to the quote route with the HTTP client stubbed to a put-through-only payload returns 404 and emits a captured log record naming the discarded boards\n- The same route with an empty configured API key returns 503 and emits a captured record\n- Both cases run with no credentials and no network access","expectedArtifact":"Code","expectedOutput":["Give whoever debugs a frozen live price one log line that names which of the three causes occurred."]},{"id":"readme-describes-different-system","title":"The repository's only entry document describes a different system than the code","severity":"Medium","reason":"Fact: `README.md` documents a PostgreSQL financial-schema tool with psql and import steps and mentions no test, lint, verify, npm, or make route, while `backend/requirements.txt` declares FastAPI and no Django dependency exists anywhere in the tree. The static profiler inherited that framing: it named the project after the README heading, detected `django` at medium confidence, and ranked `frontend/src/lib/tv/index.ts` above `backend/app/main.py` as the entry candidate. No scoped agent instruction file exists to correct it (no `CLAUDE.md`, no `AGENTS.md` at any depth inspected). Inference: an agent orienting from the repository's own documents is routed to the wrong stack; that the mismatch actually misdirected specific work was not established from session evidence in this lane. Owner: `README.md`.","dimensionRefs":["task-understanding"],"aiFixPrompt":"/better-harness fix this issue\n\nAdd a short accurate orientation section at the top of `README.md`: the real stack (FastAPI backend, React/Vite front end with the TradingView charting library, Prefect and bytewax workers, ClickHouse and Delta storage), the real entry points (`backend/app/main.py`, `frontend/src/main.tsx`), and the verify command once one exists. Keep the existing PostgreSQL schema documentation, but scope it to the part of the system it actually describes.\n\nState only facts discoverable in the repository; do not describe behavior you have not read.\n\n## Validation\n\n- A reader following only `README.md` can name the backend framework and start the stack without opening source\n- Re-running the project profile no longer reports `django` as a detected framework","expectedArtifact":"Document","expectedOutput":["Give a newcomer or an agent a first document that names the real stack, the real entry points, and the command that checks a change."]},{"id":"vendor-gitlink-unreviewable","title":"Edits inside the vendored trading-agents package never appear in a repository diff, and a fresh clone cannot initialize it","severity":"Medium","reason":"Fact: `git ls-files -s vendor` reports mode 160000 for `vendor/TradingAgents` — a gitlink — while `.gitmodules` does not exist, and the package is loaded into the backend through a `sys.path` shim. No instruction asset claims the vendored boundary. Inference: a change to code that computes trading signals shows in the super-repo only as a dirty submodule pointer, so it can ship unreviewed; and a fresh clone cannot reproduce the directory at all, so agent-run verification there diverges from the developer machine. Uncertainty: whether an agent has in fact modified `vendor/` is unobserved.","dimensionRefs":["task-understanding"],"aiFixPrompt":"/better-harness fix this issue\n\nMake the vendored dependency boundary explicit and reproducible: add a `.gitmodules` entry for `vendor/TradingAgents` recording its upstream URL and pinned commit so a fresh clone can initialize it, and state in the project instruction file that `vendor/` is externally owned and must not be edited in place.\n\nDiscover the upstream URL and current pinned commit from the repository before writing them; do not guess a remote. Do not run a submodule command that rewrites the pin.\n\n## Validation\n\n- `test -f .gitmodules` passes and names `vendor/TradingAgents`\n- `git submodule status` reports the same commit currently recorded by `git ls-files -s vendor`\n- An edit attempt under `vendor/` is refused by the deny rule","expectedArtifact":"Config","expectedOutput":["Make every change to third-party trading logic either visible in a diff or impossible."]},{"id":"no-durable-owner-for-integration-context","title":"The vendored integration boundary is re-supplied by hand each time instead of living in the project","severity":"Medium","reason":"Fact: in two Task Episodes from independent context groups in the reviewed 30-day window, the user's own prompt carried the architecture briefing the agent needed — the backend stack, that the trading-agents package is vendored and resolved through a `sys.path` shim, where to look for the runner, and a demand for exact function signatures and return shapes — and each episode still spent its trace re-reading source (34 and 9 classified reads). One ended with a change and no check; the other ended with no change. Project-scope agent assets are zero and no `CLAUDE.md` or `AGENTS.md` exists, so there is no durable owner for that boundary. Inference: the demand is knowledge-shaped, not procedure-shaped. No Skill is proposed: the two episodes share no ordered procedure, verifier, or stop rule, so procedure demand is unsupported and the correct first owner is project documentation. Uncertainty: two episodes is the minimum threshold, prompt text was redacted to summaries, and whether the two targeted the same module could not be confirmed. Provider scope: `claude` session evidence only.","dimensionRefs":["learning-capture","task-understanding"],"aiFixPrompt":"/better-harness fix this issue\n\nWrite the vendored trading-agents integration boundary down once, in a short root `CLAUDE.md` (or a file it links to): where the package lives, how the `sys.path` shim resolves it, which module owns the adapter contract, and where the data-adapter function signatures are defined. Keep it to facts an agent cannot safely infer, and link to the owning source files rather than restating their contents.\n\nDo not create a Skill, command, or hook for this — the reviewed demand is knowledge, not a repeatable procedure.\n\n## Validation\n\n- `git ls-files CLAUDE.md` lists the file\n- The named shim path, adapter module, and signature location each resolve to a file that exists\n- A later task against the vendored package proceeds without the user restating the architecture; that comparison is the effectiveness check and cannot be claimed until it happens","expectedArtifact":"Rule","expectedOutput":["Stop the user from re-typing the same architecture briefing before work on the vendored package can start."]},{"id":"delivery-closes-without-relevant-check","title":"Work reaches \"done\" with no acceptance boundary — no review, no required check, no recorded decision","severity":"Medium","reason":"Fact: no `.github`, `.gitlab-ci.yml`, or `.circleci` directory exists, `.git/hooks` holds only samples, and no merge or review gate was found; in the reviewed window the one change-bearing Task Episode closed as changed-without-check and ended at an assistant handoff, and no episode contains a check bound to its own change. The two checks that do appear are passing type checks in episodes that changed nothing. Inference: the only signal that work is complete is the agent saying so, which cannot be distinguished from unfinished or wrong work. Uncertainty: the reviewed portfolio is truncated and its population contains 75 change-bearing episodes that were not individually reviewed, so the per-episode fact must not be scaled to all of them; provider scope is `claude` only. Owner: a required check trigger bound to the change, once a verify command exists.","dimensionRefs":["reliable-delivery"],"aiFixPrompt":"/better-harness fix this issue\n\nBind the verify command to a moment that must happen before work is considered delivered. Prefer the smallest owned trigger the project can run locally — a pre-push git hook or a documented required step in `README.md` — over adding hosted CI, unless the user asks for it.\n\nAdding a hosted CI workflow, changing branch protection, or any other write to the git host requires separate authorization and is out of scope for this fix.\n\n## Validation\n\n- The trigger runs `make verify` and blocks on a non-zero exit\n- A deliberately failing test prevents the delivery step from completing\n- The route is recorded in `README.md` so a second person can reproduce it","expectedArtifact":"Gate","expectedOutput":["Give a finished change one recorded decision that is not the agent's own statement that it is done."]},{"id":"divergent-scoped-permission-files","title":"Two directory-scoped permission files disagree, and one carries a malformed path pattern","severity":"Low","reason":"Fact: `.claude/settings.local.json` (51 allow entries) and `worker/.claude/settings.local.json` (9 entries) diverge — the root allows `Bash(python3:*)` while the nested file instead allows `Bash(python *)`, `Bash(python3 -c ' *)` and `Bash(python3 -)` — and the nested file re-grants workspace-wide read access from a subdirectory scope using a pattern with a doubled leading slash. Inference: that malformed pattern either over-grants the whole workspace from a nested scope or never matches; both are wrong and neither is visible to anyone, because both files are git-ignored. Uncertainty: effective precedence and whether the malformed pattern matches were not executed. Owner: consolidate into the single tracked `.claude/settings.json`.","dimensionRefs":["controlled-execution"],"aiFixPrompt":"/better-harness fix this issue\n\nConsolidate the two directory-scoped permission files into the one git-tracked `.claude/settings.json`, correcting the doubled-slash read pattern, and remove `worker/.claude/settings.local.json` so gating no longer depends on the agent's working directory.\n\nMachine-local approvals may stay in the root `settings.local.json`; only shared policy moves into the tracked file.\n\n## Validation\n\n- Exactly one `.claude/settings*.json` file remains outside machine-local scope, and it is tracked\n- The same command resolves to the same decision from the repository root and from `worker/`\n- No remaining path pattern contains a doubled leading slash","expectedArtifact":"Config","expectedOutput":["Make one command mean one permission decision, wherever the agent happens to start."]},{"id":"agent-scratch-output-in-change-set","title":"Browser-automation scratch output is committed and inflates the change set a reviewer must read","severity":"Low","reason":"Fact: `.playwright-mcp/` is not ignored; console log and page snapshot files from earlier sessions are already tracked, and four more untracked ones from the current session account for 4 of the 15 files in the current change set. They are the sole trigger for a documentation-drift signal in the change analysis, which asked for README updates about a Playwright dump. Inference: agent tool output accumulates in history and distorts both human review and the automated change signal. Owner: `.gitignore`, plus removal of the already-tracked files.","dimensionRefs":["task-understanding"],"aiFixPrompt":"/better-harness fix this issue\n\nAdd `.playwright-mcp/` to `.gitignore` and untrack the scratch files already committed there with `git rm --cached`, keeping the local copies.\n\nDo not delete files from disk and do not rewrite history.\n\n## Validation\n\n- `git check-ignore -q .playwright-mcp` exits 0\n- `git ls-files .playwright-mcp` returns nothing\n- Re-running the change analysis reports 11 changed files instead of 15, and the documentation-drift signal triggered by those files is gone","expectedArtifact":"Config","expectedOutput":["Keep agent scratch output out of commits so a reviewer only reads real changes."]}]}</script>
+<script id="harness-report-interactions">(function installHtmlReportInteractions({
+  document,
+  navigator,
+  labels,
+  schedule = (callback, delay) => globalThis.setTimeout(callback, delay),
+}) {
+  document.documentElement.classList.remove("no-js");
+
+  const reportDataElement = document.getElementById("harness-report-data");
+  const reportData = reportDataElement
+    ? JSON.parse(reportDataElement.textContent || "{}")
+    : {};
+  const findings = new Map(
+    (Array.isArray(reportData.findings) ? reportData.findings : [])
+      .map((finding) => [String(finding?.id ?? ""), finding]),
+  );
+  const status = document.getElementById("copy-status");
+  const manualDialog = document.getElementById("manual-copy-dialog");
+  const manualText = document.getElementById("manual-copy-text");
+  const dialogTriggers = new Map();
+
+  function report(message, state) {
+    if (!status) return;
+    status.textContent = message;
+    status.dataset.state = state;
+  }
+
+  function legacyCopy(prompt) {
+    const textarea = document.createElement("textarea");
+    textarea.value = prompt;
+    textarea.setAttribute("readonly", "");
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.append(textarea);
+    try {
+      textarea.select();
+      return document.execCommand("copy") === true;
+    } catch {
+      return false;
+    } finally {
+      textarea.remove();
+    }
+  }
+
+  function copied(trigger) {
+    report(labels.copySuccess, "success");
+    if (trigger) {
+      const originalLabel = trigger.textContent;
+      trigger.textContent = labels.copied;
+      schedule(() => {
+        trigger.textContent = originalLabel || labels.copy;
+      }, 1800);
+    }
+    return true;
+  }
+
+  async function copyFinding(findingId, trigger) {
+    const prompt = findings.get(String(findingId))?.aiFixPrompt;
+    if (typeof prompt !== "string" || prompt.length === 0) {
+      report(labels.missingPrompt, "error");
+      return false;
+    }
+
+    try {
+      if (!navigator?.clipboard?.writeText) throw new Error("Clipboard API unavailable");
+      await navigator.clipboard.writeText(prompt);
+      return copied(trigger);
+    } catch {
+      if (legacyCopy(prompt)) return copied(trigger);
+    }
+
+    if (manualDialog && typeof manualDialog.showModal === "function") {
+      dialogTriggers.set(manualDialog.id, trigger);
+      if (!manualDialog.open) manualDialog.showModal();
+    }
+    if (manualText) {
+      manualText.value = prompt;
+      manualText.focus();
+      manualText.select();
+    }
+    report(labels.manualCopy, "error");
+    return false;
+  }
+
+  function openDialog(dialogId, trigger) {
+    const dialog = document.getElementById(dialogId);
+    if (!dialog || typeof dialog.showModal !== "function") return false;
+    dialogTriggers.set(dialogId, trigger);
+    dialog.showModal();
+    return true;
+  }
+
+  function closeDialog(dialogId) {
+    const dialog = document.getElementById(dialogId);
+    if (!dialog || !dialog.open || typeof dialog.close !== "function") return false;
+    dialog.close();
+    return true;
+  }
+
+  for (const trigger of document.querySelectorAll("[data-copy-finding]")) {
+    trigger.addEventListener("click", () => copyFinding(trigger.dataset.copyFinding, trigger));
+  }
+  for (const trigger of document.querySelectorAll("[data-view-finding-dialog]")) {
+    trigger.addEventListener("click", () => openDialog(trigger.dataset.viewFindingDialog, trigger));
+  }
+  for (const trigger of document.querySelectorAll("[data-close-finding-dialog]")) {
+    trigger.addEventListener("click", () => closeDialog(trigger.dataset.closeFindingDialog));
+  }
+  const interactiveDialogs = [
+    ...document.querySelectorAll("dialog[data-finding-dialog-id]"),
+    manualDialog,
+  ].filter(Boolean);
+  for (const dialog of interactiveDialogs) {
+    dialog.addEventListener("close", () => {
+      const trigger = dialogTriggers.get(dialog.id);
+      dialogTriggers.delete(dialog.id);
+      trigger?.focus();
+    });
+    dialog.addEventListener("click", (event) => {
+      if (event.target !== dialog) return;
+      const rect = dialog.getBoundingClientRect();
+      const outside = event.clientX < rect.left
+        || event.clientX > rect.right
+        || event.clientY < rect.top
+        || event.clientY > rect.bottom;
+      if (outside) closeDialog(dialog.id);
+    });
+  }
+
+  return { copyFinding, openDialog, closeDialog };
+})({document,navigator,labels:{"copy":"Copy AI Fix","copied":"Copied","copySuccess":"Copied. Paste into the Codex input.","manualCopy":"Automatic copy was blocked. Copy the selected prompt manually.","missingPrompt":"No AI Fix prompt is available for this finding."}});</script>
+</body>
+</html>

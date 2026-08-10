@@ -19,11 +19,16 @@ from app.api.v1.routes.data_crawler import router as crawler_router
 from app.api.v1.routes.scanner import router as scanner_router
 from app.api.v1.routes.workflows import router as workflows_router
 from app.api.v1.routes.isp_alerts import router as isp_alerts_router
+from app.api.v1.routes.large_orders import router as large_orders_router
 from app.api.v1.routes.price_alerts import router as price_alerts_router
 from app.api.v1.routes.chat import router as chat_router
 from app.api.v1.routes.auth import router as auth_router
 from app.api.v1.routes.future import router as future_router
 from app.api.v1.routes.cw import router as cw_router
+from app.api.v1.routes.regime import router as regime_router
+from app.api.v1.routes.trading_agents import router as trading_agents_router
+from app.api.v1.routes.quote import router as quote_router
+from app.api.v1.routes.mvf import router as mvf_router
 
 
 def get_app() -> FastAPI:
@@ -65,11 +70,18 @@ def get_app() -> FastAPI:
     app.include_router(
         isp_alerts_router, prefix=f"{api_prefix}/isp", tags=["ISP Alerts"]
     )
+    app.include_router(
+        large_orders_router, prefix=api_prefix, tags=["Large Orders"]
+    )
     app.include_router(price_alerts_router, prefix=api_prefix)
     app.include_router(chat_router, prefix=api_prefix)
     app.include_router(auth_router, prefix=api_prefix)
     app.include_router(future_router, prefix=api_prefix)
     app.include_router(cw_router, prefix=api_prefix)
+    app.include_router(regime_router, prefix=api_prefix)
+    app.include_router(trading_agents_router, prefix=api_prefix)
+    app.include_router(quote_router, prefix=api_prefix)
+    app.include_router(mvf_router, prefix=api_prefix)
 
     # Create a custom cache decorator that logs hits and misses
     def cache_with_logging(**cache_kwargs):

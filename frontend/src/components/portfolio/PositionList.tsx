@@ -16,7 +16,14 @@ type Position = {
   notes: string | null;
 };
 
-export default function PositionList() {
+type PositionListProps = {
+  /** Called after a position is created, edited, or deleted here — lets a
+   * parent page that shows its own copy of positions (summary cards,
+   * holdings table) know it should refetch too. */
+  onDataChanged?: () => void;
+};
+
+export default function PositionList({ onDataChanged }: PositionListProps) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -52,6 +59,7 @@ export default function PositionList() {
       );
       if (!res.ok) throw new Error(`Error ${res.status}`);
       loadPositions();
+      onDataChanged?.();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Error deleting position');
     }
@@ -116,7 +124,17 @@ export default function PositionList() {
 
   return (
     <Box sx={{ height: 400, width: '100%', margin: '0 auto' }}>
-      <Box sx={{ mb: 2 }}>
+      <DataGrid
+        rows={positions}
+        columns={columns}
+        loading={loading}
+        initialState={{
+          pagination: { pageSize: 10 },
+        }}
+        pageSizeOptions={[10, 25, 50]}
+      />
+
+      <Box sx={{ mt: 2 }}>
         <Button
           variant="contained"
           onClick={() => {
@@ -128,20 +146,10 @@ export default function PositionList() {
         </Button>
       </Box>
 
-      <DataGrid
-        rows={positions}
-        columns={columns}
-        loading={loading}
-        initialState={{
-          pagination: { pageSize: 10 },
-        }}
-        pageSizeOptions={[10, 25, 50]}
-      />
-
       <PositionForm
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        onSuccess={loadPositions}
+        onSuccess={() => { loadPositions(); onDataChanged?.(); }}
         position={editPosition}
         mode={editPosition ? 'edit' : 'create'}
       />

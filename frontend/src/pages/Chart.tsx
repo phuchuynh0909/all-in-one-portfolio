@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Box,
-  TextField,
   Container,
   Paper,
-  InputAdornment,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -17,30 +15,32 @@ import {
   Chip,
   Drawer,
   Fab,
-  IconButton,
 } from '@mui/material';
-import { Sync, Notes, Search } from '@mui/icons-material';
+import { Notes, ViewList } from '@mui/icons-material';
 import { syncStock } from '../lib/services/workflows';
 import type { Report } from '../lib/services/report';
 import { getChatNotes, type ChatNoteItem } from '../lib/services/chat';
 import { MarkdownContent } from '../components/chat/MarkdownContent';
 import StockChart from '../components/chart/StockChart';
+import Watchlist from '../components/chart/Watchlist';
+import ChartSideRail from '../components/chart/ChartSideRail';
 
 export default function ChartPage() {
-  const [symbol, setSymbol] = useState('VNINDEX');
   const [currentSymbol, setCurrentSymbol] = useState('VNINDEX');
-  const [isFocused, setIsFocused] = useState(false);
+  const [view, setView] = useState<'chart' | 'largeOrders'>('chart');
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
   const chartPaperRef = useRef<HTMLDivElement | null>(null);
   const [chartHeight, setChartHeight] = useState(800);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [watchlistOpen, setWatchlistOpen] = useState(() => {
+    try { return localStorage.getItem('chartWatchlistOpen') !== '0'; } catch { return true; }
+  });
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
   const [notes, setNotes] = useState<ChatNoteItem[]>([]);
   const [drawerWidth, setDrawerWidth] = useState(560);
-  const symbolInputRef = useRef<HTMLInputElement | null>(null);
 
   const loadNotes = useCallback(async () => {
     const sym = currentSymbol.trim().toUpperCase();
@@ -73,29 +73,6 @@ export default function ChartPage() {
     return () => window.removeEventListener('resize', updateChartHeight);
   }, []);
 
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLInputElement>) => {
-    if (event.key === 'Enter') {
-      setCurrentSymbol(symbol);
-      setIsFocused(false);
-    }
-  };
-
-  const handleFocus = () => {
-    setIsFocused(true);
-    setSymbol('');
-  };
-
-  const handleBlur = () => {
-    setIsFocused(false);
-    if (!symbol) {
-      setSymbol(currentSymbol);
-    }
-  };
-
-  const handleReportClick = (report: Report) => {
-    setSelectedReport(report);
-  };
-
   const handleSync = async () => {
     try {
       setSyncing(true);
@@ -109,6 +86,14 @@ export default function ChartPage() {
     } finally {
       setSyncing(false);
     }
+  };
+
+  const handleToggleWatchlist = () => {
+    setWatchlistOpen((prev) => {
+      const next = !prev;
+      try { localStorage.setItem('chartWatchlistOpen', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
   };
 
   const handleOpenNotes = async () => {
@@ -147,113 +132,62 @@ export default function ChartPage() {
         flexDirection: 'column',
       }}
     >
-      <Paper
-        sx={{
-          p: 0.5,
-          mb: 1,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          gap: 1,
-          background: 'linear-gradient(135deg, rgba(18, 18, 28, 0.98) 0%, rgba(20, 20, 32, 0.98) 100%)',
-          border: '1px solid rgba(99, 102, 241, 0.25)',
-          borderRadius: 2,
-        }}
-      >
-        <Stack direction="row" spacing={1.5} alignItems="center" sx={{ minWidth: 0 }}>
-          <TextField
-            value={symbol}
-            onChange={(e) => setSymbol(e.target.value.toUpperCase())}
-            onKeyDown={handleKeyDown}
-            onFocus={handleFocus}
-            onBlur={handleBlur}
-            inputRef={symbolInputRef}
-            variant="standard"
-            placeholder={isFocused ? 'Enter symbol' : currentSymbol}
-            InputProps={{
-              disableUnderline: true,
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Search sx={{ color: '#9ca3af' }} />
-                </InputAdornment>
-              ),
-              sx: {
-                color: '#e5e7eb',
-                fontSize: '1rem',
-                fontWeight: 600,
-                letterSpacing: 0.4,
-                px: 1,
-                py: 0.5,
-                minWidth: 160,
-              },
-            }}
-            sx={{
-              bgcolor: 'rgba(15, 15, 25, 0.85)',
-              border: '1px solid rgba(99, 102, 241, 0.25)',
-              borderRadius: 2,
-              '&:hover': {
-                borderColor: 'rgba(99, 102, 241, 0.45)',
-              },
-              '&.Mui-focused': {
-                borderColor: '#6366f1',
-              },
-            }}
-          />
-          <Chip
-            label={currentSymbol}
-            onClick={() => {
-              setIsFocused(true);
-              setSymbol('');
-              symbolInputRef.current?.focus();
-            }}
-            sx={{
-              bgcolor: 'rgba(99, 102, 241, 0.18)',
-              color: '#a5b4fc',
-              fontWeight: 600,
-              fontSize: '0.875rem',
-              cursor: 'pointer',
-            }}
-          />
-        </Stack>
-
-        <IconButton
-          onClick={handleSync}
-          disabled={syncing}
-          aria-label={`Sync ${currentSymbol}`}
+      {/* Chart — symbol picker, view toggle and sync now live in the widget header.
+          The watchlist sits beside it: the library's own Watch List widget ships
+          only with Trading Terminal, so it is an app-side panel here. */}
+      <Box sx={{ display: 'flex', gap: 2, flex: 1, minHeight: 0 }}>
+        <Paper
+          ref={chartPaperRef}
           sx={{
-            width: 40,
-            height: 40,
-            border: '1px solid rgba(99, 102, 241, 0.5)',
-            color: '#a5b4fc',
-            '&:hover': {
-              borderColor: '#6366f1',
-              bgcolor: 'rgba(99, 102, 241, 0.1)',
-            },
-            '@keyframes spin': {
-              '0%': { transform: 'rotate(0deg)' },
-              '100%': { transform: 'rotate(360deg)' },
-            },
+            p: 2,
+            flex: 1,
+            minWidth: 0,
+            minHeight: 0,
+            position: 'relative',
+            background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
+            border: '1px solid rgba(99, 102, 241, 0.2)',
+            borderRadius: 2,
           }}
         >
-          <Sync sx={{ animation: syncing ? 'spin 1s linear infinite' : 'none' }} />
-        </IconButton>
-      </Paper>
+          <StockChart
+            symbol={currentSymbol}
+            onSymbolChange={setCurrentSymbol}
+            height={chartHeight}
+            showLargeOrders={view === 'largeOrders'}
+            onToggleLargeOrders={(v) => setView(v ? 'largeOrders' : 'chart')}
+            onSync={handleSync}
+            syncing={syncing}
+          />
+        </Paper>
 
-      {/* Chart */}
-      <Paper
-        ref={chartPaperRef}
-        sx={{
-          p: 2,
-          flex: 1,
-          minHeight: 0,
-          position: 'relative',
-          background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
-          border: '1px solid rgba(99, 102, 241, 0.2)',
-          borderRadius: 2,
-        }}
-      >
-        <StockChart symbol={currentSymbol} onReportClick={handleReportClick} height={chartHeight} />
-      </Paper>
+        {watchlistOpen && (
+          <Paper
+            sx={{
+              width: 240,
+              flexShrink: 0,
+              p: 1,
+              display: 'flex',
+              minHeight: 0,
+              background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
+              border: '1px solid rgba(99, 102, 241, 0.2)',
+              borderRadius: 2,
+            }}
+          >
+            <Watchlist activeSymbol={currentSymbol} onSelect={setCurrentSymbol} />
+          </Paper>
+        )}
+
+        {/* Right-edge rail: one icon per side panel, highlighted while open. */}
+        <ChartSideRail
+          items={[{
+            id: 'watchlist',
+            label: watchlistOpen ? 'Hide watchlist' : 'Show watchlist',
+            icon: <ViewList sx={{ fontSize: 19 }} />,
+            active: watchlistOpen,
+            onClick: handleToggleWatchlist,
+          }]}
+        />
+      </Box>
 
       <Fab
         color="primary"

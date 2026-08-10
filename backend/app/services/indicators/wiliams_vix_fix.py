@@ -27,7 +27,7 @@ def williams_vix_fix_indicator(close, high, low, period=22, mult=2.0,
     ph: float = 0.85, # percentile high
     ltLB: int = 40,
     mtLB: int = 14,
-    strength_str: int = 3):
+    strength_str: int = 1):
     
     try:
         MAX = vbt.IndicatorFactory.from_talib("MAX")

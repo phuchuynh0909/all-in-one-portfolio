@@ -12,21 +12,52 @@ import vectorbt as vbt
 from loguru import logger
 
 from app.schemas.timeseries import IndicatorParams
+from app.services.strategies.breakout_ttm_v1 import FIXED_TTM_PARAMS
 
 from .indicators import (
     avwap,
     build_smart_money_flow_kwargs,
     calculate_yz_volatility,
     calculate_gkyz_volatility,
+    chandelier_exit,
+    gaussian_frama,
     hawkes_BVC,
+    hull_butterfly,
     kalman_zscore,
+    linreg_channel_2d,
     matrix_series,
+    student_t_crit,
     smart_money_flow,
     squeeze_ttm,
     trailing_sl,
     williams_vix_fix_indicator,
 )
 from .utils import convert_nans
+
+
+def _resolve_squeeze_ttm_params(params: dict) -> dict:
+    """Map API params to squeeze_ttm kwargs; defaults from ``ttm_best_params_005.json``."""
+    entry_version = str(params.get("entry_version", "v2"))
+    if entry_version not in FIXED_TTM_PARAMS:
+        entry_version = "v2"
+    d = FIXED_TTM_PARAMS[entry_version]
+
+    def _pick(*keys: str, default_key: str):
+        for key in keys:
+            if key in params:
+                return params[key]
+        return d[default_key]
+
+    return {
+        "bb_period": int(_pick("bb_period", "bb_window", "period", default_key="bb_window")),
+        "bb_mult": float(_pick("bb_mult", "bb_multiplier", "mult", default_key="bb_multiplier")),
+        "bb_matype": int(_pick("bb_matype", "matype", default_key="bb_matype")),
+        "kc_period": int(_pick("kc_period", "kc_window", default_key="kc_window")),
+        "kc_mult": float(_pick("kc_mult", "kc_multiplier", default_key="kc_multiplier")),
+        "kc_atr_period": int(_pick("kc_atr_period", default_key="kc_atr_period")),
+        "donichan_period": int(_pick("donichan_period", "donichan_window", default_key="donichan_window")),
+        "osc_smoothing_period": int(_pick("osc_smoothing_period", default_key="osc_smoothing_period")),
+    }
 
 
 def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]) -> dict[str, Any]:
@@ -93,8 +124,9 @@ def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]
 
             elif ind.name == "atr_trailing":
                 timeperiod = int(ind.params.get("timeperiod", 10))
+                multiplier = float(ind.params.get("multiplier", 1.8))
                 atr = talib.ATR(high_prices, low_prices, close_prices, timeperiod=timeperiod)
-                indicator_data["atr_trailing"] = convert_nans(trailing_sl(close_prices, atr))
+                indicator_data["atr_trailing"] = convert_nans(trailing_sl(close_prices, atr, atr_multiplier=multiplier))
 
             elif ind.name == "vwap":
                 window = int(ind.params.get("window", 100))
@@ -105,6 +137,10 @@ def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]
                 indicator_data["vwap_lowest"] = convert_nans(
                     avwap(close_prices, high_prices, low_prices, vol, is_highest=False, window=window)
                 )
+
+            elif ind.name == "kama":
+                timeperiod = int(ind.params.get("timeperiod", 10))
+                indicator_data["kama"] = convert_nans(talib.KAMA(close_prices, timeperiod=timeperiod))
 
             elif ind.name == "bvc":
                 window = int(ind.params.get("window", 20))
@@ -202,38 +238,24 @@ def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]
                 }
 
             elif ind.name == "squeeze_ttm":
-                # Legacy short names (period/mult/matype) map to BBANDS-style params
-                bb_period = int(ind.params.get("bb_period", ind.params.get("period", 10)))
-                bb_mult = float(ind.params.get("bb_mult", ind.params.get("mult", 1.2)))
-                bb_matype = int(ind.params.get("bb_matype", ind.params.get("matype", 3)))
-                kc_period = int(ind.params.get("kc_period", 13))
-                kc_mult = float(ind.params.get("kc_mult", 1.0))
-                donichan_period = int(ind.params.get("donichan_period", 10))
-                osc_smoothing_period = int(ind.params.get("osc_smoothing_period", 10))
+                stt_params = _resolve_squeeze_ttm_params(ind.params)
 
                 close_arr = df["close"].to_numpy().reshape(-1, 1)
                 high_arr = df["high"].to_numpy().reshape(-1, 1)
                 low_arr = df["low"].to_numpy().reshape(-1, 1)
 
-                squeeze_diff, ttms = squeeze_ttm(
+                _, ttms, squeeze_state_arr = squeeze_ttm(
                     close_arr,
                     high_arr,
                     low_arr,
-                    bb_period=bb_period,
-                    bb_mult=bb_mult,
-                    bb_matype=bb_matype,
-                    kc_period=kc_period,
-                    kc_mult=kc_mult,
-                    donichan_period=donichan_period,
-                    osc_smoothing_period=osc_smoothing_period,
+                    **stt_params,
                 )
-                diff_arr = squeeze_diff.to_numpy().reshape(-1)
                 ttms_arr = ttms.to_numpy().reshape(-1)
-                squeeze_on = np.where(np.isnan(diff_arr), False, diff_arr < 0).tolist()
+                squeeze_state = squeeze_state_arr.reshape(-1).astype(int).tolist()
 
                 indicator_data["squeeze_ttm"] = {
                     "histogram": convert_nans(ttms_arr),
-                    "squeeze_on": squeeze_on,
+                    "squeeze_state": squeeze_state,
                 }
 
             elif ind.name == "smart_money_flow":
@@ -258,6 +280,69 @@ def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]
                     "bull_dot": smf_result["bull_dot"].tolist(),
                     "bear_dot": smf_result["bear_dot"].tolist(),
                     "strength_signed": convert_nans(smf_result["strength_signed"]),
+                }
+
+            elif ind.name == "chandelier_exit":
+                length = int(ind.params.get("length", 31))
+                multiplier = float(ind.params.get("multiplier", 2.2))
+                ce = chandelier_exit(close_prices, high_prices, low_prices, length=length, multiplier=multiplier)
+                # direction is float (NaN until the ATR warm-up ends); cast per
+                # element — a whole-array astype(int) would cast those NaNs too.
+                direction = [
+                    None if np.isnan(v) else int(v) for v in ce["direction"]
+                ]
+                indicator_data["chandelier_exit"] = {
+                    "value":     convert_nans(ce["value"]),
+                    "direction": direction,
+                    "long":      convert_nans(ce["long"]),
+                    "short":     convert_nans(ce["short"]),
+                }
+
+            elif ind.name == "linreg_channel":
+                reg_window = int(ind.params.get("reg_window", 50))
+                confidence = float(ind.params.get("confidence", 0.9))
+                t_crit = student_t_crit(reg_window, confidence)
+                close_arr = df["close"].to_numpy(dtype=np.float64).reshape(-1, 1)
+                reg, _slope, ci_u, ci_l, pi_u, pi_l = linreg_channel_2d(
+                    close_arr, reg_window, float(t_crit)
+                )
+                indicator_data["linreg_channel"] = {
+                    "reg":      convert_nans(reg.reshape(-1)),
+                    "pi_upper": convert_nans(pi_u.reshape(-1)),
+                    "pi_lower": convert_nans(pi_l.reshape(-1)),
+                    "ci_upper": convert_nans(ci_u.reshape(-1)),
+                    "ci_lower": convert_nans(ci_l.reshape(-1)),
+                }
+
+            elif ind.name == "gaussian_frama":
+                gframa = gaussian_frama(
+                    close_prices,
+                    high_prices,
+                    low_prices,
+                    gaussian_length=int(ind.params.get("gaussian_length", 4)),
+                    sigma=float(ind.params.get("sigma", 2.0)),
+                    fm_len=int(ind.params.get("fm_len", 20)),
+                    upper_limit=int(ind.params.get("upper_limit", 8)),
+                    lower_limit=int(ind.params.get("lower_limit", 40)),
+                    atr_period=int(ind.params.get("atr_period", 14)),
+                    atr_mult=float(ind.params.get("atr_mult", 1.9)),
+                )
+                indicator_data["gaussian_frama"] = {
+                    "frama":   convert_nans(gframa["frama"].reshape(-1)),
+                    "long_v":  convert_nans(gframa["long_v"].reshape(-1)),
+                    "short_v": convert_nans(gframa["short_v"].reshape(-1)),
+                    "qb":      convert_nans(gframa["qb"].reshape(-1)),
+                }
+
+            elif ind.name == "hull_butterfly":
+                hso, os_state = hull_butterfly(
+                    close_prices,
+                    length=int(ind.params.get("length", 14)),
+                    mult=float(ind.params.get("mult", 2.0)),
+                )
+                indicator_data["hull_butterfly"] = {
+                    "hso": convert_nans(hso.reshape(-1)),
+                    "os":  convert_nans(os_state.reshape(-1)),
                 }
 
             elif ind.name == "williams_vix_fix":

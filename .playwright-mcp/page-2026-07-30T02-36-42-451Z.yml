@@ -1,0 +1,34 @@
+- generic [ref=f33e2]:
+  - banner [ref=f33e4]:
+    - generic [ref=f33e6]:
+      - button [ref=f33e7] [cursor=pointer]
+      - link "Investment Tracker" [ref=f33e10] [cursor=pointer]:
+        - /url: /
+  - main [ref=f33e11]:
+    - generic [ref=f33e12]:
+      - generic [ref=f33e13]:
+        - iframe [ref=f33e17]:
+          - progressbar [ref=f35e3]
+        - generic [ref=f33e19]:
+          - generic [ref=f33e20]:
+            - heading "Watchlist" [level=6] [ref=f33e21]
+            - button "Add symbol" [ref=f33e22] [cursor=pointer]
+          - list [ref=f33e25]:
+            - button [ref=f33e26] [cursor=pointer]:
+              - paragraph [ref=f33e29]: VNINDEX
+              - paragraph [ref=f33e31]: —
+              - button "Remove" [ref=f33e32]
+            - button [ref=f33e35] [cursor=pointer]:
+              - paragraph [ref=f33e38]: VCG
+              - paragraph [ref=f33e40]: —
+              - button "Remove" [ref=f33e41]
+            - button [ref=f33e44] [cursor=pointer]:
+              - paragraph [ref=f33e47]: SHS
+              - paragraph [ref=f33e49]: —
+              - button "Remove" [ref=f33e50]
+            - button [ref=f33e53] [cursor=pointer]:
+              - paragraph [ref=f33e56]: HPG
+              - paragraph [ref=f33e58]: —
+              - button "Remove" [ref=f33e59]
+        - button "Hide watchlist" [pressed] [ref=f33e64] [cursor=pointer]
+      - button [ref=f33e67] [cursor=pointer]

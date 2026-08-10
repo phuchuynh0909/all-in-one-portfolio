@@ -46,6 +46,41 @@ def _normal_cdf(x: float) -> float:
     return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
 
 
+def _bs_price(
+    S: float, K: float, T: float, r: float, sigma: float,
+    option_type: str = "call",
+) -> float:
+    if T <= 0 or sigma <= 0 or S <= 0 or K <= 0:
+        return max(S - K, 0) if option_type == "call" else max(K - S, 0)
+    d1 = (math.log(S / K) + (r + 0.5 * sigma**2) * T) / (sigma * math.sqrt(T))
+    d2 = d1 - sigma * math.sqrt(T)
+    if option_type == "call":
+        return S * _normal_cdf(d1) - K * math.exp(-r * T) * _normal_cdf(d2)
+    return K * math.exp(-r * T) * _normal_cdf(-d2) - S * _normal_cdf(-d1)
+
+
+def _implied_vol(
+    market_price: float, S: float, K: float, T: float, r: float,
+    option_type: str = "call",
+    lo: float = 0.001, hi: float = 5.0, tol: float = 1e-5, max_iter: int = 200,
+) -> Optional[float]:
+    if T <= 0 or market_price <= 0:
+        return None
+    f = lambda v: _bs_price(S, K, T, r, v, option_type) - market_price
+    if f(lo) * f(hi) > 0:
+        return None
+    for _ in range(max_iter):
+        mid = (lo + hi) / 2
+        val = f(mid)
+        if abs(val) < tol:
+            return mid
+        if f(lo) * val < 0:
+            hi = mid
+        else:
+            lo = mid
+    return (lo + hi) / 2
+
+
 def _infer_option_style(cw_stock_type: str | None) -> str:
     normalized = (cw_stock_type or "").strip().lower()
     if normalized in {"mua", "call"}:
@@ -150,6 +185,7 @@ async def _fetch_cw_quote(client: httpx.AsyncClient, symbol: str) -> dict[str, A
         headers=headers,
         json={"query": query},
     )
+    
     response.raise_for_status()
     payload = response.json()
 
@@ -393,13 +429,6 @@ async def get_covered_warrant(symbol: str) -> CoveredWarrantResponse:
             warrant_price_source = source
             break
 
-    volatility = None
-    volatility_source = "default"
-    if base_stock_code:
-        volatility, volatility_source = _annualized_realized_vol(base_stock_code)
-    if volatility is None:
-        volatility = DEFAULT_VOLATILITY
-
     last_trading_date = payload.get("lastTradingDate")
     expiry_date = None
     if last_trading_date:
@@ -409,6 +438,32 @@ async def get_covered_warrant(symbol: str) -> CoveredWarrantResponse:
             expiry_date = None
     days_to_expiry = max((expiry_date - date.today()).days, 0) if expiry_date else 0
     time_to_expiry_years = max(days_to_expiry / 365.0, 1 / 365.0)
+
+    hist_vol: Optional[float] = None
+    if base_stock_code:
+        hist_vol, _ = _annualized_realized_vol(base_stock_code)
+
+    volatility = None
+    volatility_source = "default"
+    option_style_for_iv = _infer_option_style(payload.get("cwStockType"))
+    conversion_rate_raw = _pick_positive(payload.get("conversionRate"))
+    if warrant_price and stock_price and exercise_price and conversion_rate_raw and days_to_expiry > 0:
+        iv = _implied_vol(
+            warrant_price * conversion_rate_raw,
+            stock_price, exercise_price,
+            days_to_expiry / 365.0,
+            DEFAULT_RISK_FREE_RATE,
+            option_style_for_iv,
+        )
+        if iv is not None:
+            volatility = iv
+            volatility_source = "implied_vol"
+    if volatility is None:
+        if hist_vol is not None:
+            volatility = hist_vol
+            volatility_source = f"realized_{VOL_LOOKBACK_DAYS}d"
+        else:
+            volatility = DEFAULT_VOLATILITY
 
     detail = CoveredWarrantDetail(
         symbol=payload.get("symbol", symbol),
@@ -438,6 +493,7 @@ async def get_covered_warrant(symbol: str) -> CoveredWarrantResponse:
         stock_price=stock_price,
         warrant_price=warrant_price,
         annual_volatility=volatility,
+        hist_vol=hist_vol,
         risk_free_rate=DEFAULT_RISK_FREE_RATE,
         days_to_expiry=days_to_expiry,
         time_to_expiry_years=time_to_expiry_years,

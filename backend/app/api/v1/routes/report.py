@@ -1,9 +1,34 @@
-from fastapi import APIRouter, HTTPException
+import os
+from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi_cache.decorator import cache
+from loguru import logger
 from app.schemas.report import ReportResponse, ReportDetail, ReportSummaryUpdate
 from app.services.report_service import get_reports, get_report_by_id, update_report_summary, sync_latest_reports
 
 router = APIRouter(prefix="/report", tags=["report"])
+
+
+def _run_rag_pipeline(report_id: int, recreate: bool, parser: str | None) -> None:
+    """Background worker: run the report RAG pipeline for one report.
+
+    With ``RAG_USE_DEPLOYMENT`` set, dispatches to the Prefect deployment (heavy
+    work runs on the ``my-worker`` pool — register it with
+    ``python tasks/rag_pipeline.py --deploy``). Otherwise runs the flow in-process.
+    Imported lazily so the heavy RAG stack is only loaded when a job is triggered.
+    The flow records FAILED status itself on error; we just log here.
+    """
+    use_deployment = True #os.getenv("RAG_USE_DEPLOYMENT", "0").lower() in ("1", "true", "yes", "on")
+    try:
+        if use_deployment:
+            from app.services.prefect_workflow_service import run_rag_pipeline_deployment
+
+            run_rag_pipeline_deployment(report_id, recreate, parser)
+        else:
+            from tasks.rag_pipeline import rag_pipeline_flow
+
+            rag_pipeline_flow(report_id, recreate=recreate, parser=parser)
+    except Exception:  # noqa: BLE001
+        logger.exception("RAG pipeline background task failed for report %s", report_id)
 
 
 @router.get("/list", response_model=ReportResponse)
@@ -30,6 +55,91 @@ async def save_report_summary(report_id: int, data: ReportSummaryUpdate):
     if not success:
         raise HTTPException(status_code=404, detail="Report not found")
     return {"message": "Summary saved successfully"}
+
+
+@router.get("/rag/statuses")
+async def list_rag_statuses():
+    """Bulk RAG status for the Report list (which reports are embedded)."""
+    from app.services import report_rag_service as rag_service
+
+    return {"statuses": rag_service.list_statuses()}
+
+
+@router.get("/rag/health")
+async def rag_health():
+    """Report the ClickHouse endpoint the API reads status from + row count.
+
+    Compare ``clickhouse`` here with the worker's "report_rag status store
+    (worker)" log line: if they differ, the job writes status to a different
+    ClickHouse than the API reads, which looks like "status not updating".
+    """
+    from app.services import report_rag_service as rag_service
+
+    rows = rag_service.list_statuses()
+    return {"clickhouse": rag_service.endpoint(), "tracked_reports": len(rows)}
+
+
+@router.post("/{report_id}/rag", status_code=202)
+async def trigger_rag(
+    report_id: int,
+    background_tasks: BackgroundTasks,
+    recreate: bool = False,
+    parser: str | None = None,
+):
+    """Queue the RAG pipeline (PDF -> markdown -> embeddings -> Qdrant) for a report.
+
+    ``parser`` ("marker" | "llamaparse") overrides the server default.
+    """
+    from app.services import report_rag_service as rag_service
+
+    if parser is not None and parser not in ("marker", "llamaparse"):
+        raise HTTPException(status_code=400, detail="parser must be 'marker' or 'llamaparse'")
+
+    # Seed the row with report metadata (not just status). An empty PENDING
+    # INSERT followed by worker INSERT+lightweight UPDATE was leaving FINAL
+    # rows with blank symbol/title/pdf_url.
+    from app.services.report_service import _none_if_nan, _query_raw_reports
+
+    meta = {"symbol": "", "title": "", "pdf_url": ""}
+    df = _query_raw_reports(report_id=report_id)
+    if df is not None and not df.empty:
+        row = df.iloc[0]
+        meta = {
+            "symbol": str(_none_if_nan(row.get("mack")) or "").upper(),
+            "title": str(_none_if_nan(row.get("tenbaocao")) or ""),
+            "pdf_url": str(_none_if_nan(row.get("url")) or ""),
+        }
+
+    rag_service.save(
+        report_id,
+        symbol=meta["symbol"],
+        title=meta["title"],
+        pdf_url=meta["pdf_url"],
+        status=rag_service.PENDING,
+        error="",
+    )
+    background_tasks.add_task(_run_rag_pipeline, report_id, recreate, parser)
+    return {"report_id": report_id, "status": rag_service.PENDING, "message": "RAG pipeline queued"}
+
+
+@router.get("/{report_id}/rag")
+async def get_rag_status(report_id: int):
+    """Current RAG status for one report."""
+    from app.services import report_rag_service as rag_service
+
+    status = rag_service.get_status(report_id)
+    return status or {"report_id": report_id, "status": "NONE"}
+
+
+@router.get("/{report_id}/markdown")
+async def get_report_markdown(report_id: int):
+    """Parsed markdown for a report (available after the parse step)."""
+    from app.services import report_rag_service as rag_service
+
+    md = rag_service.get_markdown(report_id)
+    if md is None:
+        raise HTTPException(status_code=404, detail="Markdown not available; run the RAG pipeline first")
+    return {"report_id": report_id, "markdown": md}
 
 
 @router.post("/sync")

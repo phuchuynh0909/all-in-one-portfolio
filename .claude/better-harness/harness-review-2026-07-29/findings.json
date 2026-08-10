@@ -1,0 +1,249 @@
+{
+  "summary": {
+    "projectName": "all-in-one-portfolio",
+    "locale": "en",
+    "modelId": "agent-work-loop-v4",
+    "reportContractVersion": 25,
+    "overview": "The project runs well and starts cleanly through its Makefile and compose files, but an agent working here has no owned way to prove a change is safe and no enforced boundary around the live trading credentials on disk: a reproduction script carries working DNSE API keys in a git-visible path, there is no verify command, the changed price and indicator math has no test, and the only agent configuration is two machine-local permission files that no reviewer can see.",
+    "dimensions": [
+      {
+        "id": "task-understanding",
+        "label": "Task Understanding",
+        "score": 42,
+        "summary": "The one entry document describes a different system than the code, and no scoped instruction corrects it; two change surfaces (a vendored gitlink and agent scratch output) sit outside the reviewable boundary.",
+        "findingRefs": [
+          "readme-describes-different-system",
+          "vendor-gitlink-unreviewable",
+          "no-durable-owner-for-integration-context",
+          "agent-scratch-output-in-change-set"
+        ]
+      },
+      {
+        "id": "controlled-execution",
+        "label": "Controlled Execution",
+        "score": 34,
+        "summary": "Container startup and service routes are declared and reachable, but no supported verify route exists, and the permission surface is an append-only allow list with no deny rules and no gate over live credentials and a production deploy path.",
+        "findingRefs": [
+          "credentials-in-reproduction-script",
+          "no-verify-entrypoint",
+          "allow-only-permission-surface",
+          "divergent-scoped-permission-files"
+        ]
+      },
+      {
+        "id": "change-validation",
+        "label": "Change Validation",
+        "score": 32,
+        "summary": "Type checking is genuinely exercised, but nothing covers behavior: the changed quote and indicator functions are pure, untested, and the reviewed window contains no check bound to a change.",
+        "findingRefs": [
+          "no-verify-entrypoint",
+          "changed-price-math-has-no-test",
+          "quote-path-emits-no-diagnostics"
+        ]
+      },
+      {
+        "id": "reliable-delivery",
+        "label": "Reliable Delivery",
+        "score": 28,
+        "summary": "No review, CI, or merge boundary exists to accept a change, the reviewed change-bearing episode closed at an assistant handoff, and no rollback is bound to the new externally dependent path.",
+        "findingRefs": [
+          "allow-only-permission-surface",
+          "delivery-closes-without-relevant-check"
+        ]
+      },
+      {
+        "id": "learning-capture",
+        "label": "Learning Capture",
+        "score": 38,
+        "summary": "A bounded review completed and found one supported knowledge demand — the vendored trading-agents integration boundary, re-supplied by hand in two independent contexts — with no durable owner to route it to.",
+        "findingRefs": [
+          "no-durable-owner-for-integration-context"
+        ]
+      }
+    ],
+    "aiAgentPractice": {
+      "inspectedSurfaces": [
+        "Rules",
+        "Hooks"
+      ],
+      "coverageRows": [
+        {
+          "surface": "Rules",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0,
+          "paths": []
+        },
+        {
+          "surface": "Hooks",
+          "scopes": [
+            "Project"
+          ],
+          "count": 0,
+          "paths": []
+        }
+      ]
+    },
+    "assignmentSummaries": []
+  },
+  "findings": [
+    {
+      "id": "credentials-in-reproduction-script",
+      "title": "Working DNSE trading-API credentials sit in a git-visible file with nothing between them and a push",
+      "severity": "High",
+      "reason": "Fact: `testing/test_dnse_api.py` hardcodes an API key and secret whose values match the `DNSE_API_KEY` / `DNSE_API_SECRET` entries in `.env` and `prod.env`; `git check-ignore` exits non-zero for that path, `testing/` already tracks nine files, and no commit-time gate exists (no non-sample hook in `.git/hooks`, no `.github` workflow). The env files themselves are correctly ignored — the exposure is this one script. Inference: a single `git add -A && git commit && git push` would place live credentials in remote history permanently. Owner: `.gitignore` plus the script itself, which should read from the environment. Uncertainty: whether the credentials are still valid upstream was not tested, and no evidence indicates they have already been committed. Provider scope: repository state, verified statically; nothing was executed.",
+      "dimensionRefs": [
+        "controlled-execution"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nRemove the embedded DNSE credential pair from `testing/test_dnse_api.py` so the script reads `DNSE_API_KEY` / `DNSE_API_SECRET` from the environment, add `testing/test_dnse_api.py` to `.gitignore` if the script stays local, and add one commit-time secret gate.\n\nRotation is a precondition and requires separate authorization: the key pair must be revoked and reissued in the DNSE developer console by the account owner before this repair is considered complete. Ignoring the file does not undo local exposure. Do not write to any external service as part of this fix.\n\n## Validation\n\n- `git check-ignore -q testing/test_dnse_api.py` exits 0, or the file no longer contains any credential literal\n- Staging a file that contains a base64 JWT-shaped API key literal makes the commit-time gate exit non-zero; staging the same file with the literal removed exits 0\n- `git log -S` over the credential pattern confirms no historical commit contains it",
+      "expectedArtifact": "Gate",
+      "expectedOutput": [
+        "Give the next developer a repository where the live trading credentials exist only in ignored env files, and a commit-time gate that refuses a staged credential literal."
+      ]
+    },
+    {
+      "id": "no-verify-entrypoint",
+      "title": "No command can refute a change, and the obvious one calls a live trading API with no assertions",
+      "severity": "High",
+      "reason": "Fact: the `Makefile` exposes only docker lifecycle targets (build/up/down/logs/clean/prod-*) with no test, lint, or typecheck target; `frontend/package.json` declares `dev`, `build`, `lint`, `preview` and no test runner in devDependencies; `backend/pytest.ini` sets only `asyncio_mode=auto` with no `testpaths`, and no root pytest/pyproject config fences collection. `testing/test_dnse_api.py` performs its signed HTTP request at module import and only prints, so it contains no assertion. The project permission list preserves the residue of hand-rolled checks (`npx tsc`, an absolute-path `tsc --noEmit`, `vite build`, timed `curl` against a local endpoint), which is where the verification procedure currently lives. Inference: `pytest` from the repo root is the discoverable default and would execute that live call while always reporting success. Owner: `Makefile` for one `verify` target, `backend/pytest.ini` for `testpaths = tests`. Uncertainty: exact root-`pytest` collection behavior was not executed, per the read-only boundary.",
+      "dimensionRefs": [
+        "controlled-execution",
+        "change-validation"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nAdd a single `verify` target to the `Makefile` that runs the checks this project already owns — backend `pytest`, `npm run lint`, and `tsc --noEmit` — and set `testpaths = tests` in `backend/pytest.ini` so collection cannot reach `testing/`. Do not invent a runner or a script that does not exist; use only the commands present in `frontend/package.json` and the installed backend toolchain.\n\n## Validation\n\n- `make verify` exits 0 on a clean tree\n- Temporarily inverting an assertion in `backend/tests/test_health.py` makes `make verify` exit non-zero\n- `make verify` with networking disabled still completes, proving it makes no outbound call\n- `pytest` from the repository root no longer collects `testing/test_dnse_api.py`",
+      "expectedArtifact": "Command",
+      "expectedOutput": [
+        "Give an agent finishing a change one named command that can fail, and that never touches a live external API."
+      ]
+    },
+    {
+      "id": "changed-price-math-has-no-test",
+      "title": "The quote and indicator functions changed in this work are pure, untested, and can regress prices silently",
+      "severity": "High",
+      "reason": "Fact: the current change set adds four pure decision points — `_pick_trade` (board priority G1/G7/G4, put-through boards discarded) and `_to_quote` (a reported 0 mapped to \"not reported\") in `backend/app/services/dnse_client.py`, `isVnMarketSession` (hardcoded GMT+7, inclusive 15:00 bound) in `frontend/src/lib/services/quote.ts`, and in-browser indicator math moved into `frontend/src/lib/tv/studies.ts` — while `backend/tests/` contains only a health check and the front end has no test runner at all (643 source files against 8 test files; 0 test files for JavaScript/TypeScript). `frontend/src/components/chart/StockChart.tsx` is the repository's top churn hotspot and is changed again here. Inference: a wrong board selection, a real 0 treated as a price, or an off-by-one session bound would change displayed prices and indicator values with no failing check anywhere. Uncertainty: no wrong value was observed; the confirmed defect is the absence of a verifier, not a known bug. Owner: `backend/tests/` for the two Python functions, `frontend/package.json` for the missing runner.",
+      "dimensionRefs": [
+        "change-validation"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nAdd table-driven tests for the pure decision points in the current change, using the test surfaces the project already has plus one front-end runner.\n\nBackend (`backend/tests/`, pytest is already configured): `_pick_trade` returns None when every trade is on a put-through board; prefers a G1 trade over a newer G7 trade; falls back to G7 only when G1 is absent. `_to_quote` maps `openPrice: 0` to None while preserving `matchPrice`.\n\nFront end: add one test runner to `frontend/package.json` and cover `isVnMarketSession` at Saturday, Sunday, 08:59, 09:00, 15:00 and 15:01 Vietnam time.\n\nEvery case must run offline with no credentials. Adding a dependency to `frontend/package.json` is the only new install; confirm it before proceeding.\n\n## Validation\n\n- The new tests pass, and each fails when its asserted branch is deliberately inverted\n- The full run completes with networking disabled and no DNSE credentials present",
+      "expectedArtifact": "Test",
+      "expectedOutput": [
+        "Give the next change to price selection or session bounds a check that fails when the numbers are wrong."
+      ]
+    },
+    {
+      "id": "allow-only-permission-surface",
+      "title": "The agent permission surface grants shell wildcards over live credentials and the production deploy path with no deny rule and no gate",
+      "severity": "High",
+      "reason": "Fact: the project permission file contains `permissions.allow` only — 51 entries, no `deny` block — and the asset baseline reports `enabledHookCount: 0`, so no PreToolUse gate exists as a second layer. Among the pre-approved patterns are `Bash(python3:*)` and `Bash(python3 -)` (arbitrary code whose payload never appears in a permission decision), `Bash(xargs cat)` while `.env` and `prod.env` sit unencrypted in the tree, and `Bash(docker compose *)` while `docker-compose.prod.yml` and the Makefile's `prod-up` / `prod-down` targets are present. Inference: a secret read or a production mutation can occur with no prompt and no audit record. Uncertainty: whether any such action actually happened is unobserved — runtime use was outside the reviewed authority, and both permission files are machine-local and git-ignored, so no reviewer has ever seen this surface. Owner: a git-tracked `.claude/settings.json` carrying `permissions.deny`.",
+      "dimensionRefs": [
+        "controlled-execution",
+        "reliable-delivery"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nCreate a git-tracked `.claude/settings.json` with an explicit `permissions.deny` block covering the actions this repository must never take unprompted: reads of `.env` and `prod.env`, the production compose invocation and the `make prod-*` targets, and writes under `vendor/**`. Keep the existing machine-local allow entries where they are; this fix adds the missing deny layer rather than rewriting approvals.\n\nDo not add a hook that executes anything beyond a local check, and do not grant any new capability.\n\n## Validation\n\n- `git ls-files .claude` lists `settings.json`, and its `permissions.deny` is non-empty\n- A `Read` of `prod.env` is refused rather than auto-approved\n- An attempted production compose command is refused rather than auto-approved\n- An `Edit` under `vendor/` is refused",
+      "expectedArtifact": "Config",
+      "expectedOutput": [
+        "Give the repository one reviewable file that states which actions an agent may never take here, instead of an invisible per-machine allow list."
+      ]
+    },
+    {
+      "id": "quote-path-emits-no-diagnostics",
+      "title": "When the live price stops updating, nothing distinguishes missing credentials from a filtered board or an empty upstream",
+      "severity": "Medium",
+      "reason": "Fact: in `backend/app/services/dnse_client.py` the 503 unconfigured-credential exit and the 404 `No recent trade` exit both return without emitting a log line, so `_pick_trade` discarding every put-through board is indistinguishable from an empty upstream payload; `backend/app/main.py` middleware logs only method, path, status and duration, and no request id is generated or propagated; no `logger.add` or `logger.configure` exists in `backend/app` or `worker`, so loguru writes to default stderr reachable only through `make backend-logs`, which no document names as the debug route. On the client, the poll in `frontend/src/lib/tv/datafeed.ts` ends in a bare `catch` commented \"transient\", which swallows a permanent 503 and retries silently every interval. Inference: the failure narrative above is read from source, not observed — no request was run. Owner: `dnse_client.py` for the two silent exits and the discarded-board reason; `main.py` middleware for the missing correlation id.",
+      "dimensionRefs": [
+        "change-validation"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nMake the two silent exits in `backend/app/services/dnse_client.py` attributable: log the unconfigured-credential case and the no-eligible-trade case, and in the latter record which boards were discarded. Have the client poll in `frontend/src/lib/tv/datafeed.ts` distinguish a configuration error from a transient one instead of swallowing every failure.\n\nLog no credential value, no signature, and no signing input.\n\n## Validation\n\n- A `TestClient` request to the quote route with the HTTP client stubbed to a put-through-only payload returns 404 and emits a captured log record naming the discarded boards\n- The same route with an empty configured API key returns 503 and emits a captured record\n- Both cases run with no credentials and no network access",
+      "expectedArtifact": "Code",
+      "expectedOutput": [
+        "Give whoever debugs a frozen live price one log line that names which of the three causes occurred."
+      ]
+    },
+    {
+      "id": "readme-describes-different-system",
+      "title": "The repository's only entry document describes a different system than the code",
+      "severity": "Medium",
+      "reason": "Fact: `README.md` documents a PostgreSQL financial-schema tool with psql and import steps and mentions no test, lint, verify, npm, or make route, while `backend/requirements.txt` declares FastAPI and no Django dependency exists anywhere in the tree. The static profiler inherited that framing: it named the project after the README heading, detected `django` at medium confidence, and ranked `frontend/src/lib/tv/index.ts` above `backend/app/main.py` as the entry candidate. No scoped agent instruction file exists to correct it (no `CLAUDE.md`, no `AGENTS.md` at any depth inspected). Inference: an agent orienting from the repository's own documents is routed to the wrong stack; that the mismatch actually misdirected specific work was not established from session evidence in this lane. Owner: `README.md`.",
+      "dimensionRefs": [
+        "task-understanding"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nAdd a short accurate orientation section at the top of `README.md`: the real stack (FastAPI backend, React/Vite front end with the TradingView charting library, Prefect and bytewax workers, ClickHouse and Delta storage), the real entry points (`backend/app/main.py`, `frontend/src/main.tsx`), and the verify command once one exists. Keep the existing PostgreSQL schema documentation, but scope it to the part of the system it actually describes.\n\nState only facts discoverable in the repository; do not describe behavior you have not read.\n\n## Validation\n\n- A reader following only `README.md` can name the backend framework and start the stack without opening source\n- Re-running the project profile no longer reports `django` as a detected framework",
+      "expectedArtifact": "Document",
+      "expectedOutput": [
+        "Give a newcomer or an agent a first document that names the real stack, the real entry points, and the command that checks a change."
+      ]
+    },
+    {
+      "id": "vendor-gitlink-unreviewable",
+      "title": "Edits inside the vendored trading-agents package never appear in a repository diff, and a fresh clone cannot initialize it",
+      "severity": "Medium",
+      "reason": "Fact: `git ls-files -s vendor` reports mode 160000 for `vendor/TradingAgents` — a gitlink — while `.gitmodules` does not exist, and the package is loaded into the backend through a `sys.path` shim. No instruction asset claims the vendored boundary. Inference: a change to code that computes trading signals shows in the super-repo only as a dirty submodule pointer, so it can ship unreviewed; and a fresh clone cannot reproduce the directory at all, so agent-run verification there diverges from the developer machine. Uncertainty: whether an agent has in fact modified `vendor/` is unobserved.",
+      "dimensionRefs": [
+        "task-understanding"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nMake the vendored dependency boundary explicit and reproducible: add a `.gitmodules` entry for `vendor/TradingAgents` recording its upstream URL and pinned commit so a fresh clone can initialize it, and state in the project instruction file that `vendor/` is externally owned and must not be edited in place.\n\nDiscover the upstream URL and current pinned commit from the repository before writing them; do not guess a remote. Do not run a submodule command that rewrites the pin.\n\n## Validation\n\n- `test -f .gitmodules` passes and names `vendor/TradingAgents`\n- `git submodule status` reports the same commit currently recorded by `git ls-files -s vendor`\n- An edit attempt under `vendor/` is refused by the deny rule",
+      "expectedArtifact": "Config",
+      "expectedOutput": [
+        "Make every change to third-party trading logic either visible in a diff or impossible."
+      ]
+    },
+    {
+      "id": "no-durable-owner-for-integration-context",
+      "title": "The vendored integration boundary is re-supplied by hand each time instead of living in the project",
+      "severity": "Medium",
+      "reason": "Fact: in two Task Episodes from independent context groups in the reviewed 30-day window, the user's own prompt carried the architecture briefing the agent needed — the backend stack, that the trading-agents package is vendored and resolved through a `sys.path` shim, where to look for the runner, and a demand for exact function signatures and return shapes — and each episode still spent its trace re-reading source (34 and 9 classified reads). One ended with a change and no check; the other ended with no change. Project-scope agent assets are zero and no `CLAUDE.md` or `AGENTS.md` exists, so there is no durable owner for that boundary. Inference: the demand is knowledge-shaped, not procedure-shaped. No Skill is proposed: the two episodes share no ordered procedure, verifier, or stop rule, so procedure demand is unsupported and the correct first owner is project documentation. Uncertainty: two episodes is the minimum threshold, prompt text was redacted to summaries, and whether the two targeted the same module could not be confirmed. Provider scope: `claude` session evidence only.",
+      "dimensionRefs": [
+        "learning-capture",
+        "task-understanding"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nWrite the vendored trading-agents integration boundary down once, in a short root `CLAUDE.md` (or a file it links to): where the package lives, how the `sys.path` shim resolves it, which module owns the adapter contract, and where the data-adapter function signatures are defined. Keep it to facts an agent cannot safely infer, and link to the owning source files rather than restating their contents.\n\nDo not create a Skill, command, or hook for this — the reviewed demand is knowledge, not a repeatable procedure.\n\n## Validation\n\n- `git ls-files CLAUDE.md` lists the file\n- The named shim path, adapter module, and signature location each resolve to a file that exists\n- A later task against the vendored package proceeds without the user restating the architecture; that comparison is the effectiveness check and cannot be claimed until it happens",
+      "expectedArtifact": "Rule",
+      "expectedOutput": [
+        "Stop the user from re-typing the same architecture briefing before work on the vendored package can start."
+      ]
+    },
+    {
+      "id": "delivery-closes-without-relevant-check",
+      "title": "Work reaches \"done\" with no acceptance boundary — no review, no required check, no recorded decision",
+      "severity": "Medium",
+      "reason": "Fact: no `.github`, `.gitlab-ci.yml`, or `.circleci` directory exists, `.git/hooks` holds only samples, and no merge or review gate was found; in the reviewed window the one change-bearing Task Episode closed as changed-without-check and ended at an assistant handoff, and no episode contains a check bound to its own change. The two checks that do appear are passing type checks in episodes that changed nothing. Inference: the only signal that work is complete is the agent saying so, which cannot be distinguished from unfinished or wrong work. Uncertainty: the reviewed portfolio is truncated and its population contains 75 change-bearing episodes that were not individually reviewed, so the per-episode fact must not be scaled to all of them; provider scope is `claude` only. Owner: a required check trigger bound to the change, once a verify command exists.",
+      "dimensionRefs": [
+        "reliable-delivery"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nBind the verify command to a moment that must happen before work is considered delivered. Prefer the smallest owned trigger the project can run locally — a pre-push git hook or a documented required step in `README.md` — over adding hosted CI, unless the user asks for it.\n\nAdding a hosted CI workflow, changing branch protection, or any other write to the git host requires separate authorization and is out of scope for this fix.\n\n## Validation\n\n- The trigger runs `make verify` and blocks on a non-zero exit\n- A deliberately failing test prevents the delivery step from completing\n- The route is recorded in `README.md` so a second person can reproduce it",
+      "expectedArtifact": "Gate",
+      "expectedOutput": [
+        "Give a finished change one recorded decision that is not the agent's own statement that it is done."
+      ]
+    },
+    {
+      "id": "divergent-scoped-permission-files",
+      "title": "Two directory-scoped permission files disagree, and one carries a malformed path pattern",
+      "severity": "Low",
+      "reason": "Fact: `.claude/settings.local.json` (51 allow entries) and `worker/.claude/settings.local.json` (9 entries) diverge — the root allows `Bash(python3:*)` while the nested file instead allows `Bash(python *)`, `Bash(python3 -c ' *)` and `Bash(python3 -)` — and the nested file re-grants workspace-wide read access from a subdirectory scope using a pattern with a doubled leading slash. Inference: that malformed pattern either over-grants the whole workspace from a nested scope or never matches; both are wrong and neither is visible to anyone, because both files are git-ignored. Uncertainty: effective precedence and whether the malformed pattern matches were not executed. Owner: consolidate into the single tracked `.claude/settings.json`.",
+      "dimensionRefs": [
+        "controlled-execution"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nConsolidate the two directory-scoped permission files into the one git-tracked `.claude/settings.json`, correcting the doubled-slash read pattern, and remove `worker/.claude/settings.local.json` so gating no longer depends on the agent's working directory.\n\nMachine-local approvals may stay in the root `settings.local.json`; only shared policy moves into the tracked file.\n\n## Validation\n\n- Exactly one `.claude/settings*.json` file remains outside machine-local scope, and it is tracked\n- The same command resolves to the same decision from the repository root and from `worker/`\n- No remaining path pattern contains a doubled leading slash",
+      "expectedArtifact": "Config",
+      "expectedOutput": [
+        "Make one command mean one permission decision, wherever the agent happens to start."
+      ]
+    },
+    {
+      "id": "agent-scratch-output-in-change-set",
+      "title": "Browser-automation scratch output is committed and inflates the change set a reviewer must read",
+      "severity": "Low",
+      "reason": "Fact: `.playwright-mcp/` is not ignored; console log and page snapshot files from earlier sessions are already tracked, and four more untracked ones from the current session account for 4 of the 15 files in the current change set. They are the sole trigger for a documentation-drift signal in the change analysis, which asked for README updates about a Playwright dump. Inference: agent tool output accumulates in history and distorts both human review and the automated change signal. Owner: `.gitignore`, plus removal of the already-tracked files.",
+      "dimensionRefs": [
+        "task-understanding"
+      ],
+      "aiFixPrompt": "/better-harness fix this issue\n\nAdd `.playwright-mcp/` to `.gitignore` and untrack the scratch files already committed there with `git rm --cached`, keeping the local copies.\n\nDo not delete files from disk and do not rewrite history.\n\n## Validation\n\n- `git check-ignore -q .playwright-mcp` exits 0\n- `git ls-files .playwright-mcp` returns nothing\n- Re-running the change analysis reports 11 changed files instead of 15, and the documentation-drift signal triggered by those files is gone",
+      "expectedArtifact": "Config",
+      "expectedOutput": [
+        "Keep agent scratch output out of commits so a reviewer only reads real changes."
+      ]
+    }
+  ]
+}

@@ -29,7 +29,7 @@ MODELS_DIR =  "models"
 USE_GPU: bool = False  # set to True via --gpu flag or USE_GPU=1 env var
 DEFAULT_WATCHLIST_SYMBOLS = (
     "AAH", "AAA", "ABB", "ACB", "ACV", "ADS", "AGG", "AGR", "ANV", "APH",
-    "ASM", "BAF", "BCG", "BCM", "BFC", "BID", "BMP", "BSI", "BSR", "BVB",
+    "ASM", "BAF", "BCM", "BFC", "BID", "BMP", "BSI", "BSR", "BVB",
     "BVH", "BVS", "BWE", "C4G", "CEO", "CII", "CMG", "CNG", "CSV", "CTD",
     "MIG", "CTG", "CTI", "CTR", "CTS", "DBC", "DCM", "DDV", "DGC", "DGW",
     "DHC", "DIG", "DPG", "DPM", "DPR", "DRC", "DRI", "DTD", "DVM", "DXG",
@@ -312,7 +312,7 @@ def williams_vix_fix_indicator(
     return wvf, rangeHigh, filtered, cond_FE
 
 
-# ── Inlined: app.services.strategies.breakout_ttm_005c ───────────────────────
+# ── Inlined: app.services.strategies.breakout_ttm_v1 ─────────────────────────
 
 FIXED_TTM_PARAMS = {
     'v1': {
@@ -518,7 +518,7 @@ def _compute_exits(close, high, low, atr_multiplier=1.9, atr_period=10, low_stop
 _EXIT_PARAM_KEYS = frozenset({'atr_period', 'atr_multiplier', 'low_stop_lookback'})
 
 
-class BreakoutTTM005C:
+class BreakoutTTMV1:
     def __init__(self, data, entry_version, *, use_kama_slope=True, init_cash=100.0, **param_overrides):
         if entry_version not in FIXED_TTM_PARAMS:
             raise ValueError(f'entry_version must be one of {sorted(FIXED_TTM_PARAMS)}, got {entry_version!r}')
@@ -1491,7 +1491,7 @@ def _run_feature_pipeline_impl(refresh_stock_cache: bool = False) -> dict[str, A
             continue
 
         log.info("  Strategy version=%s", ver)
-        strategy = BreakoutTTM005C(
+        strategy = BreakoutTTMV1(
             stocks_exclude_vnindex,
             ver,
             init_cash=MS_POSITION_BUDGET,

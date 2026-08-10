@@ -69,6 +69,7 @@ type PayoffPoint = {
 };
 
 const DEFAULT_SYMBOL = 'CHPG2518';
+const VOL_LOOKBACK_DAYS = 90;
 const DEFAULT_SCENARIO_MOVES = [5, 3, 0, -2, -5];
 
 const greekDescriptions = {
@@ -782,7 +783,30 @@ export default function CWPage() {
                         <StatCard title="Warrant Price" value={fmtNumber(inputs.warrantPrice)} subtitle={data.assumptions.warrant_price_source} />
                       </Grid>
                       <Grid item xs={12} sm={6} md={4}>
-                        <StatCard title="Volatility" value={`${fmtNumber(inputs.volatilityPct)}%`} subtitle={data.assumptions.volatility_source} />
+                        <StatCard
+                          title="IV (Used)"
+                          value={`${fmtNumber(inputs.volatilityPct)}%`}
+                          subtitle={data.assumptions.volatility_source}
+                        />
+                      </Grid>
+                      <Grid item xs={12} sm={6} md={4}>
+                        <StatCard
+                          title={`Hist Vol (${VOL_LOOKBACK_DAYS}d)`}
+                          value={
+                            typeof data.assumptions.hist_vol === 'number' && Number.isFinite(data.assumptions.hist_vol)
+                              ? `${fmtNumber(data.assumptions.hist_vol * 100)}%`
+                              : 'N/A'
+                          }
+                          subtitle={
+                            typeof data.assumptions.hist_vol === 'number' && Number.isFinite(data.assumptions.hist_vol) && inputs.volatilityPct > 0
+                              ? (() => {
+                                  const diff = inputs.volatilityPct / 100 - data.assumptions.hist_vol;
+                                  const sign = diff > 0 ? '+' : '';
+                                  return `IV ${sign}${fmtNumber(diff * 100)}% vs hist`;
+                                })()
+                              : undefined
+                          }
+                        />
                       </Grid>
                       <Grid item xs={12} sm={6} md={4}>
                         <StatCard title="Risk-Free Rate" value={`${fmtNumber(inputs.riskFreePct)}%`} />

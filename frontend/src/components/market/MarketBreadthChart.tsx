@@ -33,7 +33,7 @@ export default function MarketBreadthChart() {
     const loadData = async () => {
       try {
         setLoading(true);
-        const dateRange = getDateRange(365 * 5); // Last 2 years
+        const dateRange = getDateRange(365 * 10); // Last 2 years
         
         // Fetch both VNINDEX and market breadth data in parallel
         const [breadthResult, vnindexResult] = await Promise.all([

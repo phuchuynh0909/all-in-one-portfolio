@@ -1,0 +1,43 @@
+{
+  "v1": {
+    "bb_window": 18,
+    "bb_multiplier": 2.0,
+    "kc_window": 21,
+    "kc_multiplier": 0.8,
+    "kc_atr_period": 19,
+    "low_stop_lookback": 2,
+    "atr_period": 20,
+    "atr_mult_min": 1.0,
+    "atr_mult_max": 2.1,
+    "corr_window": 40,
+    "max_sl": 0.08
+  },
+  "v2": {
+    "bb_window": 25,
+    "bb_multiplier": 1.9000000000000001,
+    "kc_window": 13,
+    "kc_multiplier": 0.9,
+    "kc_atr_period": 6,
+    "low_stop_lookback": 4,
+    "atr_period": 18,
+    "atr_mult_min": 1.8,
+    "atr_mult_max": 3.7,
+    "corr_window": 15,
+    "max_sl": 0.06
+  },
+  "v3": {
+    "bb_window": 11,
+    "bb_multiplier": 0.9,
+    "kc_window": 20,
+    "kc_multiplier": 2.0,
+    "kc_atr_period": 13,
+    "low_stop_lookback": 5,
+    "atr_period": 9,
+    "atr_mult_min": 2.5,
+    "atr_mult_max": 4.0,
+    "corr_window": 25,
+    "max_sl": 0.09,
+    "william_vix_period": 18,
+    "consecutive_neg_threshold": 6
+  }
+}

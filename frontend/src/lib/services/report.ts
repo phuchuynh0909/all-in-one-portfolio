@@ -80,3 +80,56 @@ export const syncReports = async (limit: number = 100): Promise<SyncResponse> =>
   }
   return response.json();
 };
+
+// ---------------------------------------------------------------------------
+// RAG pipeline (PDF -> markdown -> embeddings -> Qdrant)
+// ---------------------------------------------------------------------------
+
+export type RagStatusValue =
+  | 'PENDING'
+  | 'PARSING'
+  | 'PARSED'
+  | 'EMBEDDING'
+  | 'EMBEDDED'
+  | 'FAILED'
+  | 'NONE';
+
+export interface RagStatus {
+  report_id: number;
+  status: RagStatusValue;
+  chunk_count?: number;
+  updated_at?: string;
+  error?: string;
+}
+
+export type PdfParser = 'marker' | 'llamaparse';
+
+/** Trigger the RAG pipeline for a report (runs as a background job). */
+export const triggerReportRag = async (
+  reportId: number,
+  recreate = false,
+  parser?: PdfParser,
+): Promise<RagStatus> => {
+  const params = new URLSearchParams({ recreate: String(recreate) });
+  if (parser) params.set('parser', parser);
+  const response = await fetch(
+    `${API_BASE_URL}/report/${reportId}/rag?${params.toString()}`,
+    { method: 'POST' },
+  );
+  if (!response.ok) {
+    throw new Error('Failed to queue RAG pipeline');
+  }
+  return response.json();
+};
+
+/** Bulk RAG status for all tracked reports (keyed by report id). */
+export const fetchRagStatuses = async (): Promise<Record<number, RagStatus>> => {
+  const response = await fetch(`${API_BASE_URL}/report/rag/statuses`);
+  if (!response.ok) {
+    throw new Error('Failed to fetch RAG statuses');
+  }
+  const data: { statuses: RagStatus[] } = await response.json();
+  const map: Record<number, RagStatus> = {};
+  for (const s of data.statuses) map[s.report_id] = s;
+  return map;
+};
