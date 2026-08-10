@@ -153,12 +153,18 @@ def smart_money_flow(
     b_main = b_c
 
     # ── Smart Money Flow ──────────────────────────────────────────────────────
+    # Both ratios below are guarded with ``where=`` rather than np.where(): the
+    # latter evaluates the division for *every* element first, so a flat bar
+    # (h == l, e.g. limit-locked) or a zero-flow window computes 0/0 and warns
+    # before the mask discards it.
     hl       = h - l
-    clv      = np.where(hl == 0, 0.0, ((c - l) - (h - c)) / hl)
+    clv      = np.zeros_like(hl)
+    np.divide((c - l) - (h - c), hl, out=clv, where=hl != 0)
     raw_flow = clv * v
     mf_num   = pd.Series(raw_flow).rolling(mf_len).sum().values
     mf_den   = pd.Series(np.abs(raw_flow)).rolling(mf_len).sum().values
-    mf_raw   = np.where(mf_den == 0, 0.0, mf_num / mf_den)
+    mf_raw   = np.zeros_like(mf_den)
+    np.divide(mf_num, mf_den, out=mf_raw, where=mf_den != 0)
     mf_sm    = (pd.Series(mf_raw).ewm(span=mf_smooth, adjust=False).mean().values
                 if mf_smooth > 1 else mf_raw)
     strength = np.clip(np.power(np.abs(mf_sm), mf_power), 0.0, 1.0)

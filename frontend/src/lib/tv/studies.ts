@@ -270,6 +270,9 @@ export const STUDY_SPECS: StudySpec[] = [
   },
   {
     id: 'matrix_series', name: 'Matrix Series (bridged)', priceStudy: false, precision: 1,
+    inputs: [
+      { id: 'showDot', name: 'Show Watch/Warning Point', defval: true },
+    ],
     plots: [
       { id: 'sup', title: 'MS Support', color: '#ef4444', width: 2, get: (d, i) => d.matrix_series?.support_line?.[i] },
       { id: 'res', title: 'MS Resistance', color: '#22c55e', width: 2, get: (d, i) => d.matrix_series?.resistance_line?.[i] },
@@ -279,6 +282,30 @@ export const STUDY_SPECS: StudySpec[] = [
       { id: 'll', title: 'MS LL', color: 'rgba(239,68,68,0.5)', width: 1, get: (d, i) => d.matrix_series?.ll?.[i] },
     ],
     fills: [{ a: 'hh', b: 'll', color: 'rgba(99,102,241,0.12)', title: 'MS Range' }],
+    // Amber circles marking overbought/oversold watch points (Pine's UP/DOWN
+    // Shape plots). UPshape is non-na iff `up > ob`; DOWNshape iff `down < os`
+    // (the h01/h02/l01/l02 split only sets the y-level), so we anchor each dot
+    // to its line value at the moment the threshold is crossed.
+    shapes: [
+      {
+        id: 'upDot', title: 'UP Shape', shape: 'shape_circle', location: 'Absolute',
+        color: '#FFBF00', size: 'tiny',
+        get: (d, i, o) => {
+          if (!o.showDot) return null;
+          const up = d.matrix_series?.up_line?.[i];
+          return typeof up === 'number' && up > 200 ? up : null;
+        },
+      },
+      {
+        id: 'downDot', title: 'DOWN Shape', shape: 'shape_circle', location: 'Absolute',
+        color: '#FFBF00', size: 'tiny',
+        get: (d, i, o) => {
+          if (!o.showDot) return null;
+          const down = d.matrix_series?.down_line?.[i];
+          return typeof down === 'number' && down < -200 ? down : null;
+        },
+      },
+    ],
   },
   {
     id: 'squeeze_ttm', name: 'Squeeze TTM (bridged)', priceStudy: false, precision: 2,

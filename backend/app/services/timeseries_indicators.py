@@ -286,10 +286,14 @@ def compute_stock_indicators(df: pd.DataFrame, indicators: list[IndicatorParams]
                 length = int(ind.params.get("length", 31))
                 multiplier = float(ind.params.get("multiplier", 2.2))
                 ce = chandelier_exit(close_prices, high_prices, low_prices, length=length, multiplier=multiplier)
-                dir_int = np.where(np.isnan(ce["direction"]), None, ce["direction"].astype(int))
+                # direction is float (NaN until the ATR warm-up ends); cast per
+                # element — a whole-array astype(int) would cast those NaNs too.
+                direction = [
+                    None if np.isnan(v) else int(v) for v in ce["direction"]
+                ]
                 indicator_data["chandelier_exit"] = {
                     "value":     convert_nans(ce["value"]),
-                    "direction": [int(v) if v is not None else None for v in dir_int],
+                    "direction": direction,
                     "long":      convert_nans(ce["long"]),
                     "short":     convert_nans(ce["short"]),
                 }

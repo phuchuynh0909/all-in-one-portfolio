@@ -185,6 +185,7 @@ async def _fetch_cw_quote(client: httpx.AsyncClient, symbol: str) -> dict[str, A
         headers=headers,
         json={"query": query},
     )
+    
     response.raise_for_status()
     payload = response.json()
 
