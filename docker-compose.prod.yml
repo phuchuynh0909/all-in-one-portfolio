@@ -20,6 +20,8 @@ services:
     volumes:
       - ./backend/models:/app/models
       - ./backend/portfolio.db:/app/app/portfolio.db
+      # Assets (params JSON, backtest .h5) are dockerignored and mounted at runtime.
+      - ./backend/assets:/app/assets
       # Vendored TradingAgents source (repo root, outside the build context).
       - ./vendor:/app/vendor
     env_file:
