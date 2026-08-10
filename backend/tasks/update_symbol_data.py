@@ -11,7 +11,8 @@ def update_symbol_data(symbol: str):
     """Update symbol data"""
     print(f"Updating symbol data for {symbol}")
 
-    DNSE_STOCK_DIR = "D:\\dnse\\eod\\stock"
+    # DNSE_STOCK_DIR = "D:\\dnse\\eod\\stock"
+    DNSE_STOCK_DIR = "D:\\fdata_ami\\MetaStock\\EOD\\Co phieu"
 
 
     def get_dir_list(dir_path):

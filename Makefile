@@ -93,7 +93,7 @@ prod-build-backend:
 	docker-compose -f docker-compose.prod.yml --env-file prod.env build backend --no-cache
 
 prod-build-workers:
-	docker-compose -f docker-compose.prod.yml --env-file prod.env build workers --no-cache
+	docker-compose -f docker-compose.prod.yml --env-file prod.env build worker-hawkes --no-cache
 
 prod-npm:
 	@echo "Access Nginx Proxy Manager at: http://localhost:81"
