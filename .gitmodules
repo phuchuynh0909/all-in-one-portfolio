@@ -1,0 +1,4 @@
+[submodule "vendor/TradingAgents"]
+	path = vendor/TradingAgents
+	url = git@github.com:TauricResearch/TradingAgents.git
+	branch = main
