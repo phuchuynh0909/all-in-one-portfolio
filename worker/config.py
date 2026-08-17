@@ -142,6 +142,38 @@ class MockConfig:
 
 
 @dataclass
+class DnseWsConfig:
+    """DNSE OpenAPI market-data WebSocket source configuration.
+
+    Used by ``infra.dnse_ws_input.DnseTradeSource`` to consume the Trade-Extra
+    feed at ``wss://ws-openapi.dnse.com.vn/v1/stream`` (HMAC auth, JSON frames).
+    Credentials come from ``DNSE_API_KEY`` / ``DNSE_API_SECRET``.
+    """
+
+    base_url: str
+    api_key: str
+    api_secret: str
+    boards: list[str]
+    encoding: str
+
+    @classmethod
+    def from_env(cls) -> "DnseWsConfig":
+        boards_str = os.getenv("DNSE_TRADE_BOARDS", "")
+        boards = (
+            [b.strip() for b in boards_str.split(",") if b.strip()]
+            if boards_str
+            else ["G1", "G3", "G4", "G7", "T1", "T2", "T3", "T4", "T6"]
+        )
+        return cls(
+            base_url=os.getenv("DNSE_WS_URL", "wss://ws-openapi.dnse.com.vn"),
+            api_key=os.getenv("DNSE_API_KEY", ""),
+            api_secret=os.getenv("DNSE_API_SECRET", ""),
+            boards=boards,
+            encoding=os.getenv("DNSE_WS_ENCODING", "json"),
+        )
+
+
+@dataclass
 class MQTTConfig:
     """MQTT broker configuration."""
 
@@ -434,6 +466,70 @@ class LargeOrderConfig:
 
 
 @dataclass
+class BlockEpisodeConfig:
+    """Large-execution ("block episode") detection configuration.
+
+    Symbol scope, session window, board and request pacing are reused from
+    ``LargeOrderConfig`` (same watchlist tape). These fields only cover the
+    statistical-detection knobs and the output table. ``detection_params``
+    lazily builds the ``core.large_execution.DetectionParams`` used by the
+    reconciler (numpy is imported there, not at config load time).
+    """
+
+    table: str
+    rolling_seconds: int
+    bin_seconds: int
+    baseline_bins: int
+    min_baseline_bins: int
+    z_threshold: float
+    imbalance_threshold: float
+    min_trades_per_bin: int
+    run_length: int
+    large_print_quantile: float
+    large_print_window: int
+    large_print_min_prior: int
+    episode_gap_bins: int
+
+    @classmethod
+    def from_env(cls) -> "BlockEpisodeConfig":
+        return cls(
+            table=os.getenv("CLICKHOUSE_BLOCK_EPISODES_TABLE", "block_episodes"),
+            rolling_seconds=int(os.getenv("BLOCK_EP_ROLLING_SECONDS", "30")),
+            bin_seconds=int(os.getenv("BLOCK_EP_BIN_SECONDS", "1")),
+            baseline_bins=int(os.getenv("BLOCK_EP_BASELINE_BINS", "1800")),
+            min_baseline_bins=int(os.getenv("BLOCK_EP_MIN_BASELINE_BINS", "300")),
+            z_threshold=float(os.getenv("BLOCK_EP_Z_THRESHOLD", "2.5")),
+            imbalance_threshold=float(os.getenv("BLOCK_EP_IMBALANCE_THRESHOLD", "0.70")),
+            min_trades_per_bin=int(os.getenv("BLOCK_EP_MIN_TRADES_PER_BIN", "3")),
+            run_length=int(os.getenv("BLOCK_EP_RUN_LENGTH", "2")),
+            large_print_quantile=float(os.getenv("BLOCK_EP_LARGE_PRINT_QUANTILE", "0.99")),
+            large_print_window=int(os.getenv("BLOCK_EP_LARGE_PRINT_WINDOW", "500")),
+            large_print_min_prior=int(os.getenv("BLOCK_EP_LARGE_PRINT_MIN_PRIOR", "30")),
+            episode_gap_bins=int(os.getenv("BLOCK_EP_EPISODE_GAP_BINS", "5")),
+        )
+
+    @property
+    def detection_params(self):
+        """Build the DetectionParams for core.large_execution.detect."""
+        from core.large_execution import DetectionParams
+
+        return DetectionParams(
+            rolling_seconds=self.rolling_seconds,
+            bin_seconds=self.bin_seconds,
+            baseline_bins=self.baseline_bins,
+            min_baseline_bins=self.min_baseline_bins,
+            z_threshold=self.z_threshold,
+            imbalance_threshold=self.imbalance_threshold,
+            min_trades_per_bin=self.min_trades_per_bin,
+            run_length=self.run_length,
+            large_print_quantile=self.large_print_quantile,
+            large_print_window=self.large_print_window,
+            large_print_min_prior=self.large_print_min_prior,
+            episode_gap_bins=self.episode_gap_bins,
+        )
+
+
+@dataclass
 class Config:
     """Main configuration container."""
 
@@ -441,12 +537,14 @@ class Config:
     clickhouse: ClickHouseConfig
     mock: MockConfig
     mqtt: MQTTConfig
+    dnse_ws: DnseWsConfig
     telegram: TelegramConfig
     price_alert: PriceAlertConfig
     tick_sync: TickSyncConfig
     reconciler: ReconcilerConfig
     hawkes: HawkesConfig
     large_order: LargeOrderConfig
+    block_episode: BlockEpisodeConfig
 
     @classmethod
     def load(cls) -> "Config":
@@ -456,12 +554,14 @@ class Config:
             clickhouse=ClickHouseConfig.from_env(),
             mock=MockConfig.from_env(),
             mqtt=MQTTConfig.from_env(),
+            dnse_ws=DnseWsConfig.from_env(),
             telegram=TelegramConfig.from_env(),
             price_alert=PriceAlertConfig.from_env(),
             tick_sync=TickSyncConfig.from_env(),
             reconciler=ReconcilerConfig.from_env(),
             hawkes=HawkesConfig.from_env(),
             large_order=LargeOrderConfig.from_env(),
+            block_episode=BlockEpisodeConfig.from_env(),
         )
 
 

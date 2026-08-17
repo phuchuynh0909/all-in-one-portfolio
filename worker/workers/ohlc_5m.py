@@ -28,7 +28,7 @@ def _get_env(name: str, default: str) -> str:
 
 
 def _get_ch_client():
-    host = _get_env("CLICKHOUSE_HOST", "192.168.1.30")
+    host = _get_env("CLICKHOUSE_HOST", "192.168.1.3")
     port = int(_get_env("CLICKHOUSE_PORT", "8123"))
     username = _get_env("CLICKHOUSE_USER", "kyostyle1")
     password = _get_env("CLICKHOUSE_PASSWORD", "kyostyle1")

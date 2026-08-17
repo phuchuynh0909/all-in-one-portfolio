@@ -105,7 +105,6 @@ def _load_fixed_ttm_params() -> dict[str, dict]:
     with _TTM_BEST_PARAMS_JSON.open() as f:
         from_json = json.load(f)
 
-    print(from_json)
     # Union of JSON + fallback-only versions (e.g. v4 lives only in the fallbacks).
     versions = set(_TTM_PARAM_FALLBACKS) | set(from_json)
     return {

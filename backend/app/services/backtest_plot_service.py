@@ -131,6 +131,77 @@ def _compute_mfe_mae(stats, data: pd.DataFrame) -> dict:
     }
 
 
+def _compute_mfe_mae_trades(stats, data: pd.DataFrame) -> "list[dict]":
+    """
+    Per-trade MFE/MAE points for a scatter plot.
+
+    Each item carries MAE/MFE (% of entry price, always non-negative magnitudes),
+    the realized return, direction, entry/exit timestamps and flags marking
+    whether the trade is still open and whether it is the most recent one.
+    The "current" trade is the last opened trade (latest EntryBar); if that
+    trade is still open it is also the live position.
+    """
+    if stats is None or not hasattr(stats, '_trades') or stats._trades.empty:
+        return []
+
+    highs = data['High'].values
+    lows  = data['Low'].values
+    index = data.index
+    n     = len(highs)
+    last_bar = n - 1
+
+    trades = stats._trades.reset_index(drop=True)
+    # Latest position = trade with the highest EntryBar (last one opened).
+    latest_pos = int(trades['EntryBar'].astype(int).idxmax()) if not trades.empty else -1
+
+    def _r(v) -> float:
+        return round(float(v), 4)
+
+    def _ts(bar: int):
+        if 0 <= bar < n:
+            val = index[bar]
+            return val.isoformat() if hasattr(val, "isoformat") else str(val)
+        return None
+
+    points: list[dict] = []
+    for i, t in trades.iterrows():
+        entry_bar   = int(t['EntryBar'])
+        raw_exit    = int(t['ExitBar'])
+        exit_bar    = min(raw_exit, last_bar)
+        entry_price = float(t['EntryPrice'])
+        direction   = 1 if float(t['Size']) > 0 else -1
+
+        trade_highs = highs[entry_bar: exit_bar + 1]
+        trade_lows  = lows[entry_bar:  exit_bar + 1]
+        if len(trade_highs) == 0:
+            continue
+
+        if direction == 1:  # long
+            mfe = (np.max(trade_highs) - entry_price) / entry_price * 100
+            mae = (entry_price - np.min(trade_lows))  / entry_price * 100
+        else:               # short
+            mfe = (entry_price - np.min(trade_lows))  / entry_price * 100
+            mae = (np.max(trade_highs) - entry_price) / entry_price * 100
+
+        is_open = raw_exit >= last_bar or pd.isna(t.get('ExitPrice'))
+        return_pct = t.get('ReturnPct')
+        return_pct = _r(float(return_pct) * 100) if return_pct is not None and not pd.isna(return_pct) else None
+
+        points.append({
+            'index':       int(i),
+            'mae':         _r(mae),
+            'mfe':         _r(mfe),
+            'return_pct':  return_pct,
+            'direction':   'long' if direction == 1 else 'short',
+            'entry_time':  _ts(entry_bar),
+            'exit_time':   _ts(exit_bar),
+            'is_open':     bool(is_open),
+            'is_latest':   int(i) == latest_pos,
+        })
+
+    return points
+
+
 async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) -> Dict:
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     stock_df = _load_delta_stocks(
@@ -192,6 +263,7 @@ async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) ->
             html_path.unlink()
 
     stats_dict = {}
+    mae_mfe_trades: list = []
     if stats is not None:
         raw_stats = stats.filter(regex="^[^_]").to_dict()
 
@@ -208,6 +280,7 @@ async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) ->
 
         stats_dict = {str(k): _normalize_value(v) for k, v in raw_stats.items()}
         stats_dict.update(_compute_mfe_mae(stats, stock_df))
+        mae_mfe_trades = _compute_mfe_mae_trades(stats, stock_df)
 
     return {
         "symbol": symbol,
@@ -216,4 +289,5 @@ async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) ->
         "html": html,
         "stats": stats_dict,
         "params": all_params,
+        "mae_mfe_trades": mae_mfe_trades,
     }

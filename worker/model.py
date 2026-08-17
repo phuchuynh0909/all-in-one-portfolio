@@ -146,3 +146,89 @@ ENGINE = ReplacingMergeTree(received_at)
 ORDER BY (symbol, sending_time, side)
 PARTITION BY toYYYYMMDD(sending_time)
 """
+
+
+# ---------------------------------------------------------------------------
+# Block episodes ("large-execution footprint") — stitched, same-direction
+# candidate bins produced by core.large_execution.detect. One row per episode.
+# A block episode is a *footprint* of sustained/one-sided execution or an
+# outlier large print — NOT proof of an institution or a parent order.
+# ---------------------------------------------------------------------------
+
+BLOCK_EPISODES_COLUMNS = [
+    "symbol",
+    "start_time",
+    "end_time",
+    "side",
+    "candidate_type",
+    "signed_notional",
+    "abs_notional",
+    "num_trades",
+    "num_bins",
+    "large_print_count",
+    "max_abs_z",
+    "max_abs_imbalance",
+    "received_at",
+]
+
+BLOCK_EPISODES_ARROW_SCHEMA = pa.schema(
+    [
+        pa.field("symbol", pa.string(), nullable=False),
+        pa.field("start_time", pa.timestamp("us", tz="UTC"), nullable=False),
+        pa.field("end_time", pa.timestamp("us", tz="UTC"), nullable=False),
+        pa.field("side", pa.int32(), nullable=False),
+        pa.field("candidate_type", pa.string(), nullable=False),
+        pa.field("signed_notional", pa.float64(), nullable=False),
+        pa.field("abs_notional", pa.float64(), nullable=False),
+        pa.field("num_trades", pa.int64(), nullable=False),
+        pa.field("num_bins", pa.int64(), nullable=False),
+        pa.field("large_print_count", pa.int64(), nullable=False),
+        pa.field("max_abs_z", pa.float64(), nullable=False),
+        pa.field("max_abs_imbalance", pa.float64(), nullable=False),
+        pa.field("received_at", pa.timestamp("us", tz="UTC"), nullable=False),
+    ]
+)
+
+BLOCK_EPISODES_CLICKHOUSE_SCHEMA = """
+    symbol String,
+    start_time DateTime64(6, 'UTC'),
+    end_time DateTime64(6, 'UTC'),
+    side Int32,
+    candidate_type String,
+    signed_notional Float64,
+    abs_notional Float64,
+    num_trades Int64,
+    num_bins Int64,
+    large_print_count Int64,
+    max_abs_z Float64,
+    max_abs_imbalance Float64,
+    received_at DateTime64(6, 'UTC'),
+"""
+
+BLOCK_EPISODES_CLICKHOUSE_TABLE = "block_episodes"
+
+# One episode per (symbol, start_time, side) — that tuple is the dedup key.
+# ReplacingMergeTree(received_at) lets a rerun overwrite an earlier episode
+# whose bounds/aggregates changed as more of the day's tape arrived.
+BLOCK_EPISODES_CLICKHOUSE_ORDER_BY = "symbol, start_time, side"
+
+BLOCK_EPISODES_CREATE_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {database}.block_episodes (
+    symbol String,
+    start_time DateTime64(6, 'UTC'),
+    end_time DateTime64(6, 'UTC'),
+    side Int32,
+    candidate_type String,
+    signed_notional Float64,
+    abs_notional Float64,
+    num_trades Int64,
+    num_bins Int64,
+    large_print_count Int64,
+    max_abs_z Float64,
+    max_abs_imbalance Float64,
+    received_at DateTime64(6, 'UTC')
+)
+ENGINE = ReplacingMergeTree(received_at)
+ORDER BY (symbol, start_time, side)
+PARTITION BY toYYYYMMDD(start_time)
+"""

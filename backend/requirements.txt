@@ -69,6 +69,7 @@ langgraph-checkpoint-sqlite>=2.0.0
 langchain-core>=0.3.81
 langchain-openai>=0.3.23
 langchain-google-genai>=2.0     # only needed when TRADINGAGENTS_LLM_PROVIDER=google/gemini
+langchain-anthropic>=0.3.15     # only needed when TRADINGAGENTS_LLM_PROVIDER=anthropic/claude
 stockstats>=0.6.5
 ddgs>=6.0            # keyless web search for the news/sentiment analysts (Tavily optional via TAVILY_API_KEY)
 # yfinance intentionally omitted: this deployment uses Vietnamese-market data

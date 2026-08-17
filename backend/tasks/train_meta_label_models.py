@@ -138,7 +138,7 @@ def load_ohlc_panel(
         with pd.HDFStore(cache_path, mode="r") as store:
             return store[store_key]
 
-    minio_endpoint = os.getenv("MINIO_ENDPOINT", "192.168.1.30:9000")
+    minio_endpoint = os.getenv("MINIO_ENDPOINT", "192.168.1.3:9000")
     aws_access_key_id = os.getenv("MINIO_ACCESS_KEY", os.getenv("AWS_ACCESS_KEY_ID", "CzOwnLkEDXQy951AOqes"))
     aws_secret_access_key = os.getenv("MINIO_SECRET_KEY", os.getenv("AWS_SECRET_ACCESS_KEY", "fdRe91TOtqTl0icUkZLsUnWvZa90aZ5qG5rVEf7S"))
     remote_host = os.getenv("META_LABEL_REMOTE_HOST", f"http://{minio_endpoint}")

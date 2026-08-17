@@ -1,0 +1,111 @@
+# Version-controlled research configuration for probable large execution programs.
+# All normalisation and threshold estimation must use prior trading days only.
+
+run:
+  name: l2_large_execution_program_v1
+  timezone: America/New_York
+  regular_session: ["09:30:00", "16:00:00"]
+  seed: 20260812
+
+universe:
+  listing_market: US_NMS
+  venue_mode: single_venue_first
+  min_median_daily_notional_usd: 20000000
+  max_median_spread_bps: 10.0
+  min_trailing_message_coverage: 0.95
+  baseline_lookback_sessions: 20
+  exclude_first_regular_minutes: 10
+  exclude_last_regular_minutes: 10
+  exclude_states: ["auction", "halt", "luld", "corporate_action", "correction_window"]
+
+data_quality:
+  require_strict_venue_sequence: true
+  max_unknown_order_reference_rate: 0.0001
+  max_crossed_book_rate: 0.00001
+  max_negative_depth_events: 0
+  require_top_of_book_crosscheck: true
+  reject_day_on_quality_failure: true
+
+book:
+  depth_levels_k: 5
+  level_decay_lambda: 0.69314718056
+  feature_clocks: ["1s", "5s", "30s", "100msg"]
+  replenishment_horizon_ms: 1000
+  candidate_merge_gap_seconds: 5
+  episode_quiet_end_seconds: 10
+  max_episode_seconds: 900
+  max_midprice_reversal_spreads_on_merge: 1.0
+
+trade_signing:
+  prefer_feed_aggressor_flag: true
+  use_quote_matching_when_missing: true
+  quote_match_tolerance_ms: 5
+  exclude_ambiguous_trades_from_primary_score: true
+  retain_sign_confidence: true
+
+normalisation:
+  method: empirical_cdf
+  conditioning_keys: ["symbol", "venue", "time_of_day_30m", "volatility_quintile", "depth_quintile"]
+  local_min_observations: 200
+  fallback_hierarchy: ["symbol_venue_tod", "symbol_venue", "liquidity_bucket_venue_tod"]
+  prior_only: true
+
+candidate_gates:
+  min_qualifying_gates: 2
+  z_signed_executed_volume: 2.5
+  signed_executed_volume_percentile: 0.99
+  min_depth_normalised_flow: 0.20
+  z_multi_level_ofi: 2.0
+  min_sign_agreement: 0.70
+  min_executions_for_persistence: 3
+  min_touch_depths_consumed: 1.5
+
+proxy_labels:
+  positive_signed_notional_percentile: 0.995
+  min_duration_seconds: 5
+  min_qualifying_seconds_in_30s: 5
+  min_directional_persistence: 0.70
+  hard_negative_requirements:
+    balanced_flow_max_abs_z: 0.5
+    no_sustained_execution: true
+    high_cancellation_context: true
+
+walk_forward:
+  train_sessions: 60
+  validation_sessions: 20
+  test_sessions: 20
+  min_test_blocks: 6
+  split_unit: whole_day
+  embargo_sessions: 1
+  freeze_parameters_before_locked_test: true
+
+metrics:
+  classification: ["pr_auc", "precision_at_daily_top_n", "recall_by_label_tier", "brier_score", "expected_calibration_error"]
+  event_horizons_seconds: [1, 5, 30, 60, 300]
+  stratifications: ["liquidity_bucket", "time_of_day", "volatility_regime", "spread_regime", "venue"]
+  bootstrap: block_by_symbol_day
+  bootstrap_resamples: 1000
+
+backtest:
+  signal_timestamp: first_detection_only
+  latency_ms_grid: [50, 250, 1000]
+  entry: next_eligible_quote_after_latency
+  default_entry_style: marketable
+  exits_seconds: [5, 30, 300]
+  participation_rate_grid: [0.001, 0.005, 0.01]
+  fixed_notional_usd: 10000
+  short_borrow_check_required: true
+  cost_model:
+    marketable_spread_fraction: 1.0
+    passive_spread_fraction: 0.5
+    per_share_fee_usd: 0.003
+    adverse_slippage_bps_grid: [0.0, 1.0, 3.0, 5.0]
+  prohibit_future_information: true
+  passive_fill_assumption: pessimistic_queue_model
+
+promotion_checks:
+  min_book_reconstruction_rate: 0.999
+  require_baseline_comparison: true
+  require_cost_latency_sensitivity: true
+  require_score_stability_by_regime: true
+  forbid_in_sample_only_claims: true

@@ -131,6 +131,18 @@ export interface H5BacktestResultsResponse {
   total_trades: number;
 }
 
+export interface MaeMfeTrade {
+  index: number;
+  mae: number;
+  mfe: number;
+  return_pct?: number | null;
+  direction: 'long' | 'short';
+  entry_time?: string | null;
+  exit_time?: string | null;
+  is_open: boolean;
+  is_latest: boolean;
+}
+
 export interface BacktestPlotResponse {
   symbol: string;
   start_date: string;
@@ -138,6 +150,7 @@ export interface BacktestPlotResponse {
   html: string;
   stats?: Record<string, unknown> | null;
   params?: Record<string, unknown> | null;
+  mae_mfe_trades?: MaeMfeTrade[];
 }
 
 // Fetch available symbols from watchlist

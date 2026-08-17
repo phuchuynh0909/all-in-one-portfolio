@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "//": "Git-tracked, reviewable agent policy for this repo. Unlike the per-machine settings.local.json, this file states what an agent may NEVER do here. See AGENTS.md for rationale.",
+  "permissions": {
+    "deny": [
+      "Read(./.env)",
+      "Read(./prod.env)",
+      "Read(./.env.*)",
+      "Read(**/.env)",
+      "Read(**/prod.env)",
+      "Bash(cat .env*)",
+      "Bash(cat prod.env)",
+      "Bash(xargs cat)",
+      "Bash(printenv:*)",
+      "Bash(env)",
+      "Bash(make prod-up)",
+      "Bash(make prod-down)",
+      "Bash(make prod-build)",
+      "Bash(make prod-build-frontend)",
+      "Bash(make prod-build-backend)",
+      "Bash(make prod-build-workers)",
+      "Bash(docker compose -f docker-compose.prod.yml:*)",
+      "Bash(docker-compose -f docker-compose.prod.yml:*)",
+      "Bash(pytest testing/*)",
+      "Bash(python testing/test_dnse_api.py:*)",
+      "Bash(python3 testing/test_dnse_api.py:*)"
+    ],
+    "ask": [
+      "Bash(git push:*)",
+      "Bash(git commit:*)",
+      "Bash(make down)",
+      "Bash(make clean:*)"
+    ]
+  }
+}

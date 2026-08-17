@@ -133,6 +133,59 @@ def list_analyses(symbol: Optional[str] = None, limit: int = 100) -> list[dict[s
         client.close()
 
 
+def list_prior_decisions(
+    symbol: str,
+    before_trade_date: str,
+    limit: int = 5,
+) -> list[dict[str, Any]]:
+    """Past decisions for one symbol, strictly before a trade date, newest first.
+
+    Feeds ``past_runs.build_past_context``. Two deliberate choices:
+
+    * The cutoff is on ``trade_date``, not ``created_at`` — a run replayed over
+      history must not read analyses of *later* sessions, however recently they
+      were computed.
+    * ``LIMIT 1 BY trade_date`` keeps only the newest run per session, so
+      re-running the same ticker+date does not spend the budget on duplicates.
+
+    Returns [] on any failure — prior context is an enrichment, never a
+    precondition for the next run.
+    """
+    client = _client()
+    try:
+        _ensure_table(client)
+        query = (
+            "SELECT trade_date, signal, substring(final_decision, 1, 4000), created_at "
+            f"FROM {settings.clickhouse_db}.{_TABLE} "
+            "WHERE symbol = %(symbol)s AND trade_date < %(before)s "
+            "ORDER BY trade_date DESC, created_at DESC "
+            "LIMIT 1 BY trade_date "
+            "LIMIT %(limit)s"
+        )
+        result = client.query(
+            query,
+            parameters={
+                "symbol": symbol.upper(),
+                "before": before_trade_date,
+                "limit": limit,
+            },
+        )
+        return [
+            {
+                "trade_date": r[0],
+                "signal": r[1],
+                "final_decision": r[2],
+                "created_at": r[3].isoformat() if r[3] is not None else "",
+            }
+            for r in result.result_rows
+        ]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Failed to list prior decisions for %s: %s", symbol, exc)
+        return []
+    finally:
+        client.close()
+
+
 def get_analysis(analysis_id: str) -> Optional[dict[str, Any]]:
     """Fetch one saved analysis with its full per-agent sections."""
     client = _client()

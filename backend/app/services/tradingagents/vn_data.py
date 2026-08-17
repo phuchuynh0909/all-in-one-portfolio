@@ -135,8 +135,18 @@ def get_stock_data(symbol: str, start_date: str, end_date: str) -> str:
 # technical_indicators : get_indicators
 # ---------------------------------------------------------------------------
 
+# Anchor-search window for the anchored VWAP, and the KAMA period — both feed
+# the platform's own indicator implementations (see _CUSTOM_INDICATORS), so the
+# analyst's numbers match the lines the charts draw. load_ohlcv's 2-year frame
+# leaves room for a 200-bar anchor search across the whole look-back window.
+_VWAP_WINDOW = int(os.getenv("TRADINGAGENTS_VWAP_WINDOW", "200"))
+_KAMA_PERIOD = int(os.getenv("TRADINGAGENTS_KAMA_PERIOD", "10"))
+# The market leg of the `regime` indicator (the ticker's own leg is the ticker).
+_REGIME_MARKET_SYMBOL = os.getenv("TRADINGAGENTS_REGIME_MARKET", "VNINDEX")
+
 # Same vocabulary + guidance the yfinance vendor exposes, so the market
-# analyst's prompt (which names these exact indicators) keeps working.
+# analyst's prompt (which names these exact indicators) keeps working, plus the
+# extras below that only this vendor serves (see _CUSTOM_INDICATORS).
 _IND_DESCRIPTIONS: dict[str, str] = {
     "close_50_sma": (
         "50 SMA: A medium-term trend indicator. Usage: Identify trend direction "
@@ -152,6 +162,13 @@ _IND_DESCRIPTIONS: dict[str, str] = {
         "10 EMA: A responsive short-term average. Usage: Capture quick shifts in "
         "momentum and potential entry points. Tips: Prone to noise in choppy "
         "markets; use alongside longer averages to filter false signals."
+    ),
+    "kama": (
+        f"KAMA: Kaufman's Adaptive Moving Average ({_KAMA_PERIOD}-period, in "
+        "VND). Speeds up in trending markets and flattens in noise, so it "
+        "whipsaws far less than a fixed-length MA. Usage: Trend direction and "
+        "dynamic support/resistance; a flat KAMA means the market is ranging. "
+        "Tips: It adapts, it does not lead — do not expect early reversal calls."
     ),
     "macd": (
         "MACD: Computes momentum via differences of EMAs. Usage: Look for "
@@ -198,11 +215,212 @@ _IND_DESCRIPTIONS: dict[str, str] = {
         "integrating price with volume. Tips: Volume spikes can skew it."
     ),
     "mfi": (
-        "MFI: Money Flow Index uses price and volume to measure buying/selling "
-        "pressure. Usage: Overbought >80 / oversold <20 and trend confirmation. "
-        "Tips: Divergence vs price can flag reversals."
+        "MFI: Money Flow Index (14) uses price and volume to measure "
+        "buying/selling pressure, scaled 0-100. Usage: Overbought >80 / oversold "
+        "<20 and trend confirmation. Tips: Divergence vs price can flag reversals."
+    ),
+    "vwap": (
+        "VWAP: Anchored VWAP (VND), the volume-weighted typical price "
+        f"((H+L+C)/3) accumulated from a swing anchor in the trailing "
+        f"{_VWAP_WINDOW} sessions. Each line gives both anchors: 'high-anchor' "
+        f"runs from the highest close of the {_VWAP_WINDOW}-bar window (the cost "
+        "basis of buyers at the top — overhead supply, usually resistance), "
+        "'low-anchor' from the lowest close (the accumulation basis — usually "
+        "support). Usage: Price above both is a strong tape, below both is weak, "
+        "between them is the working range; reclaiming the high-anchor is the "
+        "classic breakout confirmation. Tips: This is the same anchored VWAP the "
+        f"platform charts and breakout strategies use. A ticker with under "
+        f"{_VWAP_WINDOW} sessions of history returns N/A throughout — that is "
+        "missing history, not a market holiday."
+    ),
+    "regime": (
+        "REGIME: the platform's volatility-regime filter (GKYZ(21) volatility "
+        "min-max normalized to [0,1], with hysteresis — the state flips to "
+        "risk-on when the normalized value crosses above 0.8 and back to "
+        "risk-off only when it crosses below 0.2, so it is sticky rather than "
+        "flickering). Each line gives the ticker's own state first, then "
+        f"{_REGIME_MARKET_SYMBOL}'s. IMPORTANT: in this platform's vocabulary "
+        "'RISK-ON' means the HIGH-VOLATILITY state and 'RISK-OFF' the "
+        "LOW-VOLATILITY state — it is a volatility label, NOT a directional or "
+        "bullish/bearish call, so never read RISK-ON as 'buy'. Usage: it is a "
+        "position-sizing and entry filter — the same one the platform's "
+        "backtests gate on; risk-on argues for smaller size and wider stops on "
+        "trend entries, risk-off for calmer conditions. Tips: the state is "
+        "seeded risk-off at the start of the loaded window, so treat a long "
+        "unbroken run of risk-off at the far end of the look-back as possibly "
+        "un-warmed rather than meaningful; pair it with atr for the size of the "
+        "move, since gkyz alone says nothing about direction."
+    ),
+    "obv": (
+        "OBV: On-Balance Volume, a running total that adds the day's volume on "
+        "an up close and subtracts it on a down close (shares, cumulative from "
+        "the start of the loaded ~2-year window, so the level is arbitrary — "
+        "only its slope and divergences carry meaning). Usage: Confirm a trend "
+        "when OBV makes new highs/lows with price. Tips: OBV rising while price "
+        "stalls signals accumulation; falling while price holds signals "
+        "distribution."
     ),
 }
+
+
+def _calc_vwap(df: pd.DataFrame) -> pd.Series:
+    """Anchored VWAP, both anchors, via the platform's own ``avwap``.
+
+    Same implementation the charts and the breakout strategies use
+    (``app.services.indicators.vwap``): find the highest (and separately the
+    lowest) close in the trailing ``_VWAP_WINDOW`` bars, then volume-weight the
+    typical price from that bar to today. Deliberately *not* a rolling window
+    average — the anchor is what makes the line a cost basis.
+
+    Both anchors ship in one value because they are read as a pair: overhead
+    supply above, accumulation basis below. Values are pre-rendered strings so
+    the caller's formatter passes them through; bars before the window fills stay
+    NaN and render as "N/A".
+    """
+    from app.services.indicators.vwap import avwap
+
+    close = df["Close"].to_numpy(dtype=float)
+    high = df["High"].to_numpy(dtype=float)
+    low = df["Low"].to_numpy(dtype=float)
+    volume = df["Volume"].to_numpy(dtype=float)
+
+    kwargs = dict(close=close, high=high, low=low, volume=volume, window=_VWAP_WINDOW)
+    from_high = avwap(is_highest=True, **kwargs)
+    from_low = avwap(is_highest=False, **kwargs)
+
+    rendered = [
+        f"high-anchor {h:,.2f} · low-anchor {lo:,.2f}"
+        if pd.notna(h) and pd.notna(lo)
+        else float("nan")
+        for h, lo in zip(from_high, from_low)
+    ]
+    return pd.Series(rendered, index=df.index, dtype=object)
+
+
+def _calc_obv(df: pd.DataFrame) -> pd.Series:
+    """On-Balance Volume via the platform's own ``obv_2d`` (one symbol column).
+
+    Running Σ(±volume) signed by the close-to-close move, flat on an unchanged
+    close. The total starts at 0 on the first loaded bar, so the *level* is
+    relative to the loaded window — slope and divergence are what the analyst
+    reads.
+    """
+    from app.services.indicators.common import obv_2d
+
+    close = df["Close"].to_numpy(dtype=float).reshape(-1, 1)
+    volume = df["Volume"].to_numpy(dtype=float).reshape(-1, 1)
+    return pd.Series(obv_2d(close, volume)[:, 0], index=df.index)
+
+
+def _gkyz_regime(df: pd.DataFrame) -> pd.DataFrame:
+    """Normalized GKYZ volatility and its sticky risk-on/risk-off state.
+
+    Thin wrapper over the platform's own regime signal
+    (``app.services.indicators.regime_signals.gkyz_hysteresis``: GKYZ(21)
+    min-max normalized to [0,1], flip to risk-on above 0.8, back to risk-off
+    below 0.2) — the same filter the backtests gate entries on, so the analyst
+    and the strategies read one definition.
+
+    Note the platform's convention: ``risk_on=True`` means the *high-volatility*
+    state, not "bullish". Both the value and the state are causal.
+    """
+    from app.services.indicators.gkyz_volatility import calculate_gkyz_volatility
+    from app.services.indicators.regime_signals import GKYZ_WINDOW, gkyz_hysteresis
+
+    ohlc = [df[col].to_numpy(dtype=float) for col in ("Open", "High", "Low", "Close")]
+    gkyz = calculate_gkyz_volatility(*ohlc, window=GKYZ_WINDOW, normalize=True)
+    risk_on = gkyz_hysteresis(*ohlc, index=df.index, window=GKYZ_WINDOW)
+    return pd.DataFrame({"gkyz": gkyz, "risk_on": risk_on.to_numpy()}, index=df.index)
+
+
+# Keyed by curr_date: one analyst run asks for the same as-of date across every
+# ticker it looks at, so the index frame is fetched once per run.
+_market_regime_cache: dict[str, pd.DataFrame | None] = {}
+
+
+def _market_regime(curr_date: str) -> pd.DataFrame | None:
+    """The index's regime frame, indexed by ``YYYY-MM-DD``; None if unavailable.
+
+    VNINDEX is excluded from the watchlist but loadable by name (the backtest
+    service does the same). A missing index must degrade the market leg to "n/a"
+    rather than sink the whole indicator.
+    """
+    if curr_date not in _market_regime_cache:
+        try:
+            market = load_ohlcv(_REGIME_MARKET_SYMBOL, curr_date)
+            regime = _gkyz_regime(market)
+            regime.index = pd.to_datetime(market["Date"]).dt.strftime("%Y-%m-%d")
+            _market_regime_cache[curr_date] = regime
+        except Exception as exc:  # noqa: BLE001 — a data gap must not kill the tool
+            logger.warning(
+                "Market regime unavailable for %s as of %s: %s",
+                _REGIME_MARKET_SYMBOL, curr_date, exc,
+            )
+            _market_regime_cache[curr_date] = None
+    return _market_regime_cache[curr_date]
+
+
+def _regime_label(risk_on: Any, gkyz: Any) -> str:
+    state = "RISK-ON (high-vol)" if bool(risk_on) else "RISK-OFF (low-vol)"
+    return f"{state} gkyz={gkyz:.2f}" if pd.notna(gkyz) else f"{state} gkyz=n/a"
+
+
+def _calc_regime(df: pd.DataFrame) -> pd.Series:
+    """The ticker's own volatility regime alongside the market's, per bar.
+
+    Both legs on one line because that is how the strategies read them: a
+    ``risk_regime`` for the name and a ``market_risk_regime`` for the tape.
+    """
+    own = _gkyz_regime(df)
+    days = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d")
+    market = _market_regime(days.iloc[-1]) if len(days) else None
+
+    rendered = []
+    for pos, day in enumerate(days):
+        own_part = _regime_label(own["risk_on"].iat[pos], own["gkyz"].iat[pos])
+        if market is not None and day in market.index:
+            row = market.loc[day]
+            market_part = _regime_label(row["risk_on"], row["gkyz"])
+        else:
+            market_part = "n/a"
+        rendered.append(
+            f"{own_part} · {_REGIME_MARKET_SYMBOL} {market_part}"
+        )
+    return pd.Series(rendered, index=df.index, dtype=object)
+
+
+def _calc_kama(df: pd.DataFrame) -> pd.Series:
+    """KAMA(10) via TA-Lib — the same call the chart's ``kama`` study makes.
+
+    stockstats also ships a ``kama``, but on different defaults (fast 5 / slow 34)
+    and without squaring the smoothing constant, so its line would not match the
+    one the user sees on the chart.
+    """
+    import talib
+
+    return pd.Series(
+        talib.KAMA(df["Close"].to_numpy(dtype=float), timeperiod=_KAMA_PERIOD),
+        index=df.index,
+    )
+
+
+# Indicators computed from the platform's own indicator library rather than
+# stockstats — either because stockstats lacks them (VWAP, OBV) or because its
+# definition disagrees with the one the charts draw (KAMA).
+_CUSTOM_INDICATORS: dict[str, Any] = {
+    "vwap": _calc_vwap,
+    "obv": _calc_obv,
+    "kama": _calc_kama,
+    "regime": _calc_regime,
+}
+
+# stockstats scales MFI 0-1; every reference (and the description above) uses
+# 0-100, so rescale rather than teach the model a non-standard threshold.
+_IND_SCALE: dict[str, float] = {"mfi": 100.0}
+
+# Above this magnitude the 4-decimal rendering is noise, not precision — OBV runs
+# to billions of shares. Prices and oscillators stay below it and are unaffected.
+_LARGE_VALUE = 1e6
 
 
 def get_indicators(
@@ -225,11 +443,17 @@ def get_indicators(
     # Frame ending on/before curr_date (raises NoMarketDataError if empty).
     df = load_ohlcv(symbol, curr_date)
 
-    # wrap() mutates its argument in place, so hand it a copy and keep df intact
-    # for the (capitalized) Date column — stockstats lowercases columns.
-    work = df.copy()
-    stock_df = wrap(work)
-    series = stock_df[indicator]  # triggers stockstats calculation
+    if indicator in _CUSTOM_INDICATORS:
+        series = _CUSTOM_INDICATORS[indicator](df)
+    else:
+        # wrap() mutates its argument in place, so hand it a copy and keep df
+        # intact for the (capitalized) Date column — stockstats lowercases columns.
+        work = df.copy()
+        stock_df = wrap(work)
+        series = stock_df[indicator]  # triggers stockstats calculation
+    scale = _IND_SCALE.get(indicator)
+    if scale:
+        series = series * scale
     dates = pd.to_datetime(df["Date"]).dt.strftime("%Y-%m-%d").tolist()
     values = dict(zip(dates, list(series.values)))
 
@@ -241,10 +465,18 @@ def get_indicators(
     while cursor >= before:
         key = cursor.strftime("%Y-%m-%d")
         value = values.get(key)
-        if value is None or pd.isna(value):
+        if key not in values:
             rendered = "N/A: Not a trading day (weekend or holiday)"
+        elif value is None or pd.isna(value):
+            # The bar traded but the indicator has no value yet — it needs more
+            # prior history than the frame holds (200 bars for vwap, 200 for
+            # close_200_sma). Saying "not a trading day" here would be a lie the
+            # analyst then repeats.
+            rendered = "N/A: insufficient prior history for this indicator"
         elif isinstance(value, float):
-            rendered = f"{value:.4f}"
+            rendered = (
+                f"{value:,.0f}" if abs(value) >= _LARGE_VALUE else f"{value:.4f}"
+            )
         else:
             rendered = str(value)
         lines.append(f"{key}: {rendered}")
@@ -348,15 +580,105 @@ def _report_section(sym: str, start_date: str, end_date: str) -> str | None:
     return "\n".join(parts)
 
 
+_WICHART_NEWS_MAX = int(os.getenv("TRADINGAGENTS_COMPANY_NEWS_MAX", "12"))
+_WICHART_NEWS_SUMMARY_CHARS = 700
+
+
+def _wichart_company_news(sym: str, start_date: str, end_date: str) -> str | None:
+    """Company headlines from wichart's xbrain-news feed, filtered by ticker.
+
+    Uses the ``codetag`` firehose filter (see ``wichart_news_client``). Returns
+    None on any failure or when no items fall in the window, so the caller can
+    keep degrading toward the web-search fallback.
+    """
+    from app.services import wichart_news_client as news
+
+    try:
+        items = news.fetch_news(
+            category_type=None,
+            codetag=sym,
+            limit=max(_WICHART_NEWS_MAX * 2, 20),
+        )
+    except Exception as exc:  # noqa: BLE001 — enrichment only, never fail the tool
+        logger.warning("wichart company news unavailable for %s: %s", sym, exc)
+        return None
+
+    start = pd.to_datetime(start_date)
+    end = pd.to_datetime(end_date)
+
+    # publish_date is null for some item types (e.g. insider-trade registrations),
+    # so fall back to the datapoint date, then the underlying report's ngaykn,
+    # then created_at — otherwise those headlines drop out entirely.
+    def _day(item: dict[str, Any]) -> str:
+        meta = item.get("metadata")
+        meta_day = _macro_date(meta.get("ngaykn")) if isinstance(meta, dict) else ""
+        return (
+            _macro_date(item.get("publish_date"))
+            or _macro_date(item.get("indicator_data_date"))
+            or meta_day
+            or _macro_date(item.get("created_at"))
+        )
+
+    dated = [(d, i) for i in items if (d := _day(i))]
+    in_range = [(d, i) for d, i in dated if start <= pd.to_datetime(d) <= end]
+
+    note = ""
+    if not in_range:
+        # Items are sparse; fall back to the most recent ones before end_date.
+        in_range = [(d, i) for d, i in dated if pd.to_datetime(d) <= end]
+        if in_range:
+            note = (
+                " (No items fell strictly within the requested window; showing the "
+                "most recent prior headlines for context.)"
+            )
+
+    if not in_range:
+        return None
+
+    in_range.sort(key=lambda pair: pair[0], reverse=True)
+    shown = in_range[:_WICHART_NEWS_MAX]
+
+    parts = [f"# Company news for {sym} ({start_date} to {end_date}){note}", ""]
+    for day, item in shown:
+        title = str(item.get("title") or "(untitled)").strip()
+        parts.append(f"## {day} — {title}")
+
+        # Analyst reports carry a rating + target price in metadata; surface it.
+        meta = item.get("metadata")
+        if isinstance(meta, dict):
+            bits = []
+            rec = str(meta.get("khuyennghi") or "").strip()
+            if rec:
+                bits.append(f"Rating: {rec}")
+            target = meta.get("giamuctieu")
+            if target:
+                bits.append(f"Target: {_fmt_ratio(target, 0)} VND")
+            source = str(meta.get("nguon") or "").strip()
+            if source:
+                bits.append(f"By {source}")
+            if bits:
+                parts.append(" · ".join(bits))
+
+        summary = str(item.get("ai_summary") or item.get("main_content_text") or "").strip()
+        if summary:
+            if len(summary) > _WICHART_NEWS_SUMMARY_CHARS:
+                summary = summary[:_WICHART_NEWS_SUMMARY_CHARS].rstrip() + " …"
+            parts.append(summary)
+        parts.append("")
+    return "\n".join(parts).strip()
+
+
 def _company_news(ticker: str, start_date: str, end_date: str) -> str:
     """Company-level news, knowledge-base first.
 
     Tiered so we prefer our own curated research over the open web:
       1. **Knowledge base** — semantic search over embedded wichart research
          reports in Qdrant, filtered to this ticker (``kb_search``).
-      2. If the KB has no match, the curated report *metadata* (ClickHouse) is a
+      2. If neither exists, the wichart xbrain-news company feed (``codetag``)
+         provides live ticker-tagged headlines.
+      3. If the KB has no match, the curated report *metadata* (ClickHouse) is a
          cheap secondary internal source.
-      3. Only when we have no internal signal at all do we fall back to a live
+      4. Only when we have no internal signal at all do we fall back to a live
          **web search**.
     """
     from . import kb_search, web_search as ws
@@ -377,7 +699,17 @@ def _company_news(ticker: str, start_date: str, end_date: str) -> str:
         )
         return f"{body}\n\n{note}"
 
-    # Tier 2: curated report metadata (reports that exist but aren't embedded yet).
+    # Tier 2: wichart xbrain-news company feed (ticker-tagged headlines).
+    wichart_text = _wichart_company_news(sym, start_date, end_date)
+    if wichart_text:
+        return (
+            f"{wichart_text}\n\n"
+            "Source: wichart xbrain-news company feed (no knowledge-base or "
+            "research-report match). Base the assessment on these headlines; do "
+            "not fabricate any beyond what is shown."
+        )
+
+    # Tier 3: curated report metadata (reports that exist but aren't embedded yet).
     report_text = _report_section(sym, start_date, end_date)
     if report_text:
         return (
@@ -386,7 +718,7 @@ def _company_news(ticker: str, start_date: str, end_date: str) -> str:
             "assessment on this evidence; do not fabricate headlines."
         )
 
-    # Tier 3: live web search fallback (no internal knowledge for this ticker).
+    # Tier 4: live web search fallback (no internal knowledge for this ticker).
     if ws.web_search_enabled():
         days = _lookback_days(start_date, end_date)
         web = ws.search_and_format(

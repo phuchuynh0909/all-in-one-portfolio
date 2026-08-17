@@ -87,7 +87,7 @@ def load_ohlc_from_clickhouse(
             "clickhouse-connect is required: pip install clickhouse-connect"
         ) from e
 
-    h  = host     or os.environ.get("CLICKHOUSE_HOST",     "192.168.1.30")
+    h  = host     or os.environ.get("CLICKHOUSE_HOST",     "192.168.1.3")
     p  = int(port or os.environ.get("CLICKHOUSE_PORT",     "8123"))
     u  = username or os.environ.get("CLICKHOUSE_USER",     "kyostyle1")
     pw = password or os.environ.get("CLICKHOUSE_PASSWORD", "kyostyle1")

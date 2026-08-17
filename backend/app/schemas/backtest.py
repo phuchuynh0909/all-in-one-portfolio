@@ -41,6 +41,19 @@ class BacktestResponse(BaseModel):
     execution_time: ExecutionTime
 
 
+class MaeMfeTrade(BaseModel):
+    """Per-trade maximum adverse/favorable excursion point for scatter plots."""
+    index: int
+    mae: float
+    mfe: float
+    return_pct: Optional[float] = None
+    direction: str
+    entry_time: Optional[str] = None
+    exit_time: Optional[str] = None
+    is_open: bool = False
+    is_latest: bool = False
+
+
 class BacktestPlotResponse(BaseModel):
     symbol: str
     start_date: str
@@ -48,6 +61,7 @@ class BacktestPlotResponse(BaseModel):
     html: str
     stats: Optional[Dict[str, Any]] = None
     params: Optional[Dict[str, Any]] = None
+    mae_mfe_trades: List[MaeMfeTrade] = []
 
 
 # ============================================================================

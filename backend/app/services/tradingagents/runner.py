@@ -30,7 +30,7 @@ import time
 from typing import Iterator
 
 # Importing the package installs the sys.path shim for ``import tradingagents``.
-from . import vn_data
+from . import past_runs, vn_data
 
 logger = logging.getLogger(__name__)
 
@@ -618,7 +618,14 @@ def build_config(
     cfg["max_debate_rounds"] = int(os.getenv("TRADINGAGENTS_MAX_DEBATE_ROUNDS", "1"))
     cfg["max_risk_discuss_rounds"] = int(os.getenv("TRADINGAGENTS_MAX_RISK_ROUNDS", "1"))
     cfg["output_language"] = os.getenv("TRADINGAGENTS_OUTPUT_LANGUAGE", "Vietnamese")
-    cfg["checkpoint_enabled"] = False
+    # Checkpoint/resume: when enabled, LangGraph persists state after each node
+    # to a per-ticker SQLite DB under data_cache_dir/checkpoints so an
+    # interrupted run can resume from the last successful step. Default on;
+    # set TRADINGAGENTS_CHECKPOINT_ENABLED=false to disable.
+    cfg["checkpoint_enabled"] = (
+        os.getenv("TRADINGAGENTS_CHECKPOINT_ENABLED", "true").strip().lower()
+        in ("true", "1", "yes", "on")
+    )
     cfg["online_tools"] = True
     cfg["data_vendors"] = {cat: "portfolio" for cat in _ALL_CATEGORIES}
     cfg["tool_vendors"] = {}
@@ -777,13 +784,39 @@ def _check_provider(provider: str, base_url: str | None) -> tuple[bool, str]:
         )
 
     base = base_url or DEFAULT_OLLAMA_URL
+    import requests
+
+    # openai_compatible (e.g. a 9router / LiteLLM gateway) speaks the OpenAI API,
+    # not Ollama's — probe /v1/models with the bearer key. Only true Ollama has
+    # the /api/tags endpoint (which such gateways answer with 401/404).
+    if provider.lower() != "ollama":
+        from tradingagents.llm_clients.api_key_env import get_api_key_env
+
+        v1 = base.rstrip("/")
+        if not v1.endswith("/v1"):
+            v1 = f"{v1}/v1"
+        key_env = get_api_key_env(provider)
+        key = os.getenv(key_env) if key_env else None
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
+        try:
+            resp = requests.get(f"{v1}/models", headers=headers, timeout=3)
+            resp.raise_for_status()
+            return True, f"provider '{provider}' reachable at {v1}"
+        except Exception as exc:  # noqa: BLE001
+            hint = (
+                f" Set {key_env}=... to authenticate." if key_env and not key else ""
+            )
+            return False, (
+                f"provider '{provider}' not reachable at {v1} ({exc})."
+                f" Check TRADINGAGENTS_LLM_BACKEND_URL points at the gateway's "
+                f"OpenAI-compatible endpoint.{hint}"
+            )
+
     # /api/tags lives at the server root, not under the OpenAI /v1 prefix.
     root = base.rstrip("/")
     if root.endswith("/v1"):
         root = root[: -len("/v1")]
     try:
-        import requests
-
         resp = requests.get(f"{root}/api/tags", timeout=3)
         resp.raise_for_status()
         return True, f"ollama reachable at {root}"
@@ -912,6 +945,7 @@ def run_analysis_stream(
         },
     }
 
+    checkpointer_ctx = None
     try:
         # Model overrides are applied while the graph is built; the compiled
         # nodes keep their own clients once the block exits.
@@ -921,10 +955,20 @@ def run_analysis_stream(
             )
 
         instrument_context = build_instrument_context(symbol, "stock")
+        # Our own saved analyses, scored against what the price then did, are the
+        # primary source here: this streaming path never calls propagate(), so
+        # upstream's markdown memory log is never written, and its outcome
+        # resolver prices through yfinance/SPY, which cannot value a VN ticker.
+        # The log is still consulted as a fallback in case it is populated.
         try:
-            past_context = ta.memory_log.get_past_context(symbol)
-        except Exception:  # noqa: BLE001 — memory log is optional context
+            past_context = past_runs.build_past_context(symbol, str(trade_date))
+        except Exception:  # noqa: BLE001 — prior context is optional
             past_context = ""
+        if not past_context:
+            try:
+                past_context = ta.memory_log.get_past_context(symbol)
+            except Exception:  # noqa: BLE001 — memory log is optional context
+                past_context = ""
 
         init_state = ta.propagator.create_initial_state(
             symbol,
@@ -935,12 +979,51 @@ def run_analysis_stream(
         )
         args = ta.propagator.get_graph_args()
 
+        # Resumable checkpointing: this streaming path bypasses
+        # TradingAgentsGraph.propagate(), so replicate its checkpoint wiring here.
+        # Recompile the graph with a per-ticker SqliteSaver and pin a
+        # deterministic thread_id (ticker+date+graph-shape) so an interrupted run
+        # resumes from the last completed node instead of restarting.
+        graph = ta.graph
+        checkpoint_signature = ""
+        if cfg.get("checkpoint_enabled"):
+            from tradingagents.graph.checkpointer import (
+                checkpoint_step,
+                get_checkpointer,
+                thread_id,
+            )
+
+            checkpoint_signature = ta._run_signature("stock")
+            checkpointer_ctx = get_checkpointer(cfg["data_cache_dir"], symbol)
+            saver = checkpointer_ctx.__enter__()
+            graph = ta.workflow.compile(checkpointer=saver)
+            tid = thread_id(symbol, str(trade_date), checkpoint_signature)
+            args.setdefault("config", {}).setdefault("configurable", {})[
+                "thread_id"
+            ] = tid
+
+            resumed_step = checkpoint_step(
+                cfg["data_cache_dir"], symbol, str(trade_date), checkpoint_signature
+            )
+            if resumed_step is not None:
+                logger.info(
+                    "Resuming %s on %s from checkpoint step %d",
+                    symbol,
+                    trade_date,
+                    resumed_step,
+                )
+                yield "resumed", {"step": int(resumed_step)}
+            else:
+                logger.info(
+                    "Starting fresh checkpointed run for %s on %s", symbol, trade_date
+                )
+
         seen_sections: set[str] = set()
         step = 0
         final_state: dict = {}
 
         # stream_mode="values": each chunk is the full accumulated state.
-        for state in ta.graph.stream(init_state, **args):
+        for state in graph.stream(init_state, **args):
             if not isinstance(state, dict):
                 continue
             final_state = state
@@ -989,6 +1072,15 @@ def run_analysis_stream(
 
         yield "decision", {"signal": signal, "full": str(final_decision)}
 
+        # Run completed: drop the checkpoint so the next run for this
+        # ticker+date starts fresh instead of resuming stale state.
+        if cfg.get("checkpoint_enabled"):
+            from tradingagents.graph.checkpointer import clear_checkpoint
+
+            clear_checkpoint(
+                cfg["data_cache_dir"], symbol, str(trade_date), checkpoint_signature
+            )
+
         # Persist the completed analysis so it appears in the history dashboard.
         try:
             from . import store
@@ -1022,3 +1114,8 @@ def run_analysis_stream(
     except Exception as exc:  # noqa: BLE001
         logger.exception("TradingAgents run failed for %s", symbol)
         yield "error", {"error": str(exc)}
+    finally:
+        # Release the SQLite connection. On a crash the checkpoint rows survive
+        # (not cleared), so a later run with the same ticker+date can resume.
+        if checkpointer_ctx is not None:
+            checkpointer_ctx.__exit__(None, None, None)

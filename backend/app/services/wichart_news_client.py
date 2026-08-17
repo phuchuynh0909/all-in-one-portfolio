@@ -69,11 +69,16 @@ def fetch_news(
     category_type: Optional[str] = MACRO_CATEGORY_TYPE,
     tag_level_1: Optional[str] = None,
     search: Optional[str] = None,
+    codetag: Optional[str] = None,
     important_level: Optional[int] = None,
     limit: int = 20,
     page: int = 1,
 ) -> list[dict[str, Any]]:
     """Return one page of news items, newest first.
+
+    ``codetag`` filters to a single ticker's company news (e.g. ``"KBC"``); it is
+    the firehose stream rather than the macro one, so pass ``category_type=None``
+    alongside it.
 
     Raises :class:`WichartNewsError` when the envelope is not the expected shape;
     an empty result set is returned as ``[]`` rather than raised, since "no items
@@ -89,6 +94,8 @@ def fetch_news(
         params["tag_level_1"] = tag_level_1
     if search:
         params["search"] = search
+    if codetag:
+        params["codetag"] = codetag
     if important_level is not None:
         params["important_level"] = int(important_level)
 
