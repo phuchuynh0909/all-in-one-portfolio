@@ -27,6 +27,7 @@ import os
 import re
 import threading
 import time
+import uuid
 from typing import Iterator
 
 # Importing the package installs the sys.path shim for ``import tradingagents``.
@@ -885,6 +886,176 @@ def _collect_sections(state: dict) -> dict[str, str]:
     return out
 
 
+_TRUTHY = ("true", "1", "yes", "on")
+
+# LangSmith renamed its environment variables (LANGCHAIN_* → LANGSMITH_*) and
+# both spellings are still read across the stack, so whichever half the operator
+# sets is mirrored onto the other.
+_LANGSMITH_ALIASES: tuple[tuple[str, str], ...] = (
+    ("LANGSMITH_TRACING", "LANGCHAIN_TRACING_V2"),
+    ("LANGSMITH_API_KEY", "LANGCHAIN_API_KEY"),
+    ("LANGSMITH_PROJECT", "LANGCHAIN_PROJECT"),
+    ("LANGSMITH_ENDPOINT", "LANGCHAIN_ENDPOINT"),
+)
+
+_langsmith_logged = False
+
+
+def langsmith_project() -> str:
+    """The LangSmith project traces are written to."""
+    return os.getenv("LANGSMITH_PROJECT") or "default"
+
+
+def langsmith_enabled() -> bool:
+    """Whether LangSmith tracing is on for this process (and make it coherent).
+
+    Every LLM call in the vendored framework goes through a LangChain chat model
+    (``NormalizedChatOpenAI`` and friends subclass ``ChatOpenAI``) driven by a
+    LangGraph graph, so LangChain's callback system already carries each prompt,
+    each tool call and each reply — reasoning included, since a thinking model's
+    ``reasoning_content`` rides along on the traced message. Exporting all of it
+    therefore needs no change to any call site, only these env vars (put them in
+    the backend's ``.env``, which docker-compose passes into the container)::
+
+        LANGSMITH_TRACING=true
+        LANGSMITH_API_KEY=lsv2_...
+        LANGSMITH_PROJECT=all-in-one-portfolio   # optional
+        LANGSMITH_ENDPOINT=...                   # optional, self-hosted instance
+
+    Two bits of housekeeping ride on the check. Both spellings of each variable
+    are mirrored (see ``_LANGSMITH_ALIASES``). And tracing asked for *without* a
+    key is switched off here rather than left half-configured: LangChain would
+    otherwise keep exporting runs to an endpoint that rejects them, logging an
+    auth failure for every batch — much noisier than not tracing at all.
+    """
+    global _langsmith_logged
+
+    for canonical, legacy in _LANGSMITH_ALIASES:
+        current, alias = os.getenv(canonical), os.getenv(legacy)
+        if current and not alias:
+            os.environ[legacy] = current
+        elif alias and not current:
+            os.environ[canonical] = alias
+
+    if os.getenv("LANGSMITH_TRACING", "").strip().lower() not in _TRUTHY:
+        return False
+    if not os.getenv("LANGSMITH_API_KEY"):
+        logger.warning(
+            "LANGSMITH_TRACING is on but LANGSMITH_API_KEY is unset; disabling "
+            "tracing instead of failing every export."
+        )
+        os.environ["LANGSMITH_TRACING"] = "false"
+        os.environ["LANGCHAIN_TRACING_V2"] = "false"
+        return False
+    if not _langsmith_logged:
+        logger.info("LangSmith tracing enabled (project %s)", langsmith_project())
+        _langsmith_logged = True
+    return True
+
+
+def _langsmith_run_metadata(
+    cfg: dict, symbol: str, trade_date: str, analysts: tuple[str, ...]
+) -> dict:
+    """Metadata stamped on the run for one analysis.
+
+    Flat string values only — LangSmith filters and the UI work best without
+    nested objects, and base_url is deliberately omitted (it can embed a keyed
+    gateway URL). LangChain hands a config's metadata down to every nested span,
+    so these land on each agent node and each individual model call too: a search
+    for ``symbol = VCG`` returns the prompts and replies, not just the root run.
+    """
+    roles = cfg.get("llm_roles") or {}
+    metadata = {
+        "symbol": symbol,
+        "trade_date": str(trade_date),
+        "analysts": ",".join(analysts),
+        "llm_provider": "+".join(providers_in_use(cfg)),
+        "deep_think_llm": str(roles.get("deep", {}).get("model", "")),
+        "quick_think_llm": str(roles.get("quick", {}).get("model", "")),
+        "output_language": str(cfg.get("output_language", "")),
+    }
+    # Per-analyst pins, present only where one differs from the quick model.
+    for analyst, model in (cfg.get("analyst_llms") or {}).items():
+        metadata[f"{analyst}_llm"] = str(model)
+    return metadata
+
+
+def _langsmith_trace_url(run_id: uuid.UUID) -> str:
+    """The LangSmith URL for a run that has not started yet, or ``""``.
+
+    The run id is minted by the caller and handed to LangGraph as
+    ``config["run_id"]``, which is what makes the link knowable up front: it can
+    be streamed to the UI with the ``started`` event and — thanks to
+    ``?poll=true`` — the page fills in as the agents work rather than only once
+    the analysis finishes.
+
+    Costs a project and a tenant lookup, on a short timeout and its own client so
+    a slow LangSmith cannot hold up the analysis. Both are best-effort: a failure
+    (no network, or a project that LangSmith will only create when the first
+    trace lands) costs the link, not the tracing.
+    """
+    try:
+        from types import SimpleNamespace
+
+        from langsmith import Client
+
+        return Client(timeout_ms=(3_000, 3_000)).get_run_url(
+            run=SimpleNamespace(id=run_id), project_name=langsmith_project()
+        )
+    except Exception as exc:  # noqa: BLE001 — the link is a convenience
+        logger.warning("Could not resolve the LangSmith trace URL: %s", exc)
+        return ""
+
+
+def _apply_langsmith_config(
+    args: dict,
+    cfg: dict,
+    symbol: str,
+    trade_date: str,
+    analysts: tuple[str, ...],
+    run_id: uuid.UUID,
+) -> None:
+    """Name, tag and stamp the graph run so its trace is findable.
+
+    LangGraph reads ``run_name``/``run_id``/``tags``/``metadata`` off the
+    invocation config for its root run, and LangChain propagates them into every
+    nested span, so this is the entire integration on the call side: the graph,
+    each analyst and debate node, each data-tool call and each model request
+    (prompt in, reasoning and reply out) export under one named run.
+
+    Without it the trace still exists — it is just called "LangGraph" and carries
+    nothing to search on, which is useless once more than one ticker has run.
+    """
+    config = args.setdefault("config", {})
+    config["run_id"] = run_id
+    config["run_name"] = f"TradingAgents {symbol} {trade_date}"
+    config["tags"] = [
+        "tradingagents",
+        symbol,
+        *(f"analyst:{analyst}" for analyst in analysts),
+        *(f"provider:{provider}" for provider in providers_in_use(cfg)),
+    ]
+    config.setdefault("metadata", {}).update(
+        _langsmith_run_metadata(cfg, symbol, str(trade_date), analysts)
+    )
+
+
+def _flush_langsmith() -> None:
+    """Block until the queued spans have been exported.
+
+    LangChain batches exports on a background thread. An analysis runs for
+    minutes, so waiting a moment at the end is cheap, and it means the trace is
+    complete on LangSmith by the time the client sees ``done`` — including when
+    the worker is recycled right after the response closes.
+    """
+    try:
+        from langchain_core.tracers.langchain import wait_for_all_tracers
+
+        wait_for_all_tracers()
+    except Exception as exc:  # noqa: BLE001 — never fail a finished run
+        logger.warning("Failed to flush LangSmith traces: %s", exc)
+
+
 def run_analysis_stream(
     symbol: str,
     trade_date: str,
@@ -904,7 +1075,7 @@ def run_analysis_stream(
 
     Event types:
       started  {symbol, date, analysts, provider, deep_think_llm,
-                quick_think_llm, analyst_llms, llm_roles}
+                quick_think_llm, analyst_llms, llm_roles, trace_url}
       node     {node}                       — a graph step advanced
       report   {section, content}           — a section report became available
       decision {signal, full}               — final BUY/HOLD/SELL + rationale
@@ -927,6 +1098,15 @@ def run_analysis_stream(
     from tradingagents.agents.utils.agent_utils import build_instrument_context
     from tradingagents.graph.trading_graph import TradingAgentsGraph
 
+    # LangSmith: minting the run id here (rather than letting LangGraph mint one)
+    # is what lets the trace link go out with the first event, so the run can be
+    # watched live. None when tracing is off — nothing else in the run branches
+    # on it beyond attaching the config and flushing at the end.
+    trace_id = uuid.uuid4() if langsmith_enabled() else None
+    trace_url = _langsmith_trace_url(trace_id) if trace_id else ""
+    if trace_url:
+        logger.info("LangSmith trace for %s: %s", symbol, trace_url)
+
     # Echo the resolved assignment so the UI can show what actually ran, not just
     # what it asked for (env defaults fill anything it left unset).
     yield "started", {
@@ -943,6 +1123,8 @@ def run_analysis_stream(
             role: {"provider": str(spec["provider"]), "model": str(spec["model"])}
             for role, spec in (cfg.get("llm_roles") or {}).items()
         },
+        # Empty unless LangSmith tracing is configured; the run is unaffected.
+        "trace_url": trace_url,
     }
 
     checkpointer_ctx = None
@@ -978,6 +1160,12 @@ def run_analysis_stream(
             instrument_context=instrument_context,
         )
         args = ta.propagator.get_graph_args()
+
+        # LangSmith: LangChain exports the prompts, tool calls and replies by
+        # itself once tracing is on; this names the run and stamps it with what
+        # is being analysed so the trace is filterable by symbol/date/model.
+        if trace_id is not None:
+            _apply_langsmith_config(args, cfg, symbol, trade_date, analysts, trace_id)
 
         # Resumable checkpointing: this streaming path bypasses
         # TradingAgentsGraph.propagate(), so replicate its checkpoint wiring here.
@@ -1119,3 +1307,7 @@ def run_analysis_stream(
         # (not cleared), so a later run with the same ticker+date can resume.
         if checkpointer_ctx is not None:
             checkpointer_ctx.__exit__(None, None, None)
+        # Errors are traced too — the failing node's run carries the exception —
+        # so flush on the way out of a failed run as well as a successful one.
+        if trace_id is not None:
+            _flush_langsmith()

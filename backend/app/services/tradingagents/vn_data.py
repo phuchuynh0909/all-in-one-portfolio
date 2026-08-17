@@ -33,12 +33,26 @@ from typing import Any
 
 import pandas as pd
 
+from .utils import fmt_billion, fmt_count, fmt_ratio, iso_day, lookback_days
+
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Core OHLCV loader (shared by price, indicator, and snapshot tools)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Configuration & constants
+#
+# Every tunable (the TRADINGAGENTS_* environment variables) and every static
+# table the tools below read lives here, grouped in the order the file uses
+# them: OHLCV frames → indicators → company news → macro news → macro
+# indicators → fundamentals. Dispatch tables that point at functions
+# (_CUSTOM_INDICATORS, VN_VENDOR_METHODS) and the process-level caches stay
+# beside the code they serve — those are state, not configuration.
+# ===========================================================================
 
+# ──────────────────────────────────────────────────────────────────────────
+# OHLCV frames
+# ──────────────────────────────────────────────────────────────────────────
+# ClickHouse hands back lowercase columns; the framework's formatters and
+# ``stockstats.wrap`` both expect the capitalized yfinance spelling.
 _RENAME = {
     "date": "Date",
     "open": "Open",
@@ -49,92 +63,9 @@ _RENAME = {
 }
 _OHLCV_COLS = ["Date", "Open", "High", "Low", "Close", "Volume"]
 
-
-def _load_ohlcv_frame(
-    symbol: str,
-    start: datetime | None = None,
-    end: datetime | None = None,
-) -> pd.DataFrame:
-    """Load one symbol's daily OHLCV as a capitalized-column frame.
-
-    Returns an empty DataFrame when the symbol has no rows. Columns:
-    ``Date, Open, High, Low, Close, Volume`` (``Date`` as datetime, ascending),
-    which is exactly the shape ``stockstats.wrap`` and the vendor formatters
-    expect.
-    """
-    from app.services.stock_service import _load_delta_stocks
-
-    raw = _load_delta_stocks(symbols=[symbol.upper()], start=start, end=end)
-    if raw is None or raw.empty:
-        return pd.DataFrame(columns=_OHLCV_COLS)
-
-    df = raw.rename(columns=_RENAME)
-    keep = [c for c in _OHLCV_COLS if c in df.columns]
-    df = df[keep].copy()
-    df["Date"] = pd.to_datetime(df["Date"])
-    df = df.sort_values("Date").reset_index(drop=True)
-    return df
-
-
-def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
-    """Drop-in replacement for ``stockstats_utils.load_ohlcv``.
-
-    Same signature/contract as the framework helper (used by the verification
-    snapshot): a look-ahead-free frame ending on or before ``curr_date``. Raises
-    ``NoMarketDataError`` when nothing is available so the router emits its
-    standard sentinel.
-    """
-    from tradingagents.dataflows.symbol_utils import NoMarketDataError
-
-    curr = pd.to_datetime(curr_date)
-    start = (curr - pd.DateOffset(years=2)).to_pydatetime()
-    df = _load_ohlcv_frame(symbol, start=start, end=curr.to_pydatetime())
-    if not df.empty:
-        df = df[df["Date"] <= curr].reset_index(drop=True)
-    if df.empty:
-        raise NoMarketDataError(
-            symbol, symbol.upper(), f"no OHLCV rows on or before {curr_date}"
-        )
-    return df
-
-
-# ---------------------------------------------------------------------------
-# core_stock_apis : get_stock_data
-# ---------------------------------------------------------------------------
-
-
-def get_stock_data(symbol: str, start_date: str, end_date: str) -> str:
-    """OHLCV price history for a ticker over a date range (CSV, like yfinance)."""
-    from tradingagents.dataflows.symbol_utils import NoMarketDataError
-
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    df = _load_ohlcv_frame(symbol, start=start, end=end)
-    if df.empty:
-        raise NoMarketDataError(
-            symbol, symbol.upper(), f"no rows between {start_date} and {end_date}"
-        )
-
-    out = df.copy()
-    for col in ("Open", "High", "Low", "Close"):
-        if col in out.columns:
-            out[col] = out[col].round(2)
-    out = out.set_index("Date")
-    csv_string = out.to_csv()
-
-    header = (
-        f"# Stock data for {symbol.upper()} (Vietnam equity) "
-        f"from {start_date} to {end_date}\n"
-        f"# Total records: {len(out)}\n"
-        f"# Source: platform ClickHouse ohlc_eod (VND, split/dividend adjusted)\n\n"
-    )
-    return header + csv_string
-
-
-# ---------------------------------------------------------------------------
-# technical_indicators : get_indicators
-# ---------------------------------------------------------------------------
-
+# ──────────────────────────────────────────────────────────────────────────
+# Technical indicators
+# ──────────────────────────────────────────────────────────────────────────
 # Anchor-search window for the anchored VWAP, and the KAMA period — both feed
 # the platform's own indicator implementations (see _CUSTOM_INDICATORS), so the
 # analyst's numbers match the lines the charts draw. load_ohlcv's 2-year frame
@@ -261,6 +192,251 @@ _IND_DESCRIPTIONS: dict[str, str] = {
         "distribution."
     ),
 }
+
+# stockstats scales MFI 0-1; every reference (and the description above) uses
+# 0-100, so rescale rather than teach the model a non-standard threshold.
+_IND_SCALE: dict[str, float] = {"mfi": 100.0}
+
+# Above this magnitude the 4-decimal rendering is noise, not precision — OBV runs
+# to billions of shares. Prices and oscillators stay below it and are unaffected.
+_LARGE_VALUE = 1e6
+
+# ──────────────────────────────────────────────────────────────────────────
+# Company news — curated research reports + wichart xbrain-news
+# ──────────────────────────────────────────────────────────────────────────
+# Research reports listed per call by ``_report_section``.
+_MAX_REPORTS = 8
+_MAX_SUMMARIES = 4  # cap the (slower) DeltaLake body lookups per call
+
+# The same two caps for the xbrain-news company feed: headlines shown, and the
+# length each item's summary is trimmed to.
+_WICHART_NEWS_MAX = int(os.getenv("TRADINGAGENTS_COMPANY_NEWS_MAX", "12"))
+_WICHART_NEWS_SUMMARY_CHARS = 700
+
+# ──────────────────────────────────────────────────────────────────────────
+# Global / macro news (get_global_news)
+# ──────────────────────────────────────────────────────────────────────────
+# Macro/market queries powering get_global_news. Override with
+# TRADINGAGENTS_NEWS_QUERIES (comma-separated) — defaults blend Vietnam-market
+# and global-macro angles.
+_DEFAULT_NEWS_QUERIES = (
+    "Vietnam stock market VN-Index news",
+    "State Bank of Vietnam interest rate inflation",
+    "Vietnam economy GDP export FDI outlook",
+    "global markets Fed interest rates macro outlook",
+)
+
+# KB chunks pulled per macro query. Deliberately below the company-level default:
+# several queries run per call and the macro backdrop wants breadth across topics,
+# not depth on one strategy report.
+_GLOBAL_KB_TOP_K = int(os.getenv("TRADINGAGENTS_GLOBAL_KB_TOP_K", "3"))
+
+# Tier 2 of get_global_news: wichart's Vietnam macro stream — the same
+# xbrain-news feed ``get_macro_indicators`` reads, but unfiltered by topic, so one
+# call covers rates, FX, SBV operations, prices, growth and credit at once.
+_GLOBAL_FEED_FETCH_LIMIT = int(os.getenv("TRADINGAGENTS_GLOBAL_FEED_LIMIT", "60"))
+_GLOBAL_FEED_MAX_ITEMS = int(os.getenv("TRADINGAGENTS_GLOBAL_FEED_MAX_ITEMS", "10"))
+
+# Which queries the feed can answer. It carries Vietnam only (``category_type``
+# "Thế giới" returns nothing), so a query about the Fed, the dollar or China has
+# to go to the web tier — matching on these markers is what keeps the domestic
+# topics off the open web without silently dropping the global ones.
+_VN_QUERY_MARKERS = (
+    "vietnam",
+    "viet nam",
+    "việt",
+    "vn-index",
+    "vnindex",
+    "vnd",
+    "sbv",
+    "hose",
+    "hnx",
+)
+
+# ──────────────────────────────────────────────────────────────────────────
+# Macro indicators (get_macro_indicators)
+# ──────────────────────────────────────────────────────────────────────────
+# The upstream tool is written against FRED, so the analyst asks for US-flavoured
+# aliases ("cpi", "fed_funds_rate", "10y_treasury"). Map those onto the feed's own
+# Vietnamese topic tags where an equivalent exists; anything unmapped is passed to
+# the feed's free-text search, and a miss degrades to the general macro digest.
+_MACRO_TAG_ALIASES: dict[str, str] = {
+    # policy & market rates
+    "fed_funds_rate": "Lãi suất",
+    "policy_rate": "Lãi suất",
+    "interest_rate": "Lãi suất",
+    "rates": "Lãi suất",
+    "rate": "Lãi suất",
+    "interbank": "Lãi suất",
+    "10y_treasury": "Lãi suất",
+    "yield_curve": "Lãi suất",
+    # central-bank operations / liquidity
+    "monetary_policy": "Chính sách tiền tệ",
+    "liquidity": "Chính sách tiền tệ",
+    "omo": "Chính sách tiền tệ",
+    "sbv": "Chính sách tiền tệ",
+    "money_supply": "Chính sách tiền tệ",
+    "m2": "Chính sách tiền tệ",
+    # currency
+    "fx": "Tỷ giá",
+    "usd": "Tỷ giá",
+    "usdvnd": "Tỷ giá",
+    "exchange_rate": "Tỷ giá",
+    "currency": "Tỷ giá",
+    # prices
+    "cpi": "Giá cả",
+    "inflation": "Giá cả",
+    "core_pce": "Giá cả",
+    "prices": "Giá cả",
+    # activity
+    "real_gdp": "Tăng trưởng kinh tế",
+    "gdp": "Tăng trưởng kinh tế",
+    "growth": "Tăng trưởng kinh tế",
+    "pmi": "Sản xuất",
+    "manufacturing": "Sản xuất",
+    "industrial_production": "Sản xuất",
+    "fdi": "Đầu tư",
+    "investment": "Đầu tư",
+    "trade": "Giao dịch quốc tế",
+    "exports": "Giao dịch quốc tế",
+    "imports": "Giao dịch quốc tế",
+    "trade_balance": "Giao dịch quốc tế",
+    "retail_sales": "Tiêu dùng",
+    "consumption": "Tiêu dùng",
+    "credit": "Hệ thống ngân hàng",
+    "banking": "Hệ thống ngân hàng",
+    # labour has no counterpart in this feed — left unmapped on purpose so the
+    # caller gets the "not covered" note instead of an unrelated tag's items.
+}
+
+# Trailing window when the caller does not supply look_back_days. The upstream
+# FRED tool defaults to a year, but this is a news feed publishing several items a
+# day: a month is already ~40 dated releases.
+_MACRO_WINDOW_DAYS = int(os.getenv("TRADINGAGENTS_MACRO_WINDOW_DAYS", "90"))
+_MACRO_MAX_ITEMS = int(os.getenv("TRADINGAGENTS_MACRO_MAX_ITEMS", "12"))
+# Rows fetched per request before date filtering — the feed is not date-filterable
+# server-side, so the window is applied here and needs headroom to work with.
+_MACRO_FETCH_LIMIT = int(os.getenv("TRADINGAGENTS_MACRO_FETCH_LIMIT", "60"))
+_MACRO_SUMMARY_CHARS = 700
+
+# ──────────────────────────────────────────────────────────────────────────
+# Fundamentals — ruatichsan statements + 24hmoney company index
+# ──────────────────────────────────────────────────────────────────────────
+# The API returns all three statements in one payload keyed by these short names.
+_STATEMENTS: dict[str, tuple[str, str]] = {
+    "cdkt": ("balance_sheet", "Balance sheet (Cân đối kế toán)"),
+    "kqkd": ("income_statement", "Income statement (Kết quả kinh doanh)"),
+    "lctt": ("cashflow", "Cash flow (Lưu chuyển tiền tệ)"),
+}
+
+# Periods shown per statement. The API returns 30+ quarters, which is far more
+# than an analyst prompt should carry; the most recent five drive the narrative.
+_STMT_PERIODS = int(os.getenv("TRADINGAGENTS_FUNDAMENTALS_PERIODS", "12"))
+
+# (label, latest field, trailing-4-quarters field, decimals). The "4Q" variants
+# are the same metric over the last four reported quarters, i.e. TTM.
+_RATIO_ROWS: tuple[tuple[str, str, str | None, int], ...] = (
+    ("P/E", "pe", "pe4Q", 2),
+    ("P/B", "pb", "pb4Q", 2),
+    ("EPS (VND/share)", "eps", "eps4Q", 0),
+    ("EPS diluted (VND/share)", "eps_diluted", "eps_4q_diluted", 0),
+    ("Book value (VND/share)", "book_value", "book_value4Q", 0),
+    ("ROE (%)", "roe", "roe4Q", 2),
+    ("ROA (%)", "roa", "roa4Q", 2),
+    ("EV/EBITDA", "ev_per_ebitda", "ev_per_ebitda4Q", 2),
+    ("EV/EBIT", "ev_per_ebit", "ev_per_ebit4Q", 2),
+    ("Beta", "the_beta", "the_beta4Q", 2),
+)
+
+# ---------------------------------------------------------------------------
+# Core OHLCV loader (shared by price, indicator, and snapshot tools)
+# ---------------------------------------------------------------------------
+
+
+def _load_ohlcv_frame(
+    symbol: str,
+    start: datetime | None = None,
+    end: datetime | None = None,
+) -> pd.DataFrame:
+    """Load one symbol's daily OHLCV as a capitalized-column frame.
+
+    Returns an empty DataFrame when the symbol has no rows. Columns:
+    ``Date, Open, High, Low, Close, Volume`` (``Date`` as datetime, ascending),
+    which is exactly the shape ``stockstats.wrap`` and the vendor formatters
+    expect.
+    """
+    from app.services.stock_service import _load_delta_stocks
+
+    raw = _load_delta_stocks(symbols=[symbol.upper()], start=start, end=end)
+    if raw is None or raw.empty:
+        return pd.DataFrame(columns=_OHLCV_COLS)
+
+    df = raw.rename(columns=_RENAME)
+    keep = [c for c in _OHLCV_COLS if c in df.columns]
+    df = df[keep].copy()
+    df["Date"] = pd.to_datetime(df["Date"])
+    df = df.sort_values("Date").reset_index(drop=True)
+    return df
+
+
+def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
+    """Drop-in replacement for ``stockstats_utils.load_ohlcv``.
+
+    Same signature/contract as the framework helper (used by the verification
+    snapshot): a look-ahead-free frame ending on or before ``curr_date``. Raises
+    ``NoMarketDataError`` when nothing is available so the router emits its
+    standard sentinel.
+    """
+    from tradingagents.dataflows.symbol_utils import NoMarketDataError
+
+    curr = pd.to_datetime(curr_date)
+    start = (curr - pd.DateOffset(years=2)).to_pydatetime()
+    df = _load_ohlcv_frame(symbol, start=start, end=curr.to_pydatetime())
+    if not df.empty:
+        df = df[df["Date"] <= curr].reset_index(drop=True)
+    if df.empty:
+        raise NoMarketDataError(
+            symbol, symbol.upper(), f"no OHLCV rows on or before {curr_date}"
+        )
+    return df
+
+
+# ---------------------------------------------------------------------------
+# core_stock_apis : get_stock_data
+# ---------------------------------------------------------------------------
+
+
+def get_stock_data(symbol: str, start_date: str, end_date: str) -> str:
+    """OHLCV price history for a ticker over a date range (CSV, like yfinance)."""
+    from tradingagents.dataflows.symbol_utils import NoMarketDataError
+
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    df = _load_ohlcv_frame(symbol, start=start, end=end)
+    if df.empty:
+        raise NoMarketDataError(
+            symbol, symbol.upper(), f"no rows between {start_date} and {end_date}"
+        )
+
+    out = df.copy()
+    for col in ("Open", "High", "Low", "Close"):
+        if col in out.columns:
+            out[col] = out[col].round(2)
+    out = out.set_index("Date")
+    csv_string = out.to_csv()
+
+    header = (
+        f"# Stock data for {symbol.upper()} (Vietnam equity) "
+        f"from {start_date} to {end_date}\n"
+        f"# Total records: {len(out)}\n"
+        f"# Source: platform ClickHouse ohlc_eod (VND, split/dividend adjusted)\n\n"
+    )
+    return header + csv_string
+
+
+# ---------------------------------------------------------------------------
+# technical_indicators : get_indicators
+# ---------------------------------------------------------------------------
 
 
 def _calc_vwap(df: pd.DataFrame) -> pd.Series:
@@ -414,14 +590,6 @@ _CUSTOM_INDICATORS: dict[str, Any] = {
     "regime": _calc_regime,
 }
 
-# stockstats scales MFI 0-1; every reference (and the description above) uses
-# 0-100, so rescale rather than teach the model a non-standard threshold.
-_IND_SCALE: dict[str, float] = {"mfi": 100.0}
-
-# Above this magnitude the 4-decimal rendering is noise, not precision — OBV runs
-# to billions of shares. Prices and oscillators stay below it and are unaffected.
-_LARGE_VALUE = 1e6
-
 
 def get_indicators(
     symbol: str,
@@ -493,9 +661,6 @@ def get_indicators(
 # ---------------------------------------------------------------------------
 # news_data : get_news (company research reports)
 # ---------------------------------------------------------------------------
-
-_MAX_REPORTS = 8
-_MAX_SUMMARIES = 4  # cap the (slower) DeltaLake body lookups per call
 
 
 def _report_summary(report_id) -> str | None:
@@ -580,10 +745,6 @@ def _report_section(sym: str, start_date: str, end_date: str) -> str | None:
     return "\n".join(parts)
 
 
-_WICHART_NEWS_MAX = int(os.getenv("TRADINGAGENTS_COMPANY_NEWS_MAX", "12"))
-_WICHART_NEWS_SUMMARY_CHARS = 700
-
-
 def _wichart_company_news(sym: str, start_date: str, end_date: str) -> str | None:
     """Company headlines from wichart's xbrain-news feed, filtered by ticker.
 
@@ -611,12 +772,12 @@ def _wichart_company_news(sym: str, start_date: str, end_date: str) -> str | Non
     # then created_at — otherwise those headlines drop out entirely.
     def _day(item: dict[str, Any]) -> str:
         meta = item.get("metadata")
-        meta_day = _macro_date(meta.get("ngaykn")) if isinstance(meta, dict) else ""
+        meta_day = iso_day(meta.get("ngaykn")) if isinstance(meta, dict) else ""
         return (
-            _macro_date(item.get("publish_date"))
-            or _macro_date(item.get("indicator_data_date"))
+            iso_day(item.get("publish_date"))
+            or iso_day(item.get("indicator_data_date"))
             or meta_day
-            or _macro_date(item.get("created_at"))
+            or iso_day(item.get("created_at"))
         )
 
     dated = [(d, i) for i in items if (d := _day(i))]
@@ -652,7 +813,7 @@ def _wichart_company_news(sym: str, start_date: str, end_date: str) -> str | Non
                 bits.append(f"Rating: {rec}")
             target = meta.get("giamuctieu")
             if target:
-                bits.append(f"Target: {_fmt_ratio(target, 0)} VND")
+                bits.append(f"Target: {fmt_ratio(target, 0)} VND")
             source = str(meta.get("nguon") or "").strip()
             if source:
                 bits.append(f"By {source}")
@@ -720,7 +881,7 @@ def _company_news(ticker: str, start_date: str, end_date: str) -> str:
 
     # Tier 4: live web search fallback (no internal knowledge for this ticker).
     if ws.web_search_enabled():
-        days = _lookback_days(start_date, end_date)
+        days = lookback_days(start_date, end_date)
         web = ws.search_and_format(
             f"{sym} stock Vietnam news",
             max_results=ws.DEFAULT_MAX_RESULTS,
@@ -768,29 +929,10 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
     return f"{company}\n\n---\n\n{sector}" if sector else company
 
 
-def _lookback_days(start_date: str, end_date: str) -> int:
-    try:
-        start = datetime.strptime(start_date, "%Y-%m-%d")
-        end = datetime.strptime(end_date, "%Y-%m-%d")
-        return max(1, (end - start).days)
-    except Exception:  # noqa: BLE001
-        return 7
-
-
 # ---------------------------------------------------------------------------
-# Sentinels — categories with no Vietnamese-market source configured
+# news_data : get_global_news, then the sentinels for the categories with no
+# Vietnamese-market source configured
 # ---------------------------------------------------------------------------
-
-
-# Macro/market queries powering get_global_news. Override with
-# TRADINGAGENTS_NEWS_QUERIES (comma-separated) — defaults blend Vietnam-market
-# and global-macro angles.
-_DEFAULT_NEWS_QUERIES = (
-    "Vietnam stock market VN-Index news",
-    "State Bank of Vietnam interest rate inflation",
-    "Vietnam economy GDP export FDI outlook",
-    "global markets Fed interest rates macro outlook",
-)
 
 
 def _news_queries() -> list[str]:
@@ -802,24 +944,78 @@ def _news_queries() -> list[str]:
     return list(_DEFAULT_NEWS_QUERIES)
 
 
-# KB chunks pulled per macro query. Deliberately below the company-level default:
-# several queries run per call and the macro backdrop wants breadth across topics,
-# not depth on one strategy report.
-_GLOBAL_KB_TOP_K = int(os.getenv("TRADINGAGENTS_GLOBAL_KB_TOP_K", "3"))
-
-
 def _kb_hit_key(hit: dict[str, Any]) -> tuple:
     """Identity of one KB chunk, so overlapping queries don't repeat it."""
     return (hit.get("pdf_url") or hit.get("title"), hit.get("page"))
 
 
-def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
-    """Macro/market news, knowledge-base first.
+def _is_vn_query(query: str) -> bool:
+    text = str(query).lower()
+    return any(marker in text for marker in _VN_QUERY_MARKERS)
 
-    Same tiering as ``_company_news``, applied per query: our own embedded
-    research (macro/strategy reports) answers a topic when it can, and a live web
-    search only covers the topics the KB has nothing for. A run can therefore mix
-    the two — that is intended, since the KB's coverage varies by topic.
+
+def _vn_macro_stream_section(curr_date: str | None, look_back_days: int) -> str | None:
+    """Recent Vietnamese macro releases from wichart's xbrain-news stream.
+
+    Same feed and same rendering as ``get_macro_indicators``, minus the topic
+    filter: one page of the Vietnam stream, trimmed to the window and grouped per
+    indicator, so a series the feed republishes every session (the interbank
+    overnight rate, the USD/VND fix, OMO volumes) collapses into one block plus a
+    value history instead of a dozen paraphrases.
+
+    Returns None when the feed is unreachable or has nothing in the window, so
+    the caller can fall through to the web tier.
+    """
+    from app.services import wichart_news_client as news
+
+    end = iso_day(curr_date) or datetime.now().strftime("%Y-%m-%d")
+    start = (
+        datetime.strptime(end, "%Y-%m-%d") - pd.Timedelta(days=look_back_days)
+    ).strftime("%Y-%m-%d")
+
+    try:
+        items = news.fetch_news(
+            category_type=news.MACRO_CATEGORY_TYPE, limit=_GLOBAL_FEED_FETCH_LIMIT
+        )
+    except Exception as exc:  # noqa: BLE001 — degrade to the web tier
+        logger.warning("Vietnam macro stream unavailable: %s", exc)
+        return None
+
+    in_window = [item for item in items if _macro_in_window(item, start, end)]
+    if not in_window:
+        logger.info("No Vietnam macro releases between %s and %s", start, end)
+        return None
+
+    in_window.sort(key=lambda i: iso_day(i.get("publish_date")), reverse=True)
+    series: dict[str, list[dict[str, Any]]] = {}
+    for item in in_window:
+        series.setdefault(_macro_series_key(item), []).append(item)
+    shown = list(series.values())[:_GLOBAL_FEED_MAX_ITEMS]
+
+    parts = [f"# Vietnam macro releases ({start} → {end})"]
+    parts += [_macro_item_block(group[0], group[1:]) for group in shown]
+    if len(series) > len(shown):
+        parts.append(
+            f"{len(series) - len(shown)} further indicator(s) in this window omitted."
+        )
+    return "\n\n".join(parts)
+
+
+def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
+    """Macro/market news, internal sources first.
+
+    Three tiers, each covering what the one above it could not:
+
+      1. **Knowledge base** — semantic search over our embedded macro/strategy
+         research, per query (``kb_search``).
+      2. **wichart's Vietnam macro feed** — one digest of the dated releases in
+         the window, answering the domestic topics the KB missed. Preferred over a
+         web search for anything Vietnamese: the items are dated and carry the
+         published datapoint (rate, fix, volume) behind the headline.
+      3. **Live web search** — the global/US topics, which that feed does not
+         carry at all, plus the domestic ones if it came back empty.
+
+    A run therefore usually mixes sources, and the footer says which ones.
     """
     from . import kb_search, web_search as ws
 
@@ -831,12 +1027,14 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
 
     sections: list[str] = []
     seen: set[tuple] = set()
+    uncovered: list[str] = []
     used_kb = False
+    used_feed = False
     used_web = False
 
     for query in _news_queries():
         # Tier 1: knowledge base. Unfiltered by symbol — macro topics are not
-        # tied to one ticker. Returns [] when disabled/unreachable → web fallback.
+        # tied to one ticker. Returns [] when disabled/unreachable.
         hits = kb_search.search(query, top_k=_GLOBAL_KB_TOP_K)
         if hits:
             fresh = [h for h in hits if _kb_hit_key(h) not in seen]
@@ -846,11 +1044,23 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
                 sections.append("")
                 used_kb = True
             # Hits that were all shown under an earlier query still count as
-            # covered: don't spend a web search re-answering the same topic.
+            # covered: don't spend a lower tier re-answering the same topic.
             continue
+        uncovered.append(query)
 
-        # Tier 2: live web search for the topics the KB cannot answer.
-        if web_ok:
+    # Tier 2: one Vietnam-feed digest for every domestic topic the KB left open.
+    if any(_is_vn_query(query) for query in uncovered):
+        feed = _vn_macro_stream_section(curr_date, days)
+        if feed:
+            sections.append(feed)
+            sections.append("")
+            used_feed = True
+
+    # Tier 3: the web, for the topics neither tier above can serve.
+    if web_ok:
+        for query in uncovered:
+            if used_feed and _is_vn_query(query):
+                continue
             sections.append(ws.search_and_format(query, max_results=per_query, days=days))
             sections.append("")
             used_web = True
@@ -858,28 +1068,29 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
     if not sections:
         return (
             "GLOBAL_NEWS_UNAVAILABLE: the knowledge base returned no macro "
-            "research and web search is disabled or unavailable. Base your "
-            "assessment on company-level reports from get_news; do not fabricate "
-            "macro headlines."
+            "research, the Vietnamese macro feed had no releases in this window, "
+            "and web search is disabled or unavailable. Base your assessment on "
+            "company-level reports from get_news; do not fabricate macro headlines."
         )
 
-    if used_kb and used_web:
-        provenance = (
-            "Sources: internal knowledge base (curated research reports, undated "
-            "excerpts) for the topics it covers, live web search for the rest."
+    used = []
+    if used_kb:
+        used.append(
+            "internal knowledge base (curated research reports — undated excerpts, "
+            "so background rather than breaking news)"
         )
-    elif used_kb:
-        provenance = (
-            "Source: internal knowledge base (curated research reports). These are "
-            "undated excerpts, so treat them as background rather than breaking news."
+    if used_feed:
+        used.append(
+            "wichart's Vietnamese macro feed (dated releases, each with the "
+            "published datapoint)"
         )
-    else:
-        provenance = "Source: live web search (no knowledge-base match for these topics)."
+    if used_web:
+        used.append("live web search (the topics the sources above do not cover)")
 
     header = f"# Global / macro & Vietnam-market news (as of {curr_date or 'now'})"
     footer = (
-        f"{provenance} Synthesize the macro backdrop from these results; cite "
-        f"concrete headlines and do not invent figures."
+        f"Sources: {'; '.join(used)}. Synthesize the macro backdrop from these "
+        f"results; cite concrete headlines with their dates and do not invent figures."
     )
     return "\n".join([header, "", *sections, footer])
 
@@ -892,78 +1103,10 @@ def get_insider_transactions(ticker: str) -> str:
 
 
 # ── Macro indicators (wichart xbrain-news) ──────────────────────────────────
-# The upstream tool is written against FRED, so the analyst asks for US-flavoured
-# aliases ("cpi", "fed_funds_rate", "10y_treasury"). Map those onto the feed's own
-# Vietnamese topic tags where an equivalent exists; anything unmapped is passed to
-# the feed's free-text search, and a miss degrades to the general macro digest.
-_MACRO_TAG_ALIASES: dict[str, str] = {
-    # policy & market rates
-    "fed_funds_rate": "Lãi suất",
-    "policy_rate": "Lãi suất",
-    "interest_rate": "Lãi suất",
-    "rates": "Lãi suất",
-    "rate": "Lãi suất",
-    "interbank": "Lãi suất",
-    "10y_treasury": "Lãi suất",
-    "yield_curve": "Lãi suất",
-    # central-bank operations / liquidity
-    "monetary_policy": "Chính sách tiền tệ",
-    "liquidity": "Chính sách tiền tệ",
-    "omo": "Chính sách tiền tệ",
-    "sbv": "Chính sách tiền tệ",
-    "money_supply": "Chính sách tiền tệ",
-    "m2": "Chính sách tiền tệ",
-    # currency
-    "fx": "Tỷ giá",
-    "usd": "Tỷ giá",
-    "usdvnd": "Tỷ giá",
-    "exchange_rate": "Tỷ giá",
-    "currency": "Tỷ giá",
-    # prices
-    "cpi": "Giá cả",
-    "inflation": "Giá cả",
-    "core_pce": "Giá cả",
-    "prices": "Giá cả",
-    # activity
-    "real_gdp": "Tăng trưởng kinh tế",
-    "gdp": "Tăng trưởng kinh tế",
-    "growth": "Tăng trưởng kinh tế",
-    "pmi": "Sản xuất",
-    "manufacturing": "Sản xuất",
-    "industrial_production": "Sản xuất",
-    "fdi": "Đầu tư",
-    "investment": "Đầu tư",
-    "trade": "Giao dịch quốc tế",
-    "exports": "Giao dịch quốc tế",
-    "imports": "Giao dịch quốc tế",
-    "trade_balance": "Giao dịch quốc tế",
-    "retail_sales": "Tiêu dùng",
-    "consumption": "Tiêu dùng",
-    "credit": "Hệ thống ngân hàng",
-    "banking": "Hệ thống ngân hàng",
-    # labour has no counterpart in this feed — left unmapped on purpose so the
-    # caller gets the "not covered" note instead of an unrelated tag's items.
-}
-
-# Trailing window when the caller does not supply look_back_days. The upstream
-# FRED tool defaults to a year, but this is a news feed publishing several items a
-# day: a month is already ~40 dated releases.
-_MACRO_WINDOW_DAYS = int(os.getenv("TRADINGAGENTS_MACRO_WINDOW_DAYS", "30"))
-_MACRO_MAX_ITEMS = int(os.getenv("TRADINGAGENTS_MACRO_MAX_ITEMS", "12"))
-# Rows fetched per request before date filtering — the feed is not date-filterable
-# server-side, so the window is applied here and needs headroom to work with.
-_MACRO_FETCH_LIMIT = int(os.getenv("TRADINGAGENTS_MACRO_FETCH_LIMIT", "60"))
-_MACRO_SUMMARY_CHARS = 700
-
-
-def _macro_date(value: Any) -> str:
-    """The ``YYYY-MM-DD`` part of an ISO timestamp, or "" when unparseable."""
-    text = str(value or "")
-    return text[:10] if len(text) >= 10 and text[4] == "-" else ""
 
 
 def _macro_in_window(item: dict[str, Any], start: str, end: str) -> bool:
-    day = _macro_date(item.get("publish_date")) or _macro_date(
+    day = iso_day(item.get("publish_date")) or iso_day(
         item.get("indicator_data_date")
     )
     if not day:
@@ -1002,7 +1145,7 @@ def _macro_item_block(item: dict[str, Any], older: list[dict[str, Any]]) -> str:
     ``older`` are superseded releases of the same series; they collapse into a
     one-line value history so the trend survives without repeating their prose.
     """
-    day = _macro_date(item.get("publish_date")) or "undated"
+    day = iso_day(item.get("publish_date")) or "undated"
     title = str(item.get("title") or "(untitled)").strip()
     lines = [f"### {day} — {title}"]
 
@@ -1011,14 +1154,14 @@ def _macro_item_block(item: dict[str, Any], older: list[dict[str, Any]]) -> str:
     if value and isinstance(info, dict):
         label = str(info.get("title") or "").strip()
         unit = str(info.get("unit") or "").strip()
-        as_of = _macro_date(info.get("data_date"))
+        as_of = iso_day(info.get("data_date"))
         datapoint = " ".join(part for part in (f"**{value}**", unit) if part)
         prefix = f"{label}: " if label else ""
         suffix = f" (as of {as_of})" if as_of else ""
         lines.append(f"{prefix}{datapoint}{suffix}")
 
     history = [
-        f"{_macro_value(o)} ({_macro_date(o.get('publish_date'))[5:]})"
+        f"{_macro_value(o)} ({iso_day(o.get('publish_date'))[5:]})"
         for o in older
         if _macro_value(o)
     ]
@@ -1057,7 +1200,7 @@ def get_macro_indicators(
     key = topic.lower().replace(" ", "_").replace("-", "_")
     tag = _MACRO_TAG_ALIASES.get(key)
 
-    end = _macro_date(curr_date) or datetime.now().strftime("%Y-%m-%d")
+    end = iso_day(curr_date) or datetime.now().strftime("%Y-%m-%d")
     days = int(look_back_days) if look_back_days else _MACRO_WINDOW_DAYS
     start = (datetime.strptime(end, "%Y-%m-%d") - pd.Timedelta(days=days)).strftime(
         "%Y-%m-%d"
@@ -1096,7 +1239,7 @@ def get_macro_indicators(
             f"between {start} and {end}. Do not fabricate macro figures."
         )
 
-    items.sort(key=lambda i: _macro_date(i.get("publish_date")), reverse=True)
+    items.sort(key=lambda i: iso_day(i.get("publish_date")), reverse=True)
 
     # One block per indicator, newest release first; repeats become a value history.
     series: dict[str, list[dict[str, Any]]] = {}
@@ -1139,19 +1282,6 @@ def get_prediction_markets(*args, **kwargs) -> str:
 
 
 # ── Fundamentals (ruatichsan financial statements) ──────────────────────────
-# The API returns all three statements in one payload keyed by these short names.
-_STATEMENTS: dict[str, tuple[str, str]] = {
-    "cdkt": ("balance_sheet", "Balance sheet (Cân đối kế toán)"),
-    "kqkd": ("income_statement", "Income statement (Kết quả kinh doanh)"),
-    "lctt": ("cashflow", "Cash flow (Lưu chuyển tiền tệ)"),
-}
-
-# Periods shown per statement. The API returns 30+ quarters, which is far more
-# than an analyst prompt should carry; the most recent five drive the narrative.
-_STMT_PERIODS = int(os.getenv("TRADINGAGENTS_FUNDAMENTALS_PERIODS", "12"))
-
-_BILLION = 1e9
-
 # One payload serves all four tools, so memoize per (ticker, period) for the
 # process — otherwise a single analyst turn refetches the same data four times.
 _statement_cache: dict[tuple[str, str], Any] = {}
@@ -1170,15 +1300,6 @@ def _load_statements(ticker: str, freq: str | None) -> Any:
     if key not in _statement_cache:
         _statement_cache[key] = rts.fetch_financial_statements(key[0], key[1])
     return _statement_cache[key]
-
-
-def _fmt_billion(value: Any) -> str:
-    if value is None:
-        return "-"
-    try:
-        return f"{float(value) / _BILLION:,.1f}"
-    except (TypeError, ValueError):
-        return str(value)
 
 
 def _statement_table(
@@ -1209,7 +1330,7 @@ def _statement_table(
         values = row[-len(dates):][-periods:]
         if all(v in (0, None) for v in values):
             continue
-        lines.append(f"| {row[0]} | " + " | ".join(_fmt_billion(v) for v in values) + " |")
+        lines.append(f"| {row[0]} | " + " | ".join(fmt_billion(v) for v in values) + " |")
         kept += 1
         if max_rows and kept >= max_rows:
             lines.append(f"| … ({len(rows) - kept}+ further line items omitted) | " + " | " * len(shown_dates))
@@ -1254,44 +1375,6 @@ def get_cashflow(ticker: str, freq: str = "quarterly", curr_date: str | None = N
 # the statement API carries raw line items only, so P/E, P/B, ROE, EV multiples
 # and the ownership structure come from 24hmoney's company-index endpoint.
 
-# (label, latest field, trailing-4-quarters field, decimals). The "4Q" variants
-# are the same metric over the last four reported quarters, i.e. TTM.
-_RATIO_ROWS: tuple[tuple[str, str, str | None, int], ...] = (
-    ("P/E", "pe", "pe4Q", 2),
-    ("P/B", "pb", "pb4Q", 2),
-    ("EPS (VND/share)", "eps", "eps4Q", 0),
-    ("EPS diluted (VND/share)", "eps_diluted", "eps_4q_diluted", 0),
-    ("Book value (VND/share)", "book_value", "book_value4Q", 0),
-    ("ROE (%)", "roe", "roe4Q", 2),
-    ("ROA (%)", "roa", "roa4Q", 2),
-    ("EV/EBITDA", "ev_per_ebitda", "ev_per_ebitda4Q", 2),
-    ("EV/EBIT", "ev_per_ebit", "ev_per_ebit4Q", 2),
-    ("Beta", "the_beta", "the_beta4Q", 2),
-)
-
-
-def _fmt_ratio(value: Any, digits: int) -> str:
-    """Format a metric, treating an exact zero as "not reported".
-
-    The endpoint uses ``0.0`` rather than ``null`` for metrics that do not apply
-    to a sector (banks have no EV/EBITDA), and none of these ratios can
-    legitimately be exactly zero.
-    """
-    try:
-        number = float(value)
-    except (TypeError, ValueError):
-        return "-"
-    if number == 0.0:
-        return "-"
-    return f"{number:,.{digits}f}"
-
-
-def _fmt_count(value: Any) -> str:
-    try:
-        return f"{int(float(value)):,}"
-    except (TypeError, ValueError):
-        return "-"
-
 
 def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
     """Valuation, profitability and ownership snapshot — the analyst's overview.
@@ -1317,7 +1400,7 @@ def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
     group = data.get("group_name")
     if group:
         peers = data.get("group_count")
-        suffix = f" ({_fmt_count(peers)} listed peers)" if peers else ""
+        suffix = f" ({fmt_count(peers)} listed peers)" if peers else ""
         lines.append(f"Peer group: {group}{suffix}")
     chain = data.get("group_industry_full") or data.get("group_industry") or []
     # Broad → narrow ICB levels, minus the repeats: several sectors carry the
@@ -1335,14 +1418,14 @@ def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
 
     lines += ["| Metric | Latest | Trailing 4Q |", "|---|---|---|"]
     for label, latest_key, ttm_key, digits in _RATIO_ROWS:
-        latest = _fmt_ratio(data.get(latest_key), digits)
-        ttm = _fmt_ratio(data.get(ttm_key), digits) if ttm_key else "-"
+        latest = fmt_ratio(data.get(latest_key), digits)
+        ttm = fmt_ratio(data.get(ttm_key), digits) if ttm_key else "-"
         if latest == "-" and ttm == "-":
             continue
         # Diluted EPS is only worth a row when it actually differs from basic.
         if latest_key == "eps_diluted" and (
-            latest == _fmt_ratio(data.get("eps"), digits)
-            and ttm == _fmt_ratio(data.get("eps4Q"), digits)
+            latest == fmt_ratio(data.get("eps"), digits)
+            and ttm == fmt_ratio(data.get("eps4Q"), digits)
         ):
             continue
         lines.append(f"| {label} | {latest} | {ttm} |")
@@ -1350,30 +1433,30 @@ def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
 
     market_cap = data.get("market_cap")
     if market_cap:
-        lines.append(f"Market cap: {_fmt_billion(market_cap)} bn VND")
+        lines.append(f"Market cap: {fmt_billion(market_cap)} bn VND")
     low, high = data.get("min_52w"), data.get("max_52w")
     if low and high:
         lines.append(
-            f"52-week range: {_fmt_ratio(low, 2)} – {_fmt_ratio(high, 2)} "
+            f"52-week range: {fmt_ratio(low, 2)} – {fmt_ratio(high, 2)} "
             f"thousand VND per share"
         )
     if data.get("avg_trading_vol"):
         lines.append(
-            f"Average trading volume: {_fmt_count(data['avg_trading_vol'])} shares"
+            f"Average trading volume: {fmt_count(data['avg_trading_vol'])} shares"
         )
     if data.get("listed_share_vol"):
-        lines.append(f"Listed shares: {_fmt_count(data['listed_share_vol'])}")
+        lines.append(f"Listed shares: {fmt_count(data['listed_share_vol'])}")
     if data.get("free_float"):
         rate = data.get("free_float_rate")
         pct = f" ({float(rate) * 100:,.1f}% of listed)" if rate else ""
-        lines.append(f"Free float: {_fmt_count(data['free_float'])} shares{pct}")
+        lines.append(f"Free float: {fmt_count(data['free_float'])} shares{pct}")
     if data.get("foreign_current_room") is not None:
         pct = data.get("foreign_current_room_percent")
         share = f" ({pct:,.2f}% of the cap)" if isinstance(pct, (int, float)) else ""
         lines.append(
             f"Foreign ownership room left: "
-            f"{_fmt_count(data['foreign_current_room'])} of "
-            f"{_fmt_count(data.get('foreign_total_room'))} shares{share}"
+            f"{fmt_count(data['foreign_current_room'])} of "
+            f"{fmt_count(data.get('foreign_total_room'))} shares{share}"
         )
     if data.get("audit_firm_name"):
         big4 = " — Big 4" if data.get("audit_is_big4") else ""

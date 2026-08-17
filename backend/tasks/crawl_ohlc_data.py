@@ -1,6 +1,7 @@
 from typing import Any
 from pathlib import Path
 import gc
+import sys
 from prefect import flow, task
 # from metastock2pd import metastock_read, metastock_read_master, metastock_emaster
 from custom_metastock2pd import metastock_read, metastock_read_master, metastock_emaster, metastock_xmaster
@@ -15,6 +16,14 @@ from metastock import convert_metastock_data
 from deltalake import DeltaTable
 from clickhouse_driver import Client  # type: ignore
 """Flow: """
+
+# Set up the Python path so `app.*` resolves when this runs as a script.
+CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
+from app.utils.wichart import fetchMacroFrame
 # INDEX_DIR = "D:\\fdata_ami\\MetaStock\\EOD\\Chi so"
 # INDEX_DIR = "D:\\dnse\\eod\\index"
 INDEX_DIR = "D:\\ami\\MetaStock\\EOD\\index"
@@ -139,12 +148,26 @@ def _insert_ohlc_df_to_clickhouse(df: pd.DataFrame, batch_size: int = 50000) -> 
         inserted += len(rows)
     return inserted
 
-def _delta_table_to_dataframe(dt: DeltaTable) -> pd.DataFrame:
-    arrow_table = dt.to_pyarrow_table()
-    to_pandas_fn = getattr(arrow_table, "to_pandas", None)
+def _arrow_to_pandas(arrow_obj: Any) -> pd.DataFrame:
+    """Arrow → pandas, whichever Arrow the installed deltalake hands back.
+
+    deltalake 0.x returns pyarrow objects; 1.x returns arro3 ones, which have no
+    ``to_pandas`` but do export the Arrow PyCapsule interface, so ``pa.table``
+    adopts them zero-copy. requirements.txt floats the version, so support both.
+    """
+    if arrow_obj is None:
+        return pd.DataFrame()
+    to_pandas_fn = getattr(arrow_obj, "to_pandas", None)
     if callable(to_pandas_fn):
         return pd.DataFrame(to_pandas_fn())
-    return pd.DataFrame(arrow_table)
+
+    import pyarrow as pa
+
+    return pa.table(arrow_obj).to_pandas()
+
+
+def _delta_table_to_dataframe(dt: DeltaTable) -> pd.DataFrame:
+    return _arrow_to_pandas(dt.to_pyarrow_table())
 
 def _normalize_ohlc_df(df: pd.DataFrame) -> pd.DataFrame:
     normalized = df.copy()
@@ -294,6 +317,16 @@ def sync_to_delta_table(df: pd.DataFrame, destination = "s3://delta-table-storag
             print(dt.optimize.compact())
             gc.collect()
 
+def _full_load_snapshot(dt: DeltaTable) -> int:
+    snapshot_df = _delta_table_to_dataframe(dt)
+    normalized_snapshot = _normalize_ohlc_df(snapshot_df)
+    del snapshot_df
+    inserted = _insert_ohlc_df_to_clickhouse(normalized_snapshot)
+    del normalized_snapshot
+    gc.collect()
+    return inserted
+
+
 @task(log_prints=True)
 def sync_delta_cdf_to_clickhouse(
     destination: str = "s3://delta-table-storage/stocks",
@@ -302,28 +335,37 @@ def sync_delta_cdf_to_clickhouse(
     storage_options = _get_delta_storage_options()
     dt = DeltaTable(destination, storage_options=storage_options)
 
+    state = _load_sync_state(state_path)
+    last_synced_version = state.get("last_synced_version")
+    full_load_on_first_run = _env_flag("DELTA_CDF_FULL_LOAD_ON_FIRST_RUN", "false")
+
     metadata = dt.metadata()
     cdf_enabled = str(metadata.configuration.get("delta.enableChangeDataFeed", "false")).lower() == "true"
     if not cdf_enabled:
-        print("CDF not enabled — enabling now and bookmarking current version.")
+        # Turning CDF on only records changes from the *next* commit, so a table
+        # written without it has no history to replay. Take the snapshot first if
+        # the operator asked for a first-run full load — otherwise everything
+        # already in the table would never reach ClickHouse.
+        inserted = 0
+        if last_synced_version is None and full_load_on_first_run:
+            inserted = _full_load_snapshot(dt)
+            print(f"CDF was off — full load inserted {inserted} rows.")
+        else:
+            print(
+                "CDF not enabled — enabling now and bookmarking current version. Rows already "
+                "in the table stay unsynced; set DELTA_CDF_FULL_LOAD_ON_FIRST_RUN=true to backfill."
+            )
         dt.alter.set_table_properties({"delta.enableChangeDataFeed": "true"})
+        # set_table_properties commits, so re-read the version to bookmark the
+        # commit we just made rather than the one before it.
+        dt = DeltaTable(destination, storage_options=storage_options)
         _save_sync_state(state_path, {"last_synced_version": int(dt.version())})
-        return 0
+        return inserted
 
     latest_version = dt.version()
-    state = _load_sync_state(state_path)
-    last_synced_version = state.get("last_synced_version")
-    full_load_on_first_run = _get_env("DELTA_CDF_FULL_LOAD_ON_FIRST_RUN", "false").lower() in {
-        "1", "true", "yes", "y"
-    }
 
     if last_synced_version is None and full_load_on_first_run:
-        snapshot_df = _delta_table_to_dataframe(dt)
-        normalized_snapshot = _normalize_ohlc_df(snapshot_df)
-        del snapshot_df
-        inserted = _insert_ohlc_df_to_clickhouse(normalized_snapshot)
-        del normalized_snapshot
-        gc.collect()
+        inserted = _full_load_snapshot(dt)
         _save_sync_state(state_path, {"last_synced_version": int(latest_version)})
         print(
             f"First run full load enabled. Inserted {inserted} rows and set last_synced_version={latest_version}"
@@ -337,14 +379,7 @@ def sync_delta_cdf_to_clickhouse(
 
     cdf_reader = dt.load_cdf(starting_version=start_version, ending_version=int(latest_version))
     cdf_arrow = cdf_reader.read_all()
-    if cdf_arrow is None:
-        cdf_df = pd.DataFrame()
-    else:
-        to_pandas_fn = getattr(cdf_arrow, "to_pandas", None)
-        if callable(to_pandas_fn):
-            cdf_df = pd.DataFrame(to_pandas_fn())
-        else:
-            cdf_df = pd.DataFrame(cdf_arrow)
+    cdf_df = _arrow_to_pandas(cdf_arrow)
     del cdf_arrow, cdf_reader
     normalized = _normalize_cdf_to_ohlc_df(cdf_df)
     del cdf_df
@@ -361,6 +396,48 @@ def sync_delta_cdf_to_clickhouse(
     _save_sync_state(state_path, {"last_synced_version": int(latest_version)})
     print(f"Synced Delta CDF versions {start_version}..{latest_version} into ClickHouse: {inserted} rows")
     return inserted
+
+@task(log_prints=True)
+def crawl_wichart_macro(full_refresh: bool = False, max_days: int = 20) -> pd.DataFrame:
+    """Wichart bond yields, shaped as OHLC rows so they ride the ticker pipeline.
+
+    Each series becomes a pseudo-symbol (``VIETNAM_5Y``), the same way the index
+    series already share this table. One value per day, so the bar is flat —
+    open=high=low=close=yield — with zero volume. Note the unit: these are
+    percent, not VND, so anything that aggregates across symbols has to exclude
+    them.
+
+    ``max_days`` mirrors the MetaStock cutoff in ``convert_metastock_to_df``: the
+    endpoint serves the full history on every call, and appending ~17.5k rows to
+    an incremental run would dwarf the ~20 days of ticker data it carries. Run
+    with ``full_refresh=True`` to load the history back to 2008.
+    """
+    df = fetchMacroFrame()
+    if df.empty:
+        print("No macro rows crawled")
+        return pd.DataFrame()
+
+    if not full_refresh:
+        cutoff = pd.Timestamp.today().normalize() - pd.Timedelta(days=max_days)
+        df = df[df["date"] >= cutoff]
+
+    value = df["value"].astype("float64")
+    macro_df = pd.DataFrame({
+        "date": pd.to_datetime(df["date"]),
+        "symbol": df["dim_name"].str.upper(),
+        "open": value,
+        "high": value,
+        "low": value,
+        "close": value,
+        "volume": 0.0,
+    }).reset_index(drop=True)
+
+    print(
+        f"Macro: {len(macro_df):,} rows as {sorted(macro_df['symbol'].unique())}"
+        + ("" if full_refresh else f" (since {cutoff.date()})")
+    )
+    return macro_df
+
 
 @task(log_prints=True)
 def sync_to_clickhouse(df: pd.DataFrame) -> int:
@@ -475,6 +552,15 @@ def sync_ticker_delta_table_pipeline(
 
     # Task 1: Collect data from MetaStock files
     df = convert_metastock_to_df(full_refresh=full_refresh)
+
+    # Task 1b: Append the wichart macro series (bond yields) as pseudo-symbols.
+    # Appended after the OHLC rounding in Task 1 on purpose — yields carry three
+    # decimals and rounding to 2 would flatten them.
+    macro_df = crawl_wichart_macro(full_refresh=full_refresh)
+    if not macro_df.empty:
+        df = pd.concat([df, macro_df], ignore_index=True)
+    del macro_df
+    gc.collect()
 
     # Task 2: Sync data to Delta table — release df immediately after so merge
     # buffers don't overlap with the original frame in memory.

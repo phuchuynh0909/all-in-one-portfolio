@@ -148,6 +148,56 @@ To point at a custom OpenAI-compatible gateway, also set
 | `TAVILY_API_KEY` | _(unset)_ | use Tavily search instead of keyless DuckDuckGo |
 | `TRADINGAGENTS_NEWS_QUERIES` | _(built-in)_ | comma-separated macro/market queries for `get_global_news` |
 | `TRADINGAGENTS_SEARCH_MAX_RESULTS` | `5` | results per web query |
+| `TRADINGAGENTS_GLOBAL_FEED_LIMIT` | `60` | rows pulled from the Vietnam macro feed per `get_global_news` call |
+| `TRADINGAGENTS_GLOBAL_FEED_MAX_ITEMS` | `10` | indicators shown from that feed (newest release each) |
+| `LANGSMITH_TRACING` | _(unset)_ | set `true` to trace every analysis run to LangSmith |
+| `LANGSMITH_API_KEY` | _(unset)_ | LangSmith API key (required when tracing is on) |
+| `LANGSMITH_PROJECT` | `default` | LangSmith project traces are written to |
+| `LANGSMITH_ENDPOINT` | _(unset)_ | self-hosted LangSmith instance |
+
+### LangSmith tracing
+
+Every model call in the framework goes through a LangChain chat model driven by a
+LangGraph graph, so turning tracing on exports the whole run — no call site
+changes. Set the two required vars in the backend environment (root `.env`,
+which docker-compose passes into the container):
+
+```bash
+LANGSMITH_TRACING=true
+LANGSMITH_API_KEY=lsv2_...
+LANGSMITH_PROJECT=all-in-one-portfolio
+```
+
+What a trace contains, per analysis:
+
+* **One root run** named `TradingAgents <SYMBOL> <date>`, whose output is the
+  final graph state (every report plus the trade decision). Nested under it are
+  the analyst / researcher / trader / risk / portfolio-manager nodes, each data
+  tool call with its arguments and result, and each model request.
+* **The question and the answer** for every model request: the full prompt
+  (system + history + tool results) as input, the reply as output, with token
+  counts and latency.
+* **The thinking.** A reasoning model's `reasoning_content` (DeepSeek) or
+  `reasoning` content blocks (OpenAI Responses API) are recorded even though the
+  framework strips them from the message the agents go on to use — the tracer
+  snapshots the reply before `normalize_content` rewrites it.
+* **Search metadata** on every span: `symbol`, `trade_date`, `analysts`,
+  `llm_provider`, the resolved deep/quick models and any per-analyst pin, plus
+  tags (`tradingagents`, the ticker, `analyst:*`, `provider:*`). Because
+  LangChain hands metadata down the tree, filtering on `symbol = VCG` returns the
+  individual prompts and replies, not just the root run.
+* **Thread grouping** by ticker+date, when checkpointing is on — the
+  checkpointer's `thread_id` doubles as the LangSmith thread.
+
+The runner mints the run id up front, so the `started` SSE event carries a
+`trace_url` pointing at the live trace (empty when tracing is off, or on the very
+first run of a project LangSmith has not created yet). Traces are flushed before
+the stream ends, so the link is complete when `done` arrives. Failed runs are
+traced too: the exception lands on the node that raised it. Setting
+`LANGSMITH_TRACING=true` with no API key disables tracing with a warning rather
+than failing an export on every batch. `LANGCHAIN_*` spellings of these vars are
+accepted and mirrored. See `langsmith_enabled()` and `_apply_langsmith_config()`
+in `runner.py`.
 
 > The default endpoint is `http://host.docker.internal:11434/v1` so the
 > containerized backend reaches host-run Ollama out of the box. Running the
@@ -269,9 +319,17 @@ The news & sentiment analysts search the web live (`web_search.py`):
 - **`get_news(ticker, …)`** — curated wichart research reports **plus** a live
   web search for the ticker. The two are independent: either can be empty
   without suppressing the other.
-- **`get_global_news(…)`** — macro/market headlines via web search over a set of
+- **`get_global_news(…)`** — the macro backdrop, in three tiers over a set of
   Vietnam-market + global-macro queries (override with
-  `TRADINGAGENTS_NEWS_QUERIES`).
+  `TRADINGAGENTS_NEWS_QUERIES`): the **knowledge base** first, then **wichart's
+  Vietnam macro feed** for the domestic topics it missed, then a **web search**
+  for the rest. The middle tier is the same xbrain-news stream
+  `get_macro_indicators` reads (`category_type=Việt Nam`), untopiced — one call
+  brings back the window's dated releases for rates, FX, OMO, prices, growth and
+  credit, each with its published datapoint, grouped per indicator so a series
+  republished daily becomes one block plus a value history. That feed carries
+  Vietnam only, so a query naming the Fed, the dollar or China still goes to the
+  web; a query naming Vietnam only does when the feed comes back empty.
 
 Backends, tried in order: **Tavily** (when `TAVILY_API_KEY` is set — cleaner,
 dated results) → **DuckDuckGo** (keyless default, via the `ddgs` package). Any
