@@ -1,3 +1,4 @@
+import gc
 from pathlib import Path
 from prefect import flow
 from deltalake import DeltaTable
@@ -5,6 +6,15 @@ from clickhouse_driver import Client  # type: ignore
 import os
 import pandas as pd
 from custom_metastock2pd import metastock_read, metastock_read_master
+
+# Reuse the yields/macro + Delta + ClickHouse plumbing already defined for the
+# OHLC crawl so backfills go through the exact same pipeline (Delta merge → CDF
+# → ClickHouse) instead of a divergent code path.
+from crawl_ohlc_data import (
+    crawl_wichart_macro,
+    sync_to_delta_table,
+    sync_delta_cdf_to_clickhouse,
+)
 
 @flow(log_prints=True)
 def update_symbol_data(symbol: str):
@@ -95,6 +105,35 @@ def update_symbol_data(symbol: str):
     return result
 
 
+@flow(log_prints=True)
+def backfill_yields(
+    destination: str = "s3://delta-table-storage/stocks",
+    full_refresh: bool = True,
+    max_days: int = 20,
+) -> None:
+    """Backfill wichart bond-yield series through the OHLC pipeline.
+
+    Mirrors ``sync_ticker_delta_table_pipeline`` but only carries the macro
+    (yield) pseudo-symbols — no MetaStock ticker load — so it can be run on
+    demand to (re)load yields without touching the stock/index bars.
+
+    ``full_refresh=True`` (default) loads the full yield history back to 2008;
+    set it to ``False`` to only pick up the last ``max_days`` of values.
+    """
+    macro_df = crawl_wichart_macro(full_refresh=full_refresh, max_days=max_days)
+    if macro_df.empty:
+        print("No yield rows to backfill — nothing to do.")
+        return
+
+    # Task 2: Merge yields into the Delta table (same table/partitioning as OHLC).
+    sync_to_delta_table(df=macro_df, destination=destination)
+    del macro_df
+    gc.collect()
+
+    # Task 3: Propagate only the new Delta CDF changes into ClickHouse.
+    sync_delta_cdf_to_clickhouse(destination=destination)
+
+
 # Run the flow
 if __name__ == "__main__":
 
@@ -103,5 +142,13 @@ if __name__ == "__main__":
         entrypoint="update_symbol_data.py:update_symbol_data",
     ).deploy(
         name="update-symbol-data",
+        work_pool_name="my-worker",
+    )
+
+    backfill_yields.from_source(
+        source=str(Path(__file__).parent),  # code stored in local directory
+        entrypoint="update_symbol_data.py:backfill_yields",
+    ).deploy(
+        name="backfill-yields",
         work_pool_name="my-worker",
     )
