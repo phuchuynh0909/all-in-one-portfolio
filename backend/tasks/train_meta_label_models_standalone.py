@@ -178,7 +178,7 @@ def calculate_gkyz_volatility(
     low_prices: np.ndarray,
     close_prices: np.ndarray,
     window: int = 21,
-    normalize: bool = True,
+    normalize: bool = False,
 ) -> np.ndarray:
     opens = pd.Series(open_prices, dtype=float).round(2)
     highs = pd.Series(high_prices, dtype=float).round(2)

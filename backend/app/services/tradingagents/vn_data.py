@@ -852,6 +852,10 @@ def _company_news(ticker: str, start_date: str, end_date: str) -> str:
         symbols=[sym],
     )
     if kb_hits:
+        logger.info(
+            "company_news[%s]: tier 1 knowledge base HIT (%d chunk(s))",
+            sym, len(kb_hits),
+        )
         body = kb_search.format_hits(f"Knowledge-base research for {sym}", kb_hits)
         note = (
             "Source: internal knowledge base (curated research reports). This is "
@@ -859,28 +863,34 @@ def _company_news(ticker: str, start_date: str, end_date: str) -> str:
             "fabricate headlines beyond what is shown."
         )
         return f"{body}\n\n{note}"
+    logger.info("company_news[%s]: tier 1 knowledge base MISS", sym)
 
     # Tier 2: wichart xbrain-news company feed (ticker-tagged headlines).
     wichart_text = _wichart_company_news(sym, start_date, end_date)
     if wichart_text:
+        logger.info("company_news[%s]: tier 2 wichart company feed HIT", sym)
         return (
             f"{wichart_text}\n\n"
             "Source: wichart xbrain-news company feed (no knowledge-base or "
             "research-report match). Base the assessment on these headlines; do "
             "not fabricate any beyond what is shown."
         )
+    logger.info("company_news[%s]: tier 2 wichart company feed MISS", sym)
 
     # Tier 3: curated report metadata (reports that exist but aren't embedded yet).
     report_text = _report_section(sym, start_date, end_date)
     if report_text:
+        logger.info("company_news[%s]: tier 3 curated report metadata HIT", sym)
         return (
             f"{report_text}\n\n"
             "Source: curated research reports (no knowledge-base match). Base the "
             "assessment on this evidence; do not fabricate headlines."
         )
+    logger.info("company_news[%s]: tier 3 curated report metadata MISS", sym)
 
     # Tier 4: live web search fallback (no internal knowledge for this ticker).
     if ws.web_search_enabled():
+        logger.info("company_news[%s]: tier 4 live web search fallback", sym)
         days = lookback_days(start_date, end_date)
         web = ws.search_and_format(
             f"{sym} stock Vietnam news",
@@ -893,6 +903,10 @@ def _company_news(ticker: str, start_date: str, end_date: str) -> str:
             f"for {sym}). Do not fabricate headlines beyond what is shown."
         )
 
+    logger.warning(
+        "company_news[%s]: all tiers exhausted (web search disabled/unavailable)",
+        sym,
+    )
     return (
         f"No company news available for {sym} (no knowledge-base match, no research "
         f"reports, and web search disabled/unavailable). Do not fabricate headlines."
@@ -1019,7 +1033,7 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
     """
     from . import kb_search, web_search as ws
 
-    days = int(look_back_days) if look_back_days else 7
+    days = int(look_back_days) if look_back_days else 30
     per_query = int(limit) if limit else ws.DEFAULT_MAX_RESULTS
     # Spread the result budget across queries so one topic can't dominate.
     per_query = max(2, min(per_query, 5))
@@ -1040,6 +1054,10 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
             fresh = [h for h in hits if _kb_hit_key(h) not in seen]
             seen.update(_kb_hit_key(h) for h in fresh)
             if fresh:
+                logger.info(
+                    "global_news: tier 1 knowledge base HIT for %r (%d fresh chunk(s))",
+                    query, len(fresh),
+                )
                 sections.append(kb_search.format_hits(query, fresh))
                 sections.append("")
                 used_kb = True
@@ -1047,24 +1065,36 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
             # covered: don't spend a lower tier re-answering the same topic.
             continue
         uncovered.append(query)
+    if uncovered:
+        logger.info("global_news: tier 1 knowledge base left uncovered: %s", uncovered)
 
     # Tier 2: one Vietnam-feed digest for every domestic topic the KB left open.
     if any(_is_vn_query(query) for query in uncovered):
         feed = _vn_macro_stream_section(curr_date, days)
         if feed:
+            logger.info("global_news: tier 2 Vietnam macro feed HIT")
             sections.append(feed)
             sections.append("")
             used_feed = True
+        else:
+            logger.info("global_news: tier 2 Vietnam macro feed MISS")
 
     # Tier 3: the web, for the topics neither tier above can serve.
     if web_ok:
         for query in uncovered:
             if used_feed and _is_vn_query(query):
                 continue
+            logger.info("global_news: tier 3 live web search for %r", query)
             sections.append(ws.search_and_format(query, max_results=per_query, days=days))
             sections.append("")
             used_web = True
+    elif uncovered:
+        logger.info("global_news: tier 3 web search disabled/unavailable")
 
+    logger.info(
+        "global_news: tiers used — kb=%s feed=%s web=%s",
+        used_kb, used_feed, used_web,
+    )
     if not sections:
         return (
             "GLOBAL_NEWS_UNAVAILABLE: the knowledge base returned no macro "
@@ -1217,15 +1247,29 @@ def get_macro_indicators(
     try:
         # Tier 1: the mapped topic tag, else the caller's own words as free text.
         if tag:
+            logger.info(
+                "macro_indicators[%s]: tier 1 tag_level_1=%r", topic or "<none>", tag
+            )
             items = _fetch(tag_level_1=tag)
         elif topic:
+            logger.info("macro_indicators[%s]: tier 1 free-text search", topic)
             items = _fetch(search=topic)
         else:
+            logger.info("macro_indicators: no topic requested — skipping to digest")
             items = []
         # Tier 2: nothing for this topic (or none asked) → the general digest.
         scope = f"topic '{topic}'" if topic else "recent releases"
         matched = bool(items)
-        if not items:
+        if matched:
+            logger.info(
+                "macro_indicators[%s]: tier 1 HIT (%d item(s) in window)",
+                topic or "<none>", len(items),
+            )
+        else:
+            logger.info(
+                "macro_indicators[%s]: tier 1 MISS — tier 2 general digest",
+                topic or "<none>",
+            )
             items = _fetch()
     except Exception as exc:  # noqa: BLE001
         return (

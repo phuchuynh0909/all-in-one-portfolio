@@ -7,17 +7,28 @@ import {
 import TuneIcon from '@mui/icons-material/Tune';
 import PsychologyIcon from '@mui/icons-material/Psychology';
 import ClearIcon from '@mui/icons-material/Clear';
-import { createChart, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, ISeriesMarkersPluginApi, SeriesMarker, UTCTimestamp } from 'lightweight-charts';
 import { fetchFutureOhlc, fetchRlExits } from '../lib/services/future';
 import type { FutureOhlcResponse, RlTrade } from '../lib/services/future';
-import BsiPanel from '../components/chart/panels/BsiPanel';
-import KamaPanel from '../components/chart/panels/KamaPanel';
+import { createTvWidget, LIBRARY_PATH } from '../lib/tv';
+import type {
+  IChartingLibraryWidget,
+  IExecutionLineAdapter,
+  LanguageCode,
+  ResolutionString,
+} from '../lib/tv';
+import {
+  futureStore,
+  createFutureDatafeed,
+  futureIndicatorsGetter,
+  FUTURE_KAMA_STUDY,
+  FUTURE_BSI_STUDY,
+  TF_TO_RESOLUTION,
+  barTimeMs,
+} from '../lib/tv/future';
 
 const SYMBOL      = 'VN30F1M';
 const STORAGE_KEY = 'future_params';
 const DATE_KEY    = 'future_from_date';
-const AUTO_REFRESH_MS = 10_000;
 
 interface Params {
   kappa: number;
@@ -43,7 +54,18 @@ function loadParams(): Params {
   return DEFAULTS;
 }
 
-type Signal = SeriesMarker<UTCTimestamp>;
+/** One buy/sell execution mark to draw on the price pane. */
+interface Signal {
+  timeSec: number;
+  price: number;
+  side: 'buy' | 'sell';
+  color: string;
+  text: string;
+}
+
+// Marks must share the bars' time convention (naive VN wall-clock → UTC), else
+// the execution shape anchors to the wrong bar (or none).
+const timeSec = (ts: string) => Math.floor(barTimeMs(ts) / 1000);
 
 // ── Signal state machine (entries + rule exits) ───────────────────────────
 
@@ -64,17 +86,18 @@ function computeSignals(data: FutureOhlcResponse): Signal[] {
     const hi = q_hi[i];
     if (b === null || lo === null || hi === null) continue;
 
-    const nextTime = (new Date(timestamps[i + 1]).getTime() / 1000) as UTCTimestamp;
+    const nextTime  = timeSec(timestamps[i + 1]);
+    const nextPrice = ohlc.close[i + 1];
     const close = ohlc.close[i];
     const k = kama[i];
     const kamaOk = k === null || Number.isNaN(k as number);
 
     if (pos === 1 && b < lo) {
-      signals.push({ time: nextTime, position: 'aboveBar', color: '#888888', shape: 'arrowDown', text: 'Exit L' });
+      signals.push({ timeSec: nextTime, price: nextPrice, side: 'sell', color: '#888888', text: 'Exit L' });
       pos = 0;
     }
     if (pos === -1 && b > hi) {
-      signals.push({ time: nextTime, position: 'belowBar', color: '#888888', shape: 'arrowUp', text: 'Exit S' });
+      signals.push({ timeSec: nextTime, price: nextPrice, side: 'buy', color: '#888888', text: 'Exit S' });
       pos = 0;
     }
 
@@ -98,7 +121,7 @@ function computeSignals(data: FutureOhlcResponse): Signal[] {
         && priceChange > 0
         && (kamaOk || close > (k as number));
       if (longOk) {
-        signals.push({ time: nextTime, position: 'belowBar', color: '#26a69a', shape: 'arrowUp', text: 'Long' });
+        signals.push({ timeSec: nextTime, price: nextPrice, side: 'buy', color: '#26a69a', text: 'Long' });
         pos = 1;
         inUpperZone = false;
       }
@@ -107,7 +130,7 @@ function computeSignals(data: FutureOhlcResponse): Signal[] {
     if (b <= lo && inLowerZone) {
       const shortOk = kamaOk || close < (k as number);
       if (shortOk) {
-        signals.push({ time: nextTime, position: 'aboveBar', color: '#ef5350', shape: 'arrowDown', text: 'Short' });
+        signals.push({ timeSec: nextTime, price: nextPrice, side: 'sell', color: '#ef5350', text: 'Short' });
         pos = -1;
         inLowerZone = false;
       }
@@ -120,34 +143,36 @@ function computeSignals(data: FutureOhlcResponse): Signal[] {
 // ── RL exit markers ───────────────────────────────────────────────────────
 
 function computeRlMarkers(trades: RlTrade[]): Signal[] {
-  return trades
-    .map(t => {
-      const pnl = t.rl_pnl_pct;
-      const sign = pnl >= 0 ? '+' : '';
-      return {
-        time: (new Date(t.rl_exit_time).getTime() / 1000) as UTCTimestamp,
-        position: (t.direction === 1 ? 'aboveBar' : 'belowBar') as 'aboveBar' | 'belowBar',
-        color: '#f59e0b',
-        shape: 'square' as const,
-        text: `RL ${sign}${pnl.toFixed(2)}%`,
-      };
-    })
-    .sort((a, b) => (a.time as number) - (b.time as number));
+  return trades.map(t => {
+    const pnl = t.rl_pnl_pct;
+    const sign = pnl >= 0 ? '+' : '';
+    return {
+      timeSec: timeSec(t.rl_exit_time),
+      price: t.rl_exit_price,
+      // A long exit sits above the bar (a "sell" arrow), a short exit below.
+      side: (t.direction === 1 ? 'sell' : 'buy') as 'buy' | 'sell',
+      color: '#f59e0b',
+      text: `RL ${sign}${pnl.toFixed(2)}%`,
+    };
+  });
 }
 
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function Future() {
-  const chartContainerRef   = useRef<HTMLDivElement>(null);
-  const chartRef            = useRef<IChartApi | null>(null);
-  const candleSeriesRef     = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const ruleMarkersPluginRef = useRef<ISeriesMarkersPluginApi<any> | null>(null);
-  const rlMarkersPluginRef   = useRef<ISeriesMarkersPluginApi<any> | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const widgetRef    = useRef<IChartingLibraryWidget | null>(null);
+  const readyRef     = useRef(false);
+  const execShapesRef = useRef<IExecutionLineAdapter[]>([]);
+  const redrawRef    = useRef<() => void>(() => {});
+  // Signature of the currently drawn marks, so a real-time poll that changes
+  // nothing doesn't tear down and recreate (which otherwise stacks duplicates).
+  const marksSigRef  = useRef<string>('');
 
   const [data, setData]                 = useState<FutureOhlcResponse | null>(null);
   const [loading, setLoading]           = useState(true);
   const [error, setError]               = useState<string | null>(null);
-  const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
+  const [ready, setReady]               = useState(false);
 
   const [timeframe, setTimeframe] = useState<string>('5m');
   const [fromDate, setFromDate]   = useState<string>(() => {
@@ -162,19 +187,24 @@ export default function Future() {
   const [applied, setApplied]     = useState<Params>(loadParams);
   const [panelOpen, setPanelOpen] = useState(false);
 
-  const [refreshTick, setRefreshTick] = useState(0);
-
   const [showRl, setShowRl]       = useState(false);
   const [rlTrades, setRlTrades]   = useState<RlTrade[]>([]);
   const [rlLoading, setRlLoading] = useState(false);
   const [rlError, setRlError]     = useState<string | null>(null);
 
-  // fetch OHLC whenever applied params change
+  // fetch OHLC whenever applied params change → feed the store for the studies.
+  // The same query is registered as the store's real-time fetcher, so the
+  // library's `subscribeBars` polls with the current params (no page-side
+  // interval + resetData churn).
   useEffect(() => {
+    const query = () => fetchFutureOhlc(SYMBOL, { ...applied, timeframe, start_date: fromDate || undefined });
+    futureStore.setFetcher(query);
     const load = async () => {
       try {
         setLoading(true);
-        setData(await fetchFutureOhlc(SYMBOL, { ...applied, timeframe, start_date: fromDate || undefined }));
+        const res = await query();
+        futureStore.set(res);
+        setData(res);
         setError(null);
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Fetch failed');
@@ -183,7 +213,7 @@ export default function Future() {
       }
     };
     load();
-  }, [applied, timeframe, fromDate, refreshTick]);
+  }, [applied, timeframe, fromDate]);
 
   // fetch RL exits when enabled or params change
   useEffect(() => {
@@ -202,14 +232,7 @@ export default function Future() {
       }
     };
     load();
-  }, [showRl, applied, fromDate, refreshTick]);
-
-  // clear RL markers when disabled
-  useEffect(() => {
-    if (!showRl && rlMarkersPluginRef.current) {
-      rlMarkersPluginRef.current.setMarkers([]);
-    }
-  }, [showRl]);
+  }, [showRl, applied, fromDate]);
 
   // persist applied params + date filter to localStorage
   useEffect(() => {
@@ -221,86 +244,130 @@ export default function Future() {
     else localStorage.removeItem(DATE_KEY);
   }, [fromDate]);
 
-  // auto-refresh every 10 s
-  useEffect(() => {
-    const id = setInterval(() => setRefreshTick(t => t + 1), AUTO_REFRESH_MS);
-    return () => clearInterval(id);
-  }, []);
+  // ── Draw entry / exit / RL execution marks ──────────────────────────────
+  // Reads the live store (not React `data`) so real-time polls refresh marks
+  // without a re-render/reload.
+  const redraw = () => {
+    const widget = widgetRef.current;
+    if (!widget || !readyRef.current) return;
 
-  // create chart once
-  useEffect(() => {
-    if (!chartContainerRef.current) return;
-    const chart = createChart(chartContainerRef.current, {
-      layout: { background: { color: '#1e1e1e' }, textColor: '#fff' },
-      grid: {
-        vertLines: { color: 'rgba(255,255,255,0.05)' },
-        horzLines: { color: 'rgba(255,255,255,0.05)' },
-      },
-      width: chartContainerRef.current.clientWidth,
-      height: 600,
-      timeScale: { timeVisible: true, secondsVisible: false },
+    const chartData = futureStore.data;
+    if (!chartData) return;
+
+    // Collapse exact duplicates (e.g. several still-open RL trades the backend
+    // clamps to the same final timestamp) so they don't stack on one bar.
+    const seen = new Set<string>();
+    const marks: Signal[] = [...computeSignals(chartData), ...(showRl ? computeRlMarkers(rlTrades) : [])]
+      .filter(m => {
+        const key = `${m.timeSec}|${m.price}|${m.side}|${m.text}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+    // Nothing changed since the last draw → leave the existing shapes in place.
+    const sig = JSON.stringify(marks);
+    if (sig === marksSigRef.current) return;
+    marksSigRef.current = sig;
+
+    execShapesRef.current.forEach(s => { try { s.remove(); } catch { /* gone */ } });
+    execShapesRef.current = [];
+
+    const chart = widget.activeChart();
+    marks.forEach(m => {
+      try {
+        const shape = chart.createExecutionShape()
+          .setTime(m.timeSec)
+          .setPrice(m.price)
+          .setDirection(m.side)
+          .setText(m.text)
+          .setTooltip(m.text)
+          .setArrowColor(m.color)
+          .setTextColor(m.color);
+        execShapesRef.current.push(shape);
+      } catch { /* time not on chart yet */ }
     });
-    chartRef.current = chart;
+  };
+  redrawRef.current = redraw;
 
-    const candleSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#26a69a', downColor: '#ef5350',
-      borderUpColor: '#26a69a', borderDownColor: '#ef5350',
-      wickUpColor: '#26a69a', wickDownColor: '#ef5350',
-    }, 0);
-    candleSeriesRef.current = candleSeries;
+  // ── Create the widget once on mount ──────────────────────────────────────
+  useEffect(() => {
+    if (!containerRef.current) return;
+    let disposed = false;
+
+    createTvWidget({
+      container: containerRef.current,
+      datafeed: createFutureDatafeed(futureStore),
+      library_path: LIBRARY_PATH,
+      symbol: SYMBOL,
+      interval: TF_TO_RESOLUTION[timeframe],
+      locale: 'en' as LanguageCode,
+      autosize: true,
+      theme: 'dark',
+      timezone: 'Asia/Ho_Chi_Minh',
+      custom_indicators_getter: futureIndicatorsGetter(futureStore),
+      disabled_features: ['header_symbol_search', 'symbol_search_hot_key'],
+      overrides: {
+        'paneProperties.background': '#1e1e1e',
+        'paneProperties.backgroundType': 'solid',
+        'mainSeriesProperties.candleStyle.upColor': '#26a69a',
+        'mainSeriesProperties.candleStyle.downColor': '#ef5350',
+        'mainSeriesProperties.candleStyle.wickUpColor': '#26a69a',
+        'mainSeriesProperties.candleStyle.wickDownColor': '#ef5350',
+        'mainSeriesProperties.candleStyle.borderVisible': false,
+      },
+    }).then((widget) => {
+      if (disposed) { widget.remove(); return; }
+      widgetRef.current = widget;
+      widget.onChartReady(() => {
+        if (disposed) return;
+        const chart = widget.activeChart();
+        // KAMA overlays the price pane; BSI drops into its own oscillator pane.
+        void chart.createStudy(FUTURE_KAMA_STUDY, false, false);
+        void chart.createStudy(FUTURE_BSI_STUDY, false, false);
+        // Redraw execution marks whenever bars (re)load.
+        chart.onDataLoaded().subscribe(null, () => redrawRef.current());
+        readyRef.current = true;
+        setReady(true);
+        redrawRef.current();
+      });
+    }).catch((e) => console.error('Failed to create Future TradingView widget:', e));
 
     return () => {
-      chart.remove();
-      chartRef.current = candleSeriesRef.current = null;
-      ruleMarkersPluginRef.current = rlMarkersPluginRef.current = null;
+      disposed = true;
+      readyRef.current = false;
+      execShapesRef.current = [];
+      if (widgetRef.current) {
+        try { widgetRef.current.remove(); } catch { /* already gone */ }
+        widgetRef.current = null;
+      }
     };
+    // Mount-only: data/timeframe handled by dedicated effects below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // update candle data + rule markers
+  // ── Push new data / timeframe into the chart ─────────────────────────────
   useEffect(() => {
-    if (!candleSeriesRef.current || !data) return;
+    const widget = widgetRef.current;
+    if (!ready || !widget || !data) return;
+    const chart = widget.activeChart();
+    const target = TF_TO_RESOLUTION[timeframe];
+    try {
+      if (chart.resolution() !== target) chart.setResolution(target);
+      else chart.resetData();
+    } catch { /* chart not ready */ }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [data, ready]);
 
-    candleSeriesRef.current.setData(data.timestamps.map((ts, i) => ({
-      time:  (new Date(ts).getTime() / 1000) as UTCTimestamp,
-      open:  data.ohlc.open[i],  high: data.ohlc.high[i],
-      low:   data.ohlc.low[i],   close: data.ohlc.close[i],
-    })));
-
-    const markers = computeSignals(data);
-    if (ruleMarkersPluginRef.current) {
-      ruleMarkersPluginRef.current.setMarkers(markers);
-    } else {
-      ruleMarkersPluginRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
-    }
-
-    const n = data.timestamps.length;
-    chartRef.current?.timeScale().setVisibleLogicalRange({
-      from: Math.max(0, n - 100),
-      to: n - 1 + 20,
-    });
-
-    const times = data.timestamps.map(ts => (new Date(ts).getTime() / 1000) as UTCTimestamp);
-    setHoveredIndex(times.length - 1);
-
-    const handler = (param: any) => {
-      if (!param.time) { setHoveredIndex(times.length - 1); return; }
-      const idx = times.indexOf(param.time as UTCTimestamp);
-      if (idx !== -1) setHoveredIndex(idx);
-    };
-    chartRef.current?.subscribeCrosshairMove(handler);
-    return () => { chartRef.current?.unsubscribeCrosshairMove(handler); };
-  }, [data]);
-
-  // update RL markers
+  // ── Redraw marks when signals / RL change ────────────────────────────────
   useEffect(() => {
-    if (!candleSeriesRef.current) return;
-    const markers = showRl ? computeRlMarkers(rlTrades) : [];
-    if (rlMarkersPluginRef.current) {
-      rlMarkersPluginRef.current.setMarkers(markers);
-    } else if (markers.length > 0) {
-      rlMarkersPluginRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
-    }
-  }, [rlTrades, showRl]);
+    if (ready) redrawRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rlTrades, showRl, data, ready]);
+
+  // Real-time polls update the store in place (no React re-render); redraw the
+  // marks off the fresh store data when they land.
+  useEffect(() => futureStore.onUpdate(() => redrawRef.current()), []);
 
   const sliderSx = { color: '#10a4f4', '& .MuiSlider-thumb': { width: 14, height: 14 } };
 
@@ -470,29 +537,8 @@ export default function Future() {
         {error && <Alert severity="error">{error}</Alert>}
 
         {/* ── Chart ── */}
-        <Paper sx={{ p: 0, position: 'relative' }}>
-          <div ref={chartContainerRef} style={{ width: '100%' }} />
-
-          {/* Legend */}
-          {data && hoveredIndex !== null && hoveredIndex >= 0 && (
-            <Box sx={{
-              position: 'absolute', top: 12, left: 12, zIndex: 10,
-              pointerEvents: 'none', display: 'flex', flexDirection: 'column', gap: 0.5,
-            }}>
-              <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#f97316' }}>
-                KAMA <span style={{ color: '#fff' }}>{data.indicators.kama[hoveredIndex]?.toFixed(2) ?? 'N/A'}</span>
-              </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#10a4f4' }}>
-                BSI <span style={{ color: '#fff' }}>{data.indicators.bsi[hoveredIndex]?.toFixed(0) ?? 'N/A'}</span>
-              </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#26a69a' }}>
-                q_lo ({applied.q_lo_pct}%) <span style={{ color: '#fff' }}>{data.indicators.q_lo[hoveredIndex]?.toFixed(0) ?? 'N/A'}</span>
-              </Typography>
-              <Typography variant="body2" sx={{ fontWeight: 'bold', color: '#ef5350' }}>
-                q_hi ({applied.q_hi_pct}%) <span style={{ color: '#fff' }}>{data.indicators.q_hi[hoveredIndex]?.toFixed(0) ?? 'N/A'}</span>
-              </Typography>
-            </Box>
-          )}
+        <Paper sx={{ p: 0, position: 'relative', overflow: 'hidden' }}>
+          <div ref={containerRef} style={{ width: '100%', height: 600 }} />
 
           {/* Marker legend */}
           <Box sx={{
@@ -510,13 +556,6 @@ export default function Future() {
               </Typography>
             ))}
           </Box>
-
-          {chartRef.current && data && (
-            <>
-              <KamaPanel chart={chartRef.current} data={data} />
-              <BsiPanel  chart={chartRef.current} data={data} />
-            </>
-          )}
         </Paper>
       </Stack>
     </Box>

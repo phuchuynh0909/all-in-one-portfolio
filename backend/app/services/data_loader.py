@@ -3,8 +3,8 @@ import numpy as np
 import pandas as pd
 
 
-# MINIO_HOST = "https://minio.phuchuynh.xyz"
-MINIO_HOST = "http://192.168.1.3:9000"
+MINIO_HOST = "https://minio.phuchuynh.site"
+# MINIO_HOST = "http://192.168.1.3:9000"
 
 _STORAGE_OPTIONS = {
     "AWS_ACCESS_KEY_ID":         "CzOwnLkEDXQy951AOqes",
@@ -73,6 +73,9 @@ def load_stocks(
     if exclude:
         exclude_set = set(exclude)
         symbols = np.array([s for s in symbols if s not in exclude_set])
+
+    ## appends yield data to the symbols
+    symbols = np.append(symbols, ['VIETNAM_1Y','VIETNAM_5Y','VIETNAM_10Y'])
 
     if not refresh and os.path.exists(local_file):
         print(f"Loading from HDF5 cache: {local_file}")

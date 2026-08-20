@@ -611,7 +611,7 @@ def _build_feature_context_from_ohlc_panel(
                     low_2d[:, _col],
                     close_2d[:, _col],
                     window=_w,
-                    normalize=True,  # min-max normalize to [0,1]
+                    normalize=True,
                 )
             except Exception:
                 pass

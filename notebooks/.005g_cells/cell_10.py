@@ -1,0 +1,36 @@
+# Optuna best params (005d search space — 17 tunable keys + GKYZ regime)
+FIXED_TTM_PARAMS = {
+    'v1': {
+        'bb_window': 19, 'bb_multiplier': 1.3, 'bb_matype': 3,
+        'kc_window': 55, 'kc_multiplier': 1.2, 'kc_atr_period': 6,
+        'donichan_window': 10, 'osc_smoothing_period': 5,
+        'low_stop_lookback': 5,
+        'avwap_window': 160,
+        'kama_period': 10, 'kama_fast': 5, 'kama_slow': 25,
+        'kama_slope_win': 5, 'flat_threshold_pct': 3.0,
+        'gkyz_window': 21, 'gkyz_upper': 0.8, 'gkyz_lower': 0.2,
+        'yz_short_window': 20, 'yz_long_window': 120, 'yz_risk_off': 1.0, 'yz_risk_on': 1.0,
+    },
+    'v2': {
+        'bb_window': 12, 'bb_multiplier': 1.4, 'bb_matype': 3,
+        'kc_window': 47, 'kc_multiplier': 1.3, 'kc_atr_period': 6,
+        'donichan_window': 10, 'osc_smoothing_period': 5,
+        'low_stop_lookback': 5,
+        'avwap_window': 20,
+        'kama_period': 14, 'kama_fast': 3, 'kama_slow': 25,
+        'kama_slope_win': 3, 'flat_threshold_pct': 3.0,
+        'gkyz_window': 21, 'gkyz_upper': 0.8, 'gkyz_lower': 0.2,
+        'yz_short_window': 20, 'yz_long_window': 120, 'yz_risk_off': 1.0, 'yz_risk_on': 1.0,
+    },
+    'v3': {
+        'bb_window': 10, 'bb_multiplier': 1.7, 'bb_matype': 3,
+        'kc_window': 27, 'kc_multiplier': 1.4, 'kc_atr_period': 5,
+        'low_stop_lookback': 5,
+        'consecutive_neg_threshold': 5, 'william_vix_period': 18,
+        'avwap_window': 100,
+        'kama_period': 6, 'kama_fast': 3, 'kama_slow': 34,
+        'kama_slope_win': 18, 'flat_threshold_pct': 1.3,
+        'gkyz_window': 21, 'gkyz_upper': 0.8, 'gkyz_lower': 0.2,
+        'yz_short_window': 20, 'yz_long_window': 120, 'yz_risk_off': 1.0, 'yz_risk_on': 1.0,
+    },
+}
