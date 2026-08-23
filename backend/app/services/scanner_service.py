@@ -26,9 +26,9 @@ _REG_WINDOW = 50
 _REG_CONFIDENCE = 0.88
 
 # backtest_012 (Gaussian FRAMA + Hull Butterfly Oscillator) defaults
-_GFRAMA_KWARGS = dict(gaussian_length=4, sigma=2.0, fm_len=20, upper_limit=8, lower_limit=40, atr_period=14, atr_mult=1.9)
-_HBO_LENGTH = 14
-_HBO_MULT = 2.0
+_GFRAMA_KWARGS = dict(gaussian_length=6, sigma=1.0, fm_len=16, upper_limit=8, lower_limit=40, atr_period=5, atr_mult=1.0)
+_HBO_LENGTH = 9
+_HBO_MULT = 2.5
 _ATR_TRAIL_MULT = 1.8
 
 # backtest_010 "Reclaim Entry" scan: flag a symbol for this many bars after
