@@ -14,6 +14,7 @@ protobuf>=4.25.0
 
 # Database
 sqlalchemy>=2.0.28
+PyMySQL>=1.1.0             # MySQL driver for the wichart report detail store
 alembic>=1.13.1
 python-dotenv>=1.0.1
 clickhouse-connect>=0.6.0
@@ -54,12 +55,13 @@ statsmodels>=0.14.6
 prefect>=2.14.0
 
 # RAG pipeline (report PDF -> markdown -> embeddings -> Qdrant)
-qdrant-client>=1.9.0       # embeddings come from Qwen3-Embedding-8B, not fastembed
-ollama>=0.3.0              # Ollama Python client (RAG_EMBED_BACKEND=ollama)
-sentence-transformers>=3.0 # local in-process embedder (RAG_EMBED_BACKEND=huggingface)
-transformers>=4.56.0       # Qwen3 support + from_pretrained(dtype=) for the local embedder
-marker-pdf>=1.2.0          # PDF->markdown parser option "marker" (pulls torch + models; heavy)
-llama-parse>=0.5.0         # PDF->markdown parser option "llamaparse" (cloud API; needs LLAMA_CLOUD_API_KEY)
+qdrant-client>=1.9.0       # embeddings come from Qwen3-Embedding-8B (remote API), not fastembed
+# PDF->markdown parsers; only the one named by RAG_PDF_PARSER is imported, so a
+# deployment can install just its own choice.
+marker-pdf>=1.2.0          # parser "marker" (pulls torch + transformers; heavy)
+llama-parse>=0.5.0         # parser "llamaparse" (cloud API; needs LLAMA_CLOUD_API_KEY)
+docling>=2.0.0             # parser "docling" (local; pulls torch + its own layout/OCR models)
+pymupdf4llm>=0.0.17        # parser "pymupdf4llm" (local, no ML models; fastest)
 
 # TradingAgents (vendored at ../vendor/TradingAgents, put on sys.path by
 # app.services.tradingagents). These are its runtime deps; the multi-agent

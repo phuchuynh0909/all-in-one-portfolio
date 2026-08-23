@@ -89,6 +89,7 @@ export type RagStatusValue =
   | 'PENDING'
   | 'PARSING'
   | 'PARSED'
+  | 'SUMMARIZING'
   | 'EMBEDDING'
   | 'EMBEDDED'
   | 'FAILED'
@@ -102,7 +103,7 @@ export interface RagStatus {
   error?: string;
 }
 
-export type PdfParser = 'marker' | 'llamaparse';
+export type PdfParser = 'marker' | 'llamaparse' | 'docling' | 'pymupdf4llm';
 
 /** Trigger the RAG pipeline for a report (runs as a background job). */
 export const triggerReportRag = async (

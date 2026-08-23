@@ -1,8 +1,8 @@
 """Tests for the OpenAI-compatible embeddings backend.
 
-All HTTP is mocked (no live embedding server). Covers backend selection, the
-request payload sent to ``/v1/embeddings`` (model, input, dimensions, auth
-header), and that ``data[]`` is parsed back in ``index`` order.
+All HTTP is mocked (no live embedding server). Covers the model/URL/key
+resolution, the request payload sent to ``/v1/embeddings`` (model, input,
+dimensions, auth header), and that ``data[]`` is parsed back in ``index`` order.
 """
 from __future__ import annotations
 
@@ -15,16 +15,33 @@ from app.services import embeddings
 
 @pytest.fixture(autouse=True)
 def _openai_env(monkeypatch):
-    monkeypatch.setenv("RAG_EMBED_BACKEND", "openai")
     monkeypatch.setenv("RAG_OPENAI_EMBED_URL", "http://localhost:20128/v1")
     monkeypatch.setenv("RAG_OPENAI_API_KEY", "sk-test-key")
     monkeypatch.setenv("RAG_OPENAI_EMBED_MODEL", "openrouter/qwen/qwen3-embedding-8b")
     monkeypatch.setenv("RAG_EMBED_DIMENSIONS", "4096")
 
 
-def test_backend_and_model_selection():
-    assert embeddings.backend() == "openai"
+def test_model_and_url_resolution():
     assert embeddings.model_name() == "openrouter/qwen/qwen3-embedding-8b"
+    assert embeddings.openai_base() == "http://localhost:20128/v1"
+    assert embeddings.embed_dimensions() == 4096
+
+
+def test_api_key_falls_back_to_openai_compatible(monkeypatch):
+    # The gateway's key lives under OPENAI_COMPATIBLE_API_KEY; missing it from the
+    # lookup chain is what made this backend 401.
+    monkeypatch.delenv("RAG_OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("OPENAI_COMPATIBLE_API_KEY", "sk-gateway")
+    assert embeddings.api_key() == "sk-gateway"
+
+
+def test_default_url_is_docker_aware(monkeypatch):
+    monkeypatch.delenv("RAG_OPENAI_EMBED_URL", raising=False)
+    monkeypatch.setenv("IN_DOCKER", "1")
+    assert embeddings.openai_base() == "http://host.docker.internal:20128/v1"
+    monkeypatch.delenv("IN_DOCKER", raising=False)
+    with mock.patch("os.path.exists", return_value=False):
+        assert embeddings.openai_base() == "http://localhost:20128/v1"
 
 
 class _Resp:
@@ -81,7 +98,7 @@ def test_openai_embed_raises_on_http_error():
             embeddings.openai_embed(["x"])
 
 
-def test_embed_routes_to_openai(monkeypatch):
+def test_embed_delegates_to_the_api(monkeypatch):
     with mock.patch(
         "requests.post",
         return_value=_Resp({"data": [{"embedding": [0.5], "index": 0}]}),

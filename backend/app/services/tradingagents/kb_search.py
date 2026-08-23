@@ -3,8 +3,8 @@
 The report RAG pipeline (``tasks/rag_pipeline.py``) embeds wichart research-report
 pages into a Qdrant collection (``wichart_reports``) with Qwen3-Embedding-8B.
 This module is the *read* side: it embeds a query the same way — through the
-shared ``app.services.embeddings`` helper, so both sides use the same backend
-(Ollama API or a local HuggingFace model) — and runs a semantic search over that
+shared ``app.services.embeddings`` helper, so both sides hit the same
+OpenAI-compatible embeddings API — and runs a semantic search over that
 collection so the analysts can pull company/sector research from our own
 knowledge base **before** falling back to a live web search.
 
@@ -15,8 +15,8 @@ back to web search rather than crashing the run.
 Config (env, shared with the RAG pipeline so both sides agree):
     QDRANT_URL                  default http://192.168.1.3:6333
     QDRANT_REPORTS_COLLECTION   default wichart_reports
-    RAG_EMBED_BACKEND           "ollama" (default) or "huggingface" (local model);
-                                see app/services/embeddings.py for its own knobs
+    RAG_OPENAI_*                embeddings API url/key/model; see
+                                app/services/embeddings.py for its own knobs
     TRADINGAGENTS_KB_SEARCH     "1" (default) / "0" to disable KB retrieval
     TRADINGAGENTS_KB_MIN_SCORE  cosine-score floor for a "match" (default 0.35)
     TRADINGAGENTS_KB_TOP_K      max chunks returned per query (default 6)

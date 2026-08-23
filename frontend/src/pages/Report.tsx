@@ -28,7 +28,7 @@ const Report: React.FC = () => {
   const [isSyncing, setIsSyncing] = React.useState(false);
   const [syncResult, setSyncResult] = React.useState<{ success: boolean; stats?: SyncStats; error?: string } | null>(null);
   const [ragStatuses, setRagStatuses] = React.useState<Record<number, RagStatus>>({});
-  const [parser, setParser] = React.useState<PdfParser>('marker');
+  const [parser, setParser] = React.useState<PdfParser>('pymupdf4llm');
 
   const loadReports = async (symbol?: string) => {
     try {
@@ -113,11 +113,13 @@ const Report: React.FC = () => {
               label="Parser"
               value={parser}
               onChange={(e) => setParser(e.target.value as PdfParser)}
-              sx={{ width: 150 }}
+              sx={{ width: 180 }}
               helperText="For ✨ Embed"
             >
               <MenuItem value="marker">marker (local)</MenuItem>
               <MenuItem value="llamaparse">LlamaParse (cloud)</MenuItem>
+              <MenuItem value="docling">Docling (local)</MenuItem>
+              <MenuItem value="pymupdf4llm">PyMuPDF4LLM (fast)</MenuItem>
             </TextField>
             <Button
               variant="outlined"

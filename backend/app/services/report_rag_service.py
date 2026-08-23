@@ -1,4 +1,4 @@
-"""ClickHouse-backed status + parsed-markdown store for the report RAG pipeline.
+"""MySQL-backed status + parsed-markdown store for the report RAG pipeline.
 
 One row per report tracks the RAG lifecycle and holds the markdown produced by
 parsing the PDF. The Prefect flow (``tasks/rag_pipeline.py``) drives the status
@@ -6,11 +6,21 @@ transitions; the API reads them so the Report page can show which reports are
 already embedded.
 
 Status lifecycle:
-    PENDING -> PARSING -> PARSED -> EMBEDDING -> EMBEDDED
-    (any step may transition to FAILED; ``error`` holds the reason)
+    PENDING -> PARSING -> PARSED -> SUMMARIZING -> EMBEDDING -> EMBEDDED
+    (SUMMARIZING is skipped when RAG_SUMMARY is off; any step may transition to
+    FAILED, where ``error`` holds the reason)
 
-Table: ``report_rag`` (ReplacingMergeTree(updated_at), ORDER BY report_id).
-Reads use FINAL so only the latest version per report is returned.
+Table: ``report_rag`` in MySQL, keyed by ``report_id``. Every write is an
+``INSERT … ON DUPLICATE KEY UPDATE``, so a row is created if missing and patched
+if present — a status write can never be lost, and reads see it immediately.
+
+This replaces a ClickHouse implementation whose complexity was almost entirely
+ReplacingMergeTree bookkeeping: ``FINAL`` on every read, a three-way
+upsert/save/update split to stop lightweight UPDATEs from resurrecting older
+versions, an ``enable_block_number_column`` migration, the experimental-update
+setting, and an INSERT fallback for markdown that blew past ``max_query_size``
+when parameters were inlined into the SQL text. None of that is needed here:
+values are bound, and ``markdown`` is a LONGTEXT column.
 """
 from __future__ import annotations
 
@@ -18,283 +28,193 @@ import os
 from datetime import datetime
 from typing import Any, Optional
 
-import clickhouse_connect
 from loguru import logger
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    select,
+)
+from sqlalchemy.dialects.mysql import LONGTEXT, insert as mysql_insert
 
-from app.core.settings import settings
+from app.db import mysql
 
-_TABLE = os.getenv("CLICKHOUSE_REPORT_RAG_TABLE", "report_rag")
+_TABLE = os.getenv("MYSQL_REPORT_RAG_TABLE", "report_rag")
 
 # Status constants
 PENDING = "PENDING"
 PARSING = "PARSING"
 PARSED = "PARSED"
+SUMMARIZING = "SUMMARIZING"
 EMBEDDING = "EMBEDDING"
 EMBEDDED = "EMBEDDED"
 FAILED = "FAILED"
 
-_COLUMNS = [
-    "report_id", "symbol", "title", "pdf_url", "markdown",
-    "status", "chunk_count", "collection", "error",
-    "created_at", "updated_at",
-]
+# Valid ``RAG_PDF_PARSER`` / ``?parser=`` values, first one being the default.
+# Declared here — not in ``tasks/rag_pipeline.py`` where the parsers themselves
+# live — so the API can validate the query param without importing the heavy RAG
+# stack. ``rag_pipeline`` checks its own registry against this at import.
+PDF_PARSERS = ("marker", "llamaparse", "docling", "pymupdf4llm")
 
+_metadata = MetaData()
 
-def endpoint() -> str:
-    """The ClickHouse target this process reads/writes status to.
+# ``markdown`` is LONGTEXT: a parsed report runs well past TEXT's 64 KB.
+report_rag_table = Table(
+    _TABLE,
+    _metadata,
+    Column("report_id", BigInteger, primary_key=True, autoincrement=False),
+    Column("symbol", String(32), index=True),
+    Column("title", String(512)),
+    Column("pdf_url", String(1024)),
+    Column("markdown", LONGTEXT),
+    Column("status", String(32), index=True),
+    Column("chunk_count", Integer, default=0),
+    Column("collection", String(128)),
+    Column("error", Text),
+    Column("created_at", DateTime),
+    Column("updated_at", DateTime, index=True),
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_unicode_ci",
+)
 
-    Logged by the flow (worker) and exposed via the API so a worker-vs-API
-    endpoint mismatch (e.g. host-run worker vs containerized API resolving
-    different CLICKHOUSE_* env) is obvious — that mismatch is the usual reason a
-    completed job's status looks "not updated".
-    """
-    return (
-        f"{settings.clickhouse_host}:{settings.clickhouse_port}/"
-        f"{settings.clickhouse_db}.{_TABLE}"
-    )
-
-
-def _client():
-    logger.debug("report_rag ClickHouse endpoint: {}", endpoint())
-    return clickhouse_connect.get_client(
-        host=settings.clickhouse_host,
-        port=settings.clickhouse_port,
-        username=settings.clickhouse_user,
-        password=settings.clickhouse_password,
-        database=settings.clickhouse_db,
-    )
-
-
-# One-time-per-process guard for the (idempotent but non-free) migration that
-# enables lightweight updates on a pre-existing table.
-_lightweight_ready = False
-
-
-def _ensure_table(client) -> None:
-    global _lightweight_ready
-    db = settings.clickhouse_db
-    client.command(f"CREATE DATABASE IF NOT EXISTS {db}")
-    # New tables are created ready for lightweight UPDATE: CH 25.7+ requires a
-    # materialized _block_number column (enable_block_number_column = 1).
-    client.command(
-        f"""
-        CREATE TABLE IF NOT EXISTS {db}.{_TABLE} (
-            report_id Int64,
-            symbol String,
-            title String,
-            pdf_url String,
-            markdown String,
-            status String,
-            chunk_count UInt32,
-            collection String,
-            error String,
-            created_at DateTime64(3),
-            updated_at DateTime64(3)
-        )
-        ENGINE = ReplacingMergeTree(updated_at)
-        ORDER BY report_id
-        SETTINGS enable_block_number_column = 1, enable_block_offset_column = 1
-        """
-    )
-
-    # A table created before these settings existed needs them turned on (and its
-    # existing parts rewritten so _block_number/_block_offset are materialized).
-    # Best-effort, once per process — harmless if already enabled or unsupported.
-    if not _lightweight_ready:
-        for cmd in (
-            f"ALTER TABLE {db}.{_TABLE} MODIFY SETTING "
-            "enable_block_number_column = 1, enable_block_offset_column = 1",
-            f"OPTIMIZE TABLE {db}.{_TABLE} FINAL",
-        ):
-            try:
-                client.command(cmd)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("report_rag migration step skipped ({}): {}", cmd, exc)
-        _lightweight_ready = True
-
-
-def _get_row(client, report_id: int) -> Optional[dict[str, Any]]:
-    query = (
-        f"SELECT {', '.join(_COLUMNS)} FROM {settings.clickhouse_db}.{_TABLE} FINAL "
-        "WHERE report_id = %(rid)s LIMIT 1"
-    )
-    result = client.query(query, parameters={"rid": int(report_id)})
-    if not result.result_rows:
-        return None
-    return dict(zip(_COLUMNS, result.result_rows[0]))
-
-
-def upsert(report_id: int, **fields: Any) -> None:
-    """Insert a new ReplacingMergeTree version for the report.
-
-    Prefer :func:`save` for normal pipeline writes — mixing ``INSERT`` (upsert)
-    with later lightweight ``UPDATE``s can leave FINAL showing an older empty
-    PENDING row (symbol/title/pdf_url blank) while status advances on a patch.
-    """
-    client = _client()
-    try:
-        _ensure_table(client)
-        existing = _get_row(client, report_id) or {}
-        now = datetime.utcnow()
-
-        row = {
-            "report_id": int(report_id),
-            "symbol": existing.get("symbol", ""),
-            "title": existing.get("title", ""),
-            "pdf_url": existing.get("pdf_url", ""),
-            "markdown": existing.get("markdown", ""),
-            "status": existing.get("status", PENDING),
-            "chunk_count": existing.get("chunk_count", 0),
-            "collection": existing.get("collection", ""),
-            "error": existing.get("error", ""),
-            "created_at": existing.get("created_at") or now,
-            "updated_at": now,
-        }
-        # Apply provided overrides (ignore unknown keys defensively).
-        # Allow empty strings (e.g. error="") so fields can be cleared.
-        for key, value in fields.items():
-            if key in row and value is not None:
-                row[key] = value
-
-        client.insert(
-            table=f"{settings.clickhouse_db}.{_TABLE}",
-            data=[[row[c] for c in _COLUMNS]],
-            column_names=_COLUMNS,
-        )
-    finally:
-        client.close()
-
-
-def save(report_id: int, **fields: Any) -> None:
-    """Write fields without fighting lightweight updates.
-
-    - Row missing → ``upsert`` (first INSERT, creates the row).
-    - Row exists → ``update`` (in-place patch). Avoids a second INSERT that
-      ReplacingMergeTree + later UPDATEs can "lose" for non-key columns when
-      FINAL resolves versions.
-    """
-    client = _client()
-    try:
-        _ensure_table(client)
-        exists = _get_row(client, report_id) is not None
-    finally:
-        client.close()
-
-    if exists:
-        update(report_id, **fields)
-    else:
-        upsert(report_id, **fields)
-
-
-# Columns update/set_status may modify in place — never the ORDER BY key
-# (report_id) or created_at / updated_at (version key).
-_UPDATABLE_COLUMNS = {
+# Columns a caller may write. ``report_id`` (the key) and the timestamps are
+# managed here, never taken from kwargs.
+_WRITABLE_COLUMNS = {
     "symbol", "title", "pdf_url", "markdown", "status", "chunk_count",
     "collection", "error",
 }
 
-# clickhouse_connect inlines %(params)s into the SQL text. Default
-# max_query_size is 256 KiB — a full report markdown easily exceeds that and
-# fails with "Max query size exceeded". Large payloads go through INSERT upsert
-# (data in the HTTP body) instead of UPDATE.
-_MAX_UPDATE_INLINE_CHARS = 80_000
+_DEFAULTS: dict[str, Any] = {
+    "symbol": "",
+    "title": "",
+    "pdf_url": "",
+    "markdown": "",
+    "status": PENDING,
+    "chunk_count": 0,
+    "collection": "",
+    "error": "",
+}
+
+
+def endpoint() -> str:
+    """The MySQL target this process reads/writes status to.
+
+    Logged by the flow (worker) and exposed via the API so a worker-vs-API
+    mismatch (each resolving different MYSQL_* env) is obvious — that mismatch is
+    the usual reason a completed job's status looks "not updated".
+    """
+    return f"{mysql.endpoint()}.{_TABLE}"
+
+
+def _engine():
+    return mysql.ensure_table(_metadata, report_rag_table)
+
+
+def upsert(report_id: int, **fields: Any) -> None:
+    """Create the report's row, or patch the given fields if it already exists.
+
+    Only the fields passed in are written; anything else keeps its stored value
+    (or its default on first insert). ``None`` values are ignored so a caller can
+    pass through optional arguments, while empty strings *are* written so fields
+    like ``error`` can be cleared.
+    """
+    updates = {
+        key: value
+        for key, value in fields.items()
+        if key in _WRITABLE_COLUMNS and value is not None
+    }
+    now = datetime.now()
+
+    row: dict[str, Any] = {
+        "report_id": int(report_id),
+        **_DEFAULTS,
+        **updates,
+        "created_at": now,
+        "updated_at": now,
+    }
+
+    stmt = mysql_insert(report_rag_table).values(**row)
+    # On conflict, patch only what the caller supplied (plus updated_at) so a
+    # status write never blanks out symbol/title/markdown set by an earlier step.
+    stmt = stmt.on_duplicate_key_update(
+        **{key: stmt.inserted[key] for key in updates},
+        updated_at=stmt.inserted.updated_at,
+    )
+
+    engine = _engine()
+    with engine.begin() as conn:
+        conn.execute(stmt)
+
+
+# ``save``/``update``/``set_status`` were three different operations on
+# ClickHouse, where an INSERT and a lightweight UPDATE had to be chosen between
+# carefully. On MySQL they are all the same upsert, kept as separate names for
+# the existing call sites.
+
+
+def save(report_id: int, **fields: Any) -> None:
+    """Create or patch the report's row. Alias of :func:`upsert`."""
+    upsert(report_id, **fields)
 
 
 def update(report_id: int, **fields: Any) -> None:
-    """Patch an existing report row in place (ClickHouse lightweight UPDATE).
+    """Patch the report's row, creating it if absent.
 
-    Uses ``UPDATE ... SET ... WHERE`` so changes are immediately visible —
-    no ReplacingMergeTree version to merge. The row must already exist (created
-    by ``upsert``); a lightweight UPDATE on a missing row is a no-op.
-
-    Large string fields (esp. ``markdown``) fall back to :func:`upsert` because
-    parameterized UPDATEs embed values in the query text and hit
-    ``max_query_size``.
-
-    NB: ``updated_at`` is the ReplacingMergeTree version key and cannot be
-    changed by a lightweight UPDATE ("Cannot UPDATE key column"), so it is left
-    at its last-upsert value; only non-key columns are patched here.
+    Creating-if-absent is deliberate: the old ClickHouse lightweight UPDATE was a
+    silent no-op on a missing row, so a standalone
+    ``python tasks/rag_pipeline.py <id>`` run (where no API call had inserted the
+    row first) recorded no status at all.
     """
-    updates: dict[str, Any] = {}
-    for key, value in fields.items():
-        if key in _UPDATABLE_COLUMNS and value is not None:
-            updates[key] = value
-    if not updates:
-        return
-
-    if any(
-        isinstance(v, str) and len(v) > _MAX_UPDATE_INLINE_CHARS
-        for v in updates.values()
-    ):
-        upsert(report_id, **updates)
-        return
-
-    set_clause = ", ".join(f"{col} = %({col})s" for col in updates)
-    params: dict[str, Any] = dict(updates)
-    params["rid"] = int(report_id)
-    sql = (
-        f"UPDATE {settings.clickhouse_db}.{_TABLE} SET {set_clause} "
-        "WHERE report_id = %(rid)s"
-    )
-
-    client = _client()
-    try:
-        _ensure_table(client)
-        try:
-            # Lightweight updates need this setting on 25.7; on versions where
-            # they are GA (and the setting was removed) retry without it.
-            client.command(
-                sql, parameters=params,
-                settings={"allow_experimental_lightweight_update": 1},
-            )
-        except Exception as exc:  # noqa: BLE001
-            msg = str(exc).lower()
-            if "unknown setting" in msg:
-                client.command(sql, parameters=params)
-            elif "max query size" in msg:
-                # Still too large for UPDATE — rewrite via INSERT body.
-                upsert(report_id, **updates)
-            else:
-                raise
-    finally:
-        client.close()
+    upsert(report_id, **fields)
 
 
 def set_status(report_id: int, status: str, **extra: Any) -> None:
-    """Update a report's status (+ optional fields) in place."""
-    update(report_id, status=status, **extra)
+    """Update a report's status (+ optional fields)."""
+    upsert(report_id, status=status, **extra)
+
+
+def _get_row(report_id: int) -> Optional[dict[str, Any]]:
+    engine = _engine()
+    with engine.connect() as conn:
+        row = conn.execute(
+            select(report_rag_table).where(
+                report_rag_table.c.report_id == int(report_id)
+            )
+        ).mappings().first()
+    return dict(row) if row else None
 
 
 def get_status(report_id: int) -> Optional[dict[str, Any]]:
     """Return status metadata for one report (without the full markdown)."""
-    client = _client()
-    try:
-        _ensure_table(client)
-        row = _get_row(client, report_id)
-        if row is None:
-            return None
-        return {
-            "report_id": row["report_id"],
-            "status": row["status"],
-            "chunk_count": row["chunk_count"],
-            "collection": row["collection"],
-            "error": row["error"],
-            "has_markdown": bool(row["markdown"]),
-            "updated_at": row["updated_at"].isoformat() if row["updated_at"] else "",
-        }
-    finally:
-        client.close()
+    row = _get_row(report_id)
+    if row is None:
+        return None
+    return {
+        "report_id": row["report_id"],
+        "status": row["status"],
+        "chunk_count": row["chunk_count"],
+        "collection": row["collection"],
+        "error": row["error"],
+        "has_markdown": bool(row["markdown"]),
+        "updated_at": row["updated_at"].isoformat() if row["updated_at"] else "",
+    }
 
 
 def get_markdown(report_id: int) -> Optional[str]:
     """Return the parsed markdown for a report, or None if not parsed yet."""
-    client = _client()
-    try:
-        _ensure_table(client)
-        row = _get_row(client, report_id)
-        return row["markdown"] if row and row["markdown"] else None
-    finally:
-        client.close()
+    engine = _engine()
+    with engine.connect() as conn:
+        markdown = conn.execute(
+            select(report_rag_table.c.markdown).where(
+                report_rag_table.c.report_id == int(report_id)
+            )
+        ).scalar_one_or_none()
+    return markdown or None
 
 
 def list_statuses(report_ids: Optional[list[int]] = None) -> list[dict[str, Any]]:
@@ -303,31 +223,33 @@ def list_statuses(report_ids: Optional[list[int]] = None) -> list[dict[str, Any]
     Without ``report_ids`` returns every tracked report — cheap, one small row
     each — so the Report page can annotate its list in a single call.
     """
-    client = _client()
     try:
-        _ensure_table(client)
-        query = (
-            f"SELECT report_id, status, chunk_count, updated_at "
-            f"FROM {settings.clickhouse_db}.{_TABLE} FINAL "
+        engine = _engine()
+        stmt = select(
+            report_rag_table.c.report_id,
+            report_rag_table.c.status,
+            report_rag_table.c.chunk_count,
+            report_rag_table.c.updated_at,
         )
-        params: dict[str, Any] = {}
         if report_ids:
-            query += "WHERE report_id IN %(ids)s "
-            params["ids"] = [int(r) for r in report_ids]
-        query += "ORDER BY updated_at DESC"
+            stmt = stmt.where(
+                report_rag_table.c.report_id.in_([int(r) for r in report_ids])
+            )
+        stmt = stmt.order_by(report_rag_table.c.updated_at.desc())
 
-        result = client.query(query, parameters=params or None)
+        with engine.connect() as conn:
+            rows = conn.execute(stmt).all()
         return [
             {
-                "report_id": r[0],
-                "status": r[1],
-                "chunk_count": r[2],
-                "updated_at": r[3].isoformat() if r[3] else "",
+                "report_id": r.report_id,
+                "status": r.status,
+                "chunk_count": r.chunk_count,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else "",
             }
-            for r in result.result_rows
+            for r in rows
         ]
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to list RAG statuses: %s", exc)
+    except Exception as exc:  # noqa: BLE001 — the Report page degrades to no badges
+        # loguru formats with {}, not %s — a printf placeholder here would print
+        # literally and drop the exception, hiding the reason the page is empty.
+        logger.warning("Failed to list RAG statuses from {}: {!r}", endpoint(), exc)
         return []
-    finally:
-        client.close()

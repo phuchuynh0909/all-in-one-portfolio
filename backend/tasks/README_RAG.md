@@ -8,21 +8,39 @@ per row) or the API; runs as a background Prefect flow.
 Report PDF (url)
    → download + parse to markdown        (marker, paginated)
    → page-level chunking                  (one chunk per page; huge pages sub-split)
-   → embed                                (Qwen3-Embedding-8B: Ollama or local HF)
+   → embed                                (Qwen3-Embedding-8B via OpenAI-compatible API)
    → upsert into Qdrant                    (re-embed replaces prior chunks)
 ```
 
 **Parser (choose one):**
 - **marker** (default) — [marker-pdf](https://github.com/datalab-to/marker),
   local, `paginate_output=True`; the converter loads ML models once and is cached
-  as a process-wide singleton.
+  as a process-wide singleton. Best layout fidelity, slowest, heaviest.
 - **llamaparse** — [LlamaParse](https://cloud.llamaindex.ai) cloud API; needs
-  `LLAMA_CLOUD_API_KEY` (or `RAG_LLAMAPARSE_API_KEY`). Each returned page is
-  joined with a canonical separator so page-level chunking is preserved.
+  `LLAMA_CLOUD_API_KEY` (or `RAG_LLAMAPARSE_API_KEY`). One Document per page.
+- **docling** — [Docling](https://github.com/docling-project/docling), local;
+  exported one page at a time via `export_to_markdown(page_no=…)`. Pulls its own
+  layout/OCR models (torch + RapidOCR), so first run downloads weights.
+  > ⚠️ **Not recommended for these Vietnamese reports.** Docling's PDF text
+  > backend splits Vietnamese combining diacritics, emitting `CTCP S ữ a Vi ệ t
+  > Nam` where marker and pymupdf4llm both give `CTCP Sữa Việt Nam` — measured at
+  > 177 space-isolated diacritics per report versus 3-5 for the others, and it is
+  > not an OCR setting (identical with `do_ocr=False`). Broken tokens degrade both
+  > the digest and the embeddings.
+- **pymupdf4llm** — [PyMuPDF4LLM](https://pymupdf.readthedocs.io/en/latest/pymupdf4llm/),
+  local, `page_chunks=True`. No ML models at all: by far the fastest and
+  lightest, with correspondingly plainer structure on complex layouts.
+
+Every parser returns **page-delimited** markdown joined by the same canonical
+separator, so everything downstream (page batching, `[page N]` markers, the
+digest's `_Source: p. N` citations, page-level chunking) is parser-agnostic.
 
 Pick with `RAG_PDF_PARSER` (server default) or per job — the Report page has a
-**Parser** dropdown, and `POST /report/{id}/rag?parser=marker|llamaparse` accepts
-an override. Only the selected parser's library is imported at runtime.
+**Parser** dropdown, and `POST /report/{id}/rag?parser=…` accepts an override.
+Only the selected parser's library is imported at runtime, so you only need the
+ones you actually use installed. The valid names live in
+`report_rag_service.PDF_PARSERS` (the API validates against it without importing
+the heavy RAG stack; `rag_pipeline` asserts its registry matches at import).
 
 **Chunking:** page-level — each
 page becomes one chunk (a page longer than `RAG_MAX_PAGE_CHARS` is sub-split,
@@ -30,47 +48,46 @@ keeping its page number). The Qdrant collection is created on first use with the
 vector size reported by the model (Cosine distance). Each point's payload carries
 `report_id, symbol, title, pdf_url, page, chunk_index, text`.
 
-**Embeddings (choose one)** — `RAG_EMBED_BACKEND`, implemented once in
-`app/services/embeddings.py` and shared with the read side
-(`app/services/tradingagents/kb_search.py`), so ingest and search always agree:
+**Embeddings** — one backend: an **OpenAI-compatible** `POST /v1/embeddings` API,
+implemented once in `app/services/embeddings.py` and shared with the read side
+(`app/services/tradingagents/kb_search.py`), so ingest and search always agree.
 
-- **ollama** (default) — HTTP `POST /api/embed` on an Ollama server,
-  `RAG_EMBED_MODEL=qwen3-embedding:8b`. Nothing heavy in this process.
-- **huggingface** — no API at all: the model runs **in-process** via
-  sentence-transformers, `RAG_HF_EMBED_MODEL=Qwen/Qwen3-Embedding-8B` (any HF
-  repo id or local path). The model is a lazy per-process singleton; the first
-  call downloads the weights to the HF cache (~16 GB for the 8B) and loads them
-  onto the best available device (cuda / mps / cpu), where they stay resident.
+It is the same gateway `app/services/llm.py` uses for the summary step, serving
+`openrouter/qwen/qwen3-embedding-8b` at 4096 dimensions. Nothing heavy runs
+in-process and there is no model to pull or host.
 
-Both defaults are the same model, so vectors stay 4096-d and a collection built
-with one backend is still searchable with the other. Re-embed if retrieval
-quality looks off after a switch — runtime pooling/normalization details differ
-slightly. The backend is per-process, so the Docker API can keep using `ollama`
-for KB search while a host worker embeds with `huggingface`.
+The key is read from `RAG_OPENAI_API_KEY`, falling back to
+`OPENAI_COMPATIBLE_API_KEY` (where the gateway's key is normally stored) and then
+`OPENAI_API_KEY`. The default URL is resolved per process —
+`host.docker.internal:20128` from inside a container, `localhost:20128` on the
+host — because the API runs in Docker while the Prefect worker runs on the host;
+override with `RAG_OPENAI_EMBED_URL`.
 
-> **Ollama prerequisite:** `ollama pull qwen3-embedding:8b`, and the server must
-> support embeddings — recent Ollama exposes `/api/embed` out of the box; older
-> builds need to be started with `--embeddings` (the flow surfaces Ollama's own
-> error message on failure). In Docker the backend reaches host Ollama at
-> `host.docker.internal:11434`, on the host at `localhost:11434` (override with
-> `RAG_OLLAMA_URL`).
+> Earlier versions also supported a local Ollama server (`RAG_EMBED_BACKEND=ollama`,
+> `/api/embed`) and an in-process HuggingFace model (`huggingface`). Both are
+> removed — `RAG_EMBED_BACKEND`, `RAG_EMBED_MODEL`, `RAG_OLLAMA_URL`,
+> `RAG_HF_EMBED_MODEL` and `RAG_HF_DTYPE` no longer do anything.
 
-Status + the parsed markdown for every report are tracked in ClickHouse
-(`report_rag`, ReplacingMergeTree) so the list shows which reports are embedded.
+Status + the parsed markdown for every report are tracked in **MySQL**
+(`report_rag`, keyed by `report_id`) so the list shows which reports are
+embedded. Every write is an `INSERT … ON DUPLICATE KEY UPDATE`, so a status
+write creates the row if the pipeline was started outside the API.
 
 ## Pieces
 
 | File | Role |
 |---|---|
 | `tasks/rag_pipeline.py` | Prefect `@flow rag_pipeline_flow(report_id)` + tasks |
-| `app/services/report_rag_service.py` | ClickHouse status/markdown store (`report_rag`) |
+| `app/services/report_rag_service.py` | MySQL status/markdown store (`report_rag`) |
+| `app/db/mysql.py` | shared MySQL engine + schema bootstrap |
+| `app/stores/raw_wichart_report.py` | MySQL report detail store (`llm_summary`) |
 | `app/api/v1/routes/report.py` | trigger + status endpoints |
 | `frontend/.../ReportTable.tsx`, `Report.tsx` | embed action + status badge, polling |
 
 ## Status lifecycle
 
-`PENDING → PARSING → PARSED → EMBEDDING → EMBEDDED` (any step → `FAILED`, with
-`error`).
+`PENDING → PARSING → PARSED → SUMMARIZING → EMBEDDING → EMBEDDED` (any step →
+`FAILED`, with `error`). `SUMMARIZING` is skipped when `RAG_SUMMARY` is off.
 
 ## API
 
@@ -87,32 +104,29 @@ Status + the parsed markdown for every report are tracked in ClickHouse
 |---|---|---|
 | `QDRANT_URL` | `http://192.168.1.3:6333` | your live Qdrant |
 | `QDRANT_REPORTS_COLLECTION` | `wichart_reports` | target collection |
-| `RAG_PDF_PARSER` | `marker` | `marker` (local) or `llamaparse` (cloud) |
+| `RAG_PDF_PARSER` | `marker` | `marker` / `docling` / `pymupdf4llm` (local) or `llamaparse` (cloud) |
 | `LLAMA_CLOUD_API_KEY` / `RAG_LLAMAPARSE_API_KEY` | _(unset)_ | required for `llamaparse` |
 | `RAG_LLAMAPARSE_LANGUAGE` | _(unset)_ | optional OCR language hint, e.g. `vi` |
-| `RAG_EMBED_BACKEND` | `ollama` | `ollama` (HTTP API) or `huggingface` (local, in-process) |
-| `RAG_EMBED_MODEL` | `qwen3-embedding:8b` | ollama backend: model tag (must be pulled) |
-| `RAG_OLLAMA_URL` | `OLLAMA_BASE_URL`, else `host.docker.internal:11434` in Docker / `localhost:11434` on the host | Ollama server (native `/api`) |
-| `RAG_HF_EMBED_MODEL` | `Qwen/Qwen3-Embedding-8B` | hf backend: HF repo id or local path |
-| `RAG_HF_DTYPE` | `auto` (model config's own: bf16 for Qwen3) | `float16` / `bfloat16` / `float32` |
+| `RAG_OPENAI_EMBED_URL` | `host.docker.internal:20128/v1` in Docker / `localhost:20128/v1` on the host | OpenAI-compatible embeddings API |
+| `RAG_OPENAI_API_KEY` | falls back to `OPENAI_COMPATIBLE_API_KEY`, then `OPENAI_API_KEY` | bearer token for that API |
+| `RAG_OPENAI_EMBED_MODEL` | `openrouter/qwen/qwen3-embedding-8b` | embedding model id |
+| `RAG_EMBED_DIMENSIONS` | `4096` | vector size requested from the API |
 | `RAG_EMBED_BATCH` | `4` | texts per embed call (keep small after marker) |
-| `RAG_EMBED_RETRIES` | `3` | retries on transient EOF / connection / OOM errors |
+| `RAG_EMBED_RETRIES` | `3` | retries on transient connection / 429 / 5xx errors |
 | `RAG_MAX_PAGE_CHARS` | `6000` | page-chunk safety cap; longer pages are sub-split |
 | `TORCH_DEVICE` | (marker default) | `cpu` / `cuda` / `mps` for marker |
-| `CLICKHOUSE_REPORT_RAG_TABLE` | `report_rag` | status table name |
+| `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DB` | `192.168.1.3` / `3306` / `root` / — / `my_portfolio` | status + detail store (or `MYSQL_URL` for the whole DSN) |
+| `MYSQL_REPORT_RAG_TABLE` | `report_rag` | status table name |
 
 **marker is heavy** — it pulls `torch` and downloads its models on first parse
-(cached afterwards, GPU used automatically if available). With the default
-backend the **embedding model runs on your Ollama host**
-(`ollama pull qwen3-embedding:8b`); with `RAG_EMBED_BACKEND=huggingface` it runs
-in this process instead, so marker's models are released before it loads (the two
-together will OOM most machines). The Qdrant collection and the ClickHouse table
-are created automatically on first use.
+(cached afterwards, GPU used automatically if available). Embedding itself is a
+remote API call, so nothing competes with marker for memory. The Qdrant
+collection and the MySQL database/tables are created automatically on first use.
 
 ## Run standalone
 
 ```bash
-cd backend && python tasks/rag_pipeline.py <report_id> [--recreate] [--parser marker|llamaparse]
+cd backend && python tasks/rag_pipeline.py <report_id> [--recreate] [--parser marker|llamaparse|docling|pymupdf4llm]
 ```
 
 Payload stored per chunk: `report_id, symbol, title, pdf_url, page, chunk_index`
@@ -146,9 +160,10 @@ extra_hosts:
   - "host.docker.internal:host-gateway"
 ```
 
-The **worker runs on the host**, so it reaches Ollama at `localhost:11434` (the
-non-Docker default) and Qdrant at `192.168.1.3:6333` directly — start it with
-the backend `.env` loaded so ClickHouse/Qdrant/Ollama config is present:
+The **worker runs on the host**, so it reaches the embeddings/LLM gateway at
+`localhost:20128` (the non-Docker default) and Qdrant at `192.168.1.3:6333`
+directly — start it with the backend `.env` loaded so MySQL, ClickHouse, Qdrant and the
+gateway key are present:
 
 ```bash
 cd backend && python tasks/rag_pipeline.py --deploy    # against the host server
@@ -157,7 +172,7 @@ prefect worker start --pool my-worker
 
 ## Deploy note
 
-New deps (`qdrant-client`, `ollama`, `marker-pdf`, `llama-parse`, and
-`sentence-transformers` for the local embedder) — rebuild the backend image (or
-`pip install -r requirements.txt` from `backend/`). Ensure the backend/worker can
-reach Qdrant (`192.168.1.3:6333`) and, on the default backend, Ollama.
+Deps: `qdrant-client` plus the parser you use (`marker-pdf`, `llama-parse`,
+`docling`, `pymupdf4llm`) — rebuild the backend image (or `pip install -r
+requirements.txt` from `backend/`). Ensure the backend/worker can reach Qdrant
+(`192.168.1.3:6333`) and the OpenAI-compatible gateway (`:20128`).

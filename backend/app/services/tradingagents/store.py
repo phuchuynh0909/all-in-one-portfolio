@@ -127,7 +127,7 @@ def list_analyses(symbol: Optional[str] = None, limit: int = 100) -> list[dict[s
             })
         return rows
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to list analyses: %s", exc)
+        logger.warning("Failed to list analyses: {!r}", exc)
         return []
     finally:
         client.close()
@@ -180,7 +180,7 @@ def list_prior_decisions(
             for r in result.result_rows
         ]
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to list prior decisions for %s: %s", symbol, exc)
+        logger.warning("Failed to list prior decisions for {}: {!r}", symbol, exc)
         return []
     finally:
         client.close()
@@ -215,7 +215,7 @@ def get_analysis(analysis_id: str) -> Optional[dict[str, Any]]:
             "created_at": r[10].isoformat() if r[10] is not None else "",
         }
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Failed to get analysis %s: %s", analysis_id, exc)
+        logger.warning("Failed to get analysis {}: {!r}", analysis_id, exc)
         return None
     finally:
         client.close()

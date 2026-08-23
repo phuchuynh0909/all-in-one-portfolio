@@ -23,6 +23,15 @@ class Settings(BaseSettings):
     clickhouse_password: str = os.getenv("CLICKHOUSE_PASSWORD", "mypassword")
     clickhouse_db: str = os.getenv("CLICKHOUSE_DB", "default")
 
+    # MySQL — the wichart report *detail* store (report_title, llm_summary,
+    # clean_content, status …). The raw report feed stays in ClickHouse
+    # (``raw_wichart_report``); MySQL holds the enriched rows we write back.
+    mysql_host: str = os.getenv("MYSQL_HOST", "192.168.1.3")
+    mysql_port: int = int(os.getenv("MYSQL_PORT", "3306"))
+    mysql_user: str = os.getenv("MYSQL_USER", "root")
+    mysql_password: str = os.getenv("MYSQL_PASSWORD", "kyostyle1")
+    mysql_db: str = os.getenv("MYSQL_DB", "my_portfolio")
+
     # DNSE OpenAPI (real-time matched prices; secret must stay server-side)
     dnse_api_key: str = os.getenv("DNSE_API_KEY", "")
     dnse_api_secret: str = os.getenv("DNSE_API_SECRET", "")
@@ -57,6 +66,25 @@ class Settings(BaseSettings):
     xgb_model_path: str = os.getenv("XGB_MODEL_PATH", "models/xgboost_model_05_19_2025.ubj")
     lgb_model_path: str = os.getenv("LGB_MODEL_PATH", "models/lightgbm_model_05_19_2025.ubj")
     catboost_model_path: str = os.getenv("CATBOOST_MODEL_PATH", "models/catboost_model_05_19_2025.cbm")
+
+    @property
+    def mysql_url(self) -> str:
+        """SQLAlchemy URL for the report detail store.
+
+        ``MYSQL_URL`` overrides it wholesale (e.g. to point at a managed
+        instance); otherwise it is built from the parts above. utf8mb4 is not
+        optional — the reports are Vietnamese.
+        """
+        override = os.getenv("MYSQL_URL")
+        if override:
+            return override
+        from urllib.parse import quote_plus
+
+        return (
+            f"mysql+pymysql://{quote_plus(self.mysql_user)}:"
+            f"{quote_plus(self.mysql_password)}@{self.mysql_host}:{self.mysql_port}"
+            f"/{self.mysql_db}?charset=utf8mb4"
+        )
 
     @property
     def delta_storage_options(self) -> dict:

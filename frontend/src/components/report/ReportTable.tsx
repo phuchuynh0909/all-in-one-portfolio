@@ -30,12 +30,13 @@ const RAG_META: Record<string, { label: string; color: ChipColor; spinning?: boo
   PENDING: { label: 'Queued', color: 'info', spinning: true },
   PARSING: { label: 'Parsing', color: 'info', spinning: true },
   PARSED: { label: 'Parsed', color: 'default' },
+  SUMMARIZING: { label: 'Summarizing', color: 'info', spinning: true },
   EMBEDDING: { label: 'Embedding', color: 'info', spinning: true },
   EMBEDDED: { label: 'Embedded', color: 'success' },
   FAILED: { label: 'Failed', color: 'error' },
 };
 
-const IN_PROGRESS = ['PENDING', 'PARSING', 'EMBEDDING'];
+const IN_PROGRESS = ['PENDING', 'PARSING', 'SUMMARIZING', 'EMBEDDING'];
 
 interface ReportTableProps {
   reports: Report[];

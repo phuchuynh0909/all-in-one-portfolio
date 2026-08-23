@@ -1,234 +1,315 @@
-import pandas as pd
+"""MySQL-backed store for wichart report *details*.
+
+Two tables, two systems, on purpose:
+
+  * ``raw_wichart_report`` — the crawled feed, read-only here, lives in
+    **ClickHouse** (the same table ``report_service._query_raw_reports`` reads).
+  * ``wichart_reports`` — the enriched rows we write back (``llm_summary``,
+    ``clean_content``, ``status`` …), lives in **MySQL**.
+
+This replaces the previous Delta-table-on-MinIO implementation of the detail
+side. Delta was only reachable from the API container — its S3 endpoint resolves
+to ``localhost:9000``, so the Prefect worker (which runs on the host) could not
+write a summary at all. MySQL is reachable from both.
+
+The engine and schema bootstrap are shared with ``report_rag_service`` via
+``app.db.mysql``, so the detail table is created on first use and there is no
+migration step to run. Callers still get pandas DataFrames, so
+``report_service`` and ``tradingagents.vn_data`` are unchanged.
+
+Config: ``MYSQL_HOST/PORT/USER/PASSWORD/DB``, or ``MYSQL_URL`` to override the
+whole DSN. See ``app/core/settings.py``.
+"""
+from __future__ import annotations
+
+import os
 from datetime import datetime
-from deltalake import DeltaTable
+from typing import Any
+
+import pandas as pd
 from loguru import logger
+from sqlalchemy import (
+    BigInteger,
+    Column,
+    DateTime,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    Text,
+    func,
+    insert,
+    select,
+    update,
+)
+from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.engine import Engine
+
 from app.core.settings import settings
+from app.db import mysql
+
+_DETAIL_TABLE = os.getenv("MYSQL_WICHART_REPORT_TABLE", "wichart_reports")
+_RAW_TABLE = os.getenv("CLICKHOUSE_WICHART_REPORT_TABLE", "raw_wichart_report")
+
+# Raw columns this store maps into the detail row. Kept explicit (rather than
+# SELECT *) so a schema change upstream surfaces here rather than silently
+# producing NULL detail fields.
+_RAW_COLUMNS = (
+    "id", "mack", "tenbaocao", "url", "nguon",
+    "ngaykn", "rsnganh", "idnganh", "loaibaocao", "khuyennghi",
+)
+
+_metadata = MetaData()
+
+# LONGTEXT for the generated text: a full report digest runs tens of thousands of
+# characters, well past TEXT's 64 KB.
+reports_table = Table(
+    _DETAIL_TABLE,
+    _metadata,
+    Column("document_id", BigInteger, primary_key=True, autoincrement=False),
+    Column("stock_symbol", String(32), index=True),
+    Column("report_title", String(512)),
+    Column("pdf_url", String(1024)),
+    Column("source", String(128)),
+    Column("report_date", DateTime, index=True),
+    Column("industry_research", String(255)),
+    Column("industry_id", BigInteger),
+    Column("report_category", String(128)),
+    Column("recommendation", String(128)),
+    Column("clean_content", LONGTEXT),
+    Column("llm_summary", LONGTEXT),
+    Column("token_count", Integer),
+    Column("status", String(32)),
+    Column("error_message", Text),
+    Column("created_at", DateTime),
+    Column("updated_at", DateTime),
+    Column("processed_at", DateTime),
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_unicode_ci",
+)
+
+def _ensure_table() -> Engine:
+    """Create the database and detail table if they don't exist yet (once)."""
+    return mysql.ensure_table(_metadata, reports_table)
+
+
+# ---------------------------------------------------------------------------
+# Raw feed (ClickHouse, read-only)
+# ---------------------------------------------------------------------------
+
+
+def _query_raw(report_id: int | None = None, mack: str | None = None,
+               limit: int | None = None) -> pd.DataFrame:
+    """Read the crawled feed from ClickHouse into a DataFrame."""
+    import clickhouse_connect
+
+    query = (
+        f"SELECT {', '.join(_RAW_COLUMNS)} "
+        f"FROM {settings.clickhouse_db}.{_RAW_TABLE} FINAL"
+    )
+    conditions: list[str] = []
+    params: dict[str, Any] = {}
+    if report_id is not None:
+        conditions.append("id = %(report_id)s")
+        params["report_id"] = report_id
+    if mack:
+        conditions.append("mack = %(mack)s")
+        params["mack"] = mack.upper()
+    if conditions:
+        query += " WHERE " + " AND ".join(conditions)
+    query += " ORDER BY ngaykn DESC, id DESC"
+    if limit is not None:
+        query += f" LIMIT {int(limit)}"
+
+    client = clickhouse_connect.get_client(
+        host=settings.clickhouse_host,
+        port=settings.clickhouse_port,
+        username=settings.clickhouse_user,
+        password=settings.clickhouse_password,
+        database=settings.clickhouse_db,
+    )
+    try:
+        result = client.query(query, parameters=params or None)
+        return pd.DataFrame(result.result_rows, columns=result.column_names)
+    finally:
+        client.close()
+
+
+def _detail_row_from_raw(raw: Any, now: datetime) -> dict[str, Any]:
+    """Map one raw feed row onto the detail table's columns."""
+
+    def val(key):
+        v = raw.get(key)
+        return None if v is None or pd.isna(v) else v
+
+    return {
+        "document_id": int(raw["id"]),
+        "stock_symbol": val("mack"),
+        "report_title": val("tenbaocao"),
+        "pdf_url": val("url"),
+        "source": val("nguon"),
+        "report_date": val("ngaykn"),
+        "industry_research": val("rsnganh"),
+        "industry_id": val("idnganh"),
+        "report_category": val("loaibaocao"),
+        "recommendation": val("khuyennghi"),
+        "clean_content": None,
+        "llm_summary": None,
+        "token_count": None,
+        "status": "INIT",
+        "error_message": None,
+        "created_at": now,
+        "updated_at": now,
+        "processed_at": None,
+    }
+
 
 class WichartReportStore:
+    """Report detail repository: reads the raw feed, owns the MySQL detail rows."""
+
+    # -- reads ---------------------------------------------------------------
+
     def get_data(self, mack: str | None = None) -> pd.DataFrame:
-        """Get report list from raw_wichart_report table."""
-        dt = DeltaTable(settings.wichart_report_delta_table, storage_options=settings.delta_storage_options)
-        if mack:
-            df = dt.to_pandas(filters=[("mack", "==", mack.upper())])
-        else:
-            df = dt.to_pandas()
-        return df
+        """The raw crawled report list, optionally filtered by ticker."""
+        return _query_raw(mack=mack)
 
     def get_detail(self, report_id: int) -> pd.DataFrame | None:
-        """Get report detail from wichart_reports table. Creates from raw_wichart_report if not exists."""
-        logger.debug(f"Getting detail for report_id={report_id}")
-        dt = DeltaTable(settings.wichart_report_detail_delta_table, storage_options=settings.delta_storage_options)
+        """Detail row for a report, creating it from the raw feed if absent.
 
+        Returns a single-row DataFrame (callers use ``.empty`` / ``.iloc[0]``),
+        or None when the report is unknown upstream too.
+        """
+        logger.debug(f"Getting detail for report_id={report_id}")
         try:
-            df = dt.to_pandas(filters=[("document_id", "==", str(report_id))])
-            if df is None or df.empty:
-                df = self._create_detail_from_raw(report_id)
-                if df is None:
-                    logger.warning(f"Failed to create detail from raw for report_id={report_id}")
-                    return None
-        except Exception as e:
-            logger.warning(f"Failed to query wichart_reports for report_id={report_id}: {e}")
-            # Try to create from raw_wichart_report
-            df = self._create_detail_from_raw(report_id)
-        
-        logger.debug(f"Returning detail for report_id={report_id}")
-        return df
+            engine = _ensure_table()
+            with engine.connect() as conn:
+                rows = conn.execute(
+                    select(reports_table).where(
+                        reports_table.c.document_id == int(report_id)
+                    )
+                ).mappings().all()
+            if rows:
+                return pd.DataFrame([dict(r) for r in rows])
+        except Exception as exc:  # noqa: BLE001 — fall through to a create attempt
+            logger.warning(
+                f"Failed to query {_DETAIL_TABLE} for report_id={report_id}: {exc}"
+            )
+
+        return self._create_detail_from_raw(report_id)
+
+    # -- writes --------------------------------------------------------------
 
     def _create_detail_from_raw(self, report_id: int) -> pd.DataFrame | None:
-        """Create a new record in wichart_reports from raw_wichart_report data."""
+        """Insert a detail row seeded from the raw feed. None if not in the feed."""
         logger.debug(f"Creating detail from raw for report_id={report_id}")
-        
-        # Get data from raw_wichart_report
-        logger.debug(f"Fetching from raw_wichart_report table: {settings.wichart_report_delta_table}")
-        raw_dt = DeltaTable(settings.wichart_report_delta_table, storage_options=settings.delta_storage_options)
-        raw_df = raw_dt.to_pandas(filters=[("id", "==", report_id)])
-        
+        raw_df = _query_raw(report_id=int(report_id))
         if raw_df.empty:
-            logger.warning(f"Report not found in raw_wichart_report: report_id={report_id}")
+            logger.warning(f"Report not found in {_RAW_TABLE}: report_id={report_id}")
             return None
-        
-        raw_row = raw_df.iloc[0]
-        now = datetime.now()
-        logger.debug(f"Found raw report: stock_symbol={raw_row.get('mack')}, title={raw_row.get('tenbaocao')}")
-        
-        # Map raw_wichart_report fields to wichart_reports fields
-        new_record = pd.DataFrame([{
-            'document_id': raw_row['id'],
-            'stock_symbol': raw_row.get('mack'),
-            'report_title': raw_row.get('tenbaocao'),
-            'pdf_url': raw_row.get('url'),
-            'source': raw_row.get('nguon'),
-            'report_date': raw_row.get('ngaykn'),
-            'industry_research': raw_row.get('rsnganh'),
-            'industry_id': raw_row.get('idnganh'),
-            'report_category': raw_row.get('loaibaocao'),
-            'recommendation': raw_row.get('khuyennghi'),
-            'clean_content': None,
-            'llm_summary': None,
-            'token_count': None,
-            'status': "INIT",
-            'error_message': None,
-            'created_at': now,
-            'updated_at': now,
-            'processed_at': None,
-        }])
-        logger.debug(f"Created new record DataFrame with columns: {list(new_record.columns)}")
 
-        # Insert into wichart_reports using merge
-        logger.debug(f"Inserting into wichart_reports table: {settings.wichart_report_detail_delta_table}")
+        record = _detail_row_from_raw(raw_df.iloc[0], datetime.now())
+        engine = _ensure_table()
         try:
-            dt = DeltaTable(settings.wichart_report_detail_delta_table, storage_options=settings.delta_storage_options)
-            (
-                dt.merge(
-                    source=new_record,
-                    predicate="target.document_id = source.document_id",
-                    source_alias="source",
-                    target_alias="target",
-                )
-                .when_not_matched_insert_all()
-                .execute()
-            )
+            with engine.begin() as conn:
+                # Insert-if-absent; a concurrent creator simply wins.
+                stmt = insert(reports_table).values(**record).prefix_with("IGNORE")
+                conn.execute(stmt)
             logger.info(f"Successfully created detail record for report_id={report_id}")
-        except Exception as e:
-            logger.error(f"Failed to insert detail record for report_id={report_id}: {e}")
+        except Exception as exc:
+            logger.error(
+                f"Failed to insert detail record for report_id={report_id}: {exc}"
+            )
             raise
-        
-        return new_record
+        return pd.DataFrame([record])
 
     def update_summary(self, report_id: int, summary: str) -> bool:
-        """Update llm_summary field in wichart_reports table using merge."""
-        logger.debug(f"Updating summary for report_id={report_id}, summary_length={len(summary)}")
-        dt = DeltaTable(settings.wichart_report_detail_delta_table, storage_options=settings.delta_storage_options)
-        
-        # Check if record exists, create from raw if not
-        existing = dt.to_pandas(filters=[("document_id", "==", str(report_id))])
-        if existing.empty:
-            logger.debug(f"Record not found in wichart_reports, creating from raw for report_id={report_id}")
-            created = self._create_detail_from_raw(report_id)
-            if created is None:
-                logger.error(f"Failed to create record from raw for report_id={report_id}")
-                return False
-        
-        # Create update data
-        update_df = pd.DataFrame([{
-            'document_id': report_id,
-            'llm_summary': summary,
-            'updated_at': datetime.now(),
-        }])
-        
-        # Merge: update matching rows
-        try:
-            (
-                dt.merge(
-                    source=update_df,
-                    predicate="target.document_id = source.document_id",
-                    source_alias="source",
-                    target_alias="target",
-                )
-                .when_matched_update({
-                    "llm_summary": "source.llm_summary",
-                    "updated_at": "source.updated_at",
-                })
-                .execute()
+        """Set ``llm_summary`` for a report, creating the row if needed."""
+        logger.debug(
+            f"Updating summary for report_id={report_id}, "
+            f"summary_length={len(summary)}"
+        )
+        engine = _ensure_table()
+        now = datetime.now()
+
+        with engine.begin() as conn:
+            result = conn.execute(
+                update(reports_table)
+                .where(reports_table.c.document_id == int(report_id))
+                .values(llm_summary=summary, updated_at=now)
             )
-            logger.info(f"Successfully updated summary for report_id={report_id}")
-        except Exception as e:
-            logger.error(f"Failed to update summary for report_id={report_id}: {e}")
-            raise
-        
-        return True
+            if result.rowcount:
+                logger.info(f"Successfully updated summary for report_id={report_id}")
+                return True
+
+        # No row yet — seed it from the raw feed, then set the summary.
+        logger.debug(
+            f"Record not found in {_DETAIL_TABLE}, creating from raw "
+            f"for report_id={report_id}"
+        )
+        if self._create_detail_from_raw(report_id) is None:
+            logger.error(f"Failed to create record from raw for report_id={report_id}")
+            return False
+
+        with engine.begin() as conn:
+            result = conn.execute(
+                update(reports_table)
+                .where(reports_table.c.document_id == int(report_id))
+                .values(llm_summary=summary, updated_at=now)
+            )
+        logger.info(f"Successfully updated summary for report_id={report_id}")
+        return bool(result.rowcount)
 
     def sync_latest_reports(self, limit: int = 100) -> dict:
-        """
-        Sync latest reports from raw_wichart_report to wichart_reports.
-        Returns dict with sync statistics.
+        """Seed detail rows for the latest raw reports that don't have one.
+
+        Returns the same stats shape the Report page renders:
+        ``total_raw / existing / missing / created / failed``.
         """
         logger.info(f"Starting sync of latest {limit} reports")
-        
-        # Get latest records from raw_wichart_report
-        raw_dt = DeltaTable(settings.wichart_report_delta_table, storage_options=settings.delta_storage_options)
-        raw_df = raw_dt.to_pandas()
-        
-        # Sort by ngaykn (report date) descending and take latest N
-        raw_df = raw_df.sort_values(by='ngaykn', ascending=False).head(limit)
-        raw_ids = set(raw_df['id'].tolist())
+        raw_df = _query_raw(limit=limit)  # already ordered newest-first
+        raw_ids = [int(i) for i in raw_df["id"].tolist()]
         logger.info(f"Found {len(raw_ids)} raw reports to check")
-        
-        # Get existing records from wichart_reports
-        detail_dt = DeltaTable(settings.wichart_report_detail_delta_table, storage_options=settings.delta_storage_options)
-        detail_df = detail_dt.to_pandas()
-        existing_ids = set(detail_df['document_id'].astype(str).tolist())
-        logger.debug(f"Found {len(existing_ids)} existing detail records")
-        
-        # Find missing records (in raw but not in detail)
-        missing_ids = [rid for rid in raw_ids if str(rid) not in existing_ids]
-        logger.info(f"Found {len(missing_ids)} missing records to sync")
-        
-        if not missing_ids:
-            stats = {
-                "total_raw": len(raw_ids),
-                "existing": len(existing_ids),
-                "missing": 0,
-                "created": 0,
-                "failed": 0,
-            }
-            logger.info(f"Sync completed (no new records): {stats}")
-            return stats
-        
-        # Filter raw_df to only missing records and transform to detail format
-        missing_df = raw_df[raw_df['id'].isin(missing_ids)].copy()
-        now = datetime.now()
-        
-        # Map raw_wichart_report fields to wichart_reports fields (bulk)
-        new_records = pd.DataFrame({
-            'document_id': missing_df['id'],
-            'stock_symbol': missing_df.get('mack'),
-            'report_title': missing_df.get('tenbaocao'),
-            'pdf_url': missing_df.get('url'),
-            'source': missing_df.get('nguon'),
-            'report_date': missing_df.get('ngaykn'),
-            'industry_research': missing_df.get('rsnganh'),
-            'industry_id': missing_df.get('idnganh'),
-            'report_category': missing_df.get('loaibaocao'),
-            'recommendation': missing_df.get('khuyennghi'),
-            'clean_content': None,
-            'llm_summary': None,
-            'token_count': None,
-            'status': "INIT",
-            'error_message': None,
-            'created_at': now,
-            'updated_at': now,
-            'processed_at': None,
-        })
-        
-        logger.debug(f"Prepared {len(new_records)} records for bulk insert")
-        
-        # Bulk insert using merge
-        created = 0
-        failed = 0
-        try:
-            (
-                detail_dt.merge(
-                    source=new_records,
-                    predicate="target.document_id = source.document_id",
-                    source_alias="source",
-                    target_alias="target",
-                )
-                .when_not_matched_insert_all()
-                .execute()
+
+        engine = _ensure_table()
+        with engine.connect() as conn:
+            existing_total = conn.execute(
+                select(func.count()).select_from(reports_table)
+            ).scalar_one()
+            present = set(
+                conn.execute(
+                    select(reports_table.c.document_id).where(
+                        reports_table.c.document_id.in_(raw_ids or [0])
+                    )
+                ).scalars()
             )
-            created = len(new_records)
-            logger.info(f"Successfully bulk inserted {created} records")
-        except Exception as e:
-            logger.error(f"Bulk insert failed: {e}")
-            failed = len(missing_ids)
-        
+
+        missing_ids = [rid for rid in raw_ids if rid not in present]
+        logger.info(f"Found {len(missing_ids)} missing records to sync")
+
         stats = {
             "total_raw": len(raw_ids),
-            "existing": len(existing_ids),
+            "existing": int(existing_total),
             "missing": len(missing_ids),
-            "created": created,
-            "failed": failed,
+            "created": 0,
+            "failed": 0,
         }
+        if not missing_ids:
+            logger.info(f"Sync completed (no new records): {stats}")
+            return stats
+
+        now = datetime.now()
+        missing_df = raw_df[raw_df["id"].isin(missing_ids)]
+        records = [_detail_row_from_raw(row, now) for _, row in missing_df.iterrows()]
+        logger.debug(f"Prepared {len(records)} records for bulk insert")
+
+        try:
+            with engine.begin() as conn:
+                conn.execute(insert(reports_table).prefix_with("IGNORE"), records)
+            stats["created"] = len(records)
+            logger.info(f"Successfully bulk inserted {stats['created']} records")
+        except Exception as exc:  # noqa: BLE001 — reported in the stats
+            logger.error(f"Bulk insert failed: {exc}")
+            stats["failed"] = len(missing_ids)
+
         logger.info(f"Sync completed: {stats}")
         return stats

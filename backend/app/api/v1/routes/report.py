@@ -28,7 +28,7 @@ def _run_rag_pipeline(report_id: int, recreate: bool, parser: str | None) -> Non
 
             rag_pipeline_flow(report_id, recreate=recreate, parser=parser)
     except Exception:  # noqa: BLE001
-        logger.exception("RAG pipeline background task failed for report %s", report_id)
+        logger.exception("RAG pipeline background task failed for report {}", report_id)
 
 
 @router.get("/list", response_model=ReportResponse)
@@ -67,16 +67,16 @@ async def list_rag_statuses():
 
 @router.get("/rag/health")
 async def rag_health():
-    """Report the ClickHouse endpoint the API reads status from + row count.
+    """Report the status store the API reads from + row count.
 
-    Compare ``clickhouse`` here with the worker's "report_rag status store
-    (worker)" log line: if they differ, the job writes status to a different
-    ClickHouse than the API reads, which looks like "status not updating".
+    Compare ``store`` here with the worker's "report_rag status store (worker)"
+    log line: if they differ, the job writes status to a different database than
+    the API reads, which looks like "status not updating".
     """
     from app.services import report_rag_service as rag_service
 
     rows = rag_service.list_statuses()
-    return {"clickhouse": rag_service.endpoint(), "tracked_reports": len(rows)}
+    return {"store": rag_service.endpoint(), "tracked_reports": len(rows)}
 
 
 @router.post("/{report_id}/rag", status_code=202)
@@ -88,12 +88,16 @@ async def trigger_rag(
 ):
     """Queue the RAG pipeline (PDF -> markdown -> embeddings -> Qdrant) for a report.
 
-    ``parser`` ("marker" | "llamaparse") overrides the server default.
+    ``parser`` (one of ``report_rag_service.PDF_PARSERS``) overrides the server
+    default.
     """
     from app.services import report_rag_service as rag_service
 
-    if parser is not None and parser not in ("marker", "llamaparse"):
-        raise HTTPException(status_code=400, detail="parser must be 'marker' or 'llamaparse'")
+    if parser is not None and parser not in rag_service.PDF_PARSERS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"parser must be one of: {', '.join(rag_service.PDF_PARSERS)}",
+        )
 
     # Seed the row with report metadata (not just status). An empty PENDING
     # INSERT followed by worker INSERT+lightweight UPDATE was leaving FINAL
