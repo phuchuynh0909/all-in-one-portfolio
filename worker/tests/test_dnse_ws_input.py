@@ -24,6 +24,8 @@ from infra.dnse_ws_input import (
     normalize_side,
     trade_extra_channel,
     trade_extra_to_tick_payload,
+    is_trade_frame,
+    unwrap_frame,
     _time_to_iso,
 )
 from core.tick_contract import normalize_tick, SIDE_BUY, SIDE_SELL, SIDE_UNKNOWN
@@ -185,3 +187,81 @@ def test_next_batch_respects_batch_size():
 def test_missing_credentials_raises():
     with pytest.raises(RuntimeError, match="credentials missing"):
         DnseTradePartition("", "", ["FPT"], start=False)
+
+
+# ---------------------------------------------------------------------------
+# Shape-based trade detection
+#
+# The published Trade-Extra payload carries NO message-type field. Gating on a
+# marker (an earlier `T == "te"` check) silently dropped the entire feed, so
+# these lock the real payload shape in.
+# ---------------------------------------------------------------------------
+DOCS_TRADE_EXTRA_FRAME = {
+    "marketId": "DVX",
+    "boardId": "G1",
+    "isin": "VN41I1G60005",
+    "symbol": "41I1G6000",
+    "matchPrice": 2022.5,
+    "matchQtty": 1.0,
+    "side": "SELL",
+    "avgPrice": 2023.92,
+    "totalVolumeTraded": 55913,
+    "grossTradeAmount": 11316.34193,
+    "highestPrice": 2028.0,
+    "lowestPrice": 2018.3,
+    "openPrice": 2018.6,
+    "tradingSessionId": "40",
+    "time": {"Seconds": 1779766822, "Nanos": 72000000},
+}
+
+
+def test_documented_payload_is_recognised_without_type_marker():
+    assert "T" not in DOCS_TRADE_EXTRA_FRAME
+    assert is_trade_frame(DOCS_TRADE_EXTRA_FRAME) is True
+
+
+def test_documented_payload_reaches_the_queue_and_normalizes():
+    part = _partition()
+    assert part._process_frame(DOCS_TRADE_EXTRA_FRAME) is None
+    batch = part.next_batch()
+    assert len(batch) == 1
+    topic, payload = batch[0]
+    assert topic == "tick_extra/41I1G6000"
+    tick = normalize_tick(orjson.loads(payload))
+    assert tick["symbol"] == "41I1G6000"
+    assert tick["match_price"] == 2022.5
+    assert tick["side"] == SIDE_SELL
+    # Float matchQtty (1.0) must land as an int for the Int64 column.
+    assert tick["match_qty"] == 1 and isinstance(tick["match_qty"], int)
+    assert tick["sending_time"].year == 2026
+
+
+def test_trade_frame_requires_a_match_price():
+    """Other channels on the same socket must not be mistaken for trades."""
+    top_price = {
+        "symbol": "HPG",
+        "boardId": "G1",
+        "time": {"Seconds": 1779766822, "Nanos": 0},
+        "bidPrices": [{"price": 24.3, "qtty": 100}],
+    }
+    ohlc = {"symbol": "HPG", "open": 24.2, "close": 24.35,
+            "time": {"Seconds": 1779766822, "Nanos": 0}}
+    assert is_trade_frame(top_price) is False
+    assert is_trade_frame(ohlc) is False
+    part = _partition()
+    for frame in (top_price, ohlc, {"action": "subscribe_success"}):
+        part._process_frame(frame)
+    assert part.next_batch() == []
+
+
+def test_unwrap_frame_handles_envelope_and_bare_payloads():
+    assert unwrap_frame(DOCS_TRADE_EXTRA_FRAME) is DOCS_TRADE_EXTRA_FRAME
+    for key in ("data", "d", "payload"):
+        wrapped = {"channel": "tick_extra.G1.json", key: DOCS_TRADE_EXTRA_FRAME}
+        assert unwrap_frame(wrapped) is DOCS_TRADE_EXTRA_FRAME
+
+
+def test_enveloped_trade_frame_is_enqueued():
+    part = _partition()
+    part._process_frame({"channel": "tick_extra.G1.json", "data": DOCS_TRADE_EXTRA_FRAME})
+    assert len(part.next_batch()) == 1

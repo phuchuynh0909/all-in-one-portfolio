@@ -54,14 +54,23 @@ Three independent workers run concurrently. Together they form a pipeline from r
 | | |
 |---|---|
 | **Runtime** | Bytewax streaming dataflow |
-| **Source** | MQTT broker (live) or `MockClickHouseSource` (dev) |
+| **Source** | DNSE OpenAPI Trade-Extra WebSocket (live) or `MockClickHouseSource` (dev) |
 | **Sink** | ClickHouse `ticks` table via `bytewax.clickhouse` |
-| **Key modules** | `mqtt_input.MqttSource`, `tick_contract.normalize_tick`, `model.TICKS_*` |
+| **Key modules** | `dnse_ws_input.DnseTradeSource`, `watchlist.load_symbols`, `tick_contract.normalize_tick`, `model.TICKS_*` |
+
+Symbol scope: every symbol in `watchlist.json` **plus** the current VN30F front-month
+contract (`TICK_SYMBOL`, defaulting to `vn30f_symbol.current_symbol()`).
+
+Feed: `wss://ws-openapi.dnse.com.vn/v1/stream`, HMAC-SHA256 auth, channel
+`tick_extra.{board}.json`. Boards `G1` (even lot) and `G4` (odd lot) carry both
+stocks and derivatives, so one subscription covers equities and the futures
+contract. Trade-Extra payloads have no message-type field — trades are matched
+on shape (`symbol` + `matchPrice` + `time`).
 
 Steps inside the dataflow:
 
-1. `op.input` — subscribe to `plaintext/quotes/krx/mdds/tick/v1/roundlot/symbol/{symbol}`
-2. `key_by_symbol_ingest` — parse JSON, normalise fields via `tick_contract.normalize_tick`, key by symbol
+1. `op.input` — subscribe to `plaintext/quotes/krx/mdds/tick/v1/roundlot/symbol/{symbol}` for every ingested symbol
+2. `key_by_symbol_ingest` — parse JSON, drop symbols outside the ingest set, normalise fields via `tick_contract.normalize_tick`, key by symbol
 3. `op.filter` — drop malformed / non-matching rows
 4. `transform_for_ticks` — convert to ClickHouse insertion tuple
 5. `ch_operators.output` — batch-insert into `ticks`
@@ -205,7 +214,7 @@ PARTITION BY toYYYYMMDD(sending_time)
 
 ### `ticks`
 ```sql
-symbol       String
+symbol       LowCardinality(String)   -- ~200 distinct: watchlist + VN30F contracts
 sending_time DateTime64(6, 'UTC')
 match_price  Float64
 match_qty    Int64
@@ -214,6 +223,7 @@ received_at  DateTime64(6, 'UTC')
 
 ENGINE = ReplacingMergeTree(received_at)
 ORDER BY (symbol, sending_time, match_price, match_qty, side)
+PARTITION BY toYYYYMM(sending_time)
 ```
 
 ### `ohlc_5m`
@@ -241,8 +251,13 @@ All workers read from environment variables (or `.env`). Key variables:
 
 | Variable | Default | Used by |
 |---|---|---|
-| `MQTT_HOST` | `datafeed-lts-krx.dnse.com.vn` | tick_ingest |
-| `MQTT_PORT` | `443` | tick_ingest |
+| `DNSE_API_KEY` | — (required) | tick_ingest, block_episode_ingest |
+| `DNSE_API_SECRET` | — (required) | tick_ingest, block_episode_ingest |
+| `DNSE_WS_URL` | `wss://ws-openapi.dnse.com.vn` | tick_ingest, block_episode_ingest |
+| `DNSE_TRADE_BOARDS` | `G1,G3,G4,G7,T1,T2,T3,T4,T6` | tick_ingest, block_episode_ingest |
+| `DNSE_WS_ENCODING` | `json` | tick_ingest, block_episode_ingest |
+| `MQTT_HOST` | `datafeed-lts-krx.dnse.com.vn` | isp, price_alerts, large_order_ingest |
+| `MQTT_PORT` | `443` | isp, price_alerts, large_order_ingest |
 | `TICK_SYMBOL` | current VN30F contract | tick_ingest, reconciler |
 | `CLICKHOUSE_HOST` | `localhost` | all |
 | `CLICKHOUSE_PORT` | `9010` (native) / `8123` (HTTP) | all |

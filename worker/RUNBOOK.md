@@ -1,7 +1,7 @@
 # Tick Data ClickHouse Sync Runbook
 
 ## Overview
-This pipeline uses two workers to sync tick data. The `tick_ingest.py` script runs a continuous Bytewax stream. The `reconciler.py` script runs once at 15:00 ICT. This version covers a single symbol, `41I1G4000`, for live and nearline data.
+This pipeline uses two workers to sync tick data. The `tick_ingest.py` script runs a continuous Bytewax stream, consuming the DNSE OpenAPI Trade-Extra **WebSocket** feed (requires `DNSE_API_KEY` / `DNSE_API_SECRET`). The `reconciler.py` script runs once at 15:00 ICT. `tick_ingest` covers every symbol in `watchlist.json` plus the current VN30F front-month contract; the reconciler still back-fills only `TICK_SYMBOL`.
 
 > **Working directory**: All commands must be run from inside `worker/` (or use `PYTHONPATH=worker` from the project root). Bytewax locates modules by name on the Python path.
 
@@ -10,8 +10,8 @@ This pipeline uses two workers to sync tick data. The `tick_ingest.py` script ru
 # All commands below assume you are inside the worker/ directory
 cd worker
 
-# 1. Create ClickHouse table (one-time setup — skip if table already exists)
-python -c "from config import config; from infra.clickhouse_client import get_clickhouse_client; from model import TICKS_CREATE_TABLE_DDL; c = get_clickhouse_client(); c.query(TICKS_CREATE_TABLE_DDL.format(database=config.clickhouse.database))"
+# 1. Create ClickHouse table (optional — tick_ingest does this itself on startup)
+python -c "from workers.tick_ingest import ensure_ticks_table; ensure_ticks_table()"
 
 # 2. Start stream ingestor (keep running in background)
 python -m bytewax.run workers.tick_ingest:flow

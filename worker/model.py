@@ -53,6 +53,9 @@ ISP_ALERT_CLICKHOUSE_ORDER_BY = "symbol, ts"
 
 TICKS_ARROW_SCHEMA = pa.schema(
     [
+        # Plain string on the wire; ClickHouse converts it into the table's
+        # LowCardinality(String) column on insert. Arrow dictionary encoding
+        # also works but buys nothing here — the batches are small.
         pa.field("symbol", pa.string(), nullable=False),
         pa.field("sending_time", pa.timestamp("us", tz="UTC"), nullable=False),
         pa.field("match_price", pa.float64(), nullable=False),
@@ -65,31 +68,53 @@ TICKS_ARROW_SCHEMA = pa.schema(
     ]
 )
 
+# Per-column codecs are benchmarked, not guessed — see TICKS_CREATE_TABLE_DDL.
 TICKS_CLICKHOUSE_SCHEMA = """
-    symbol String,
-    sending_time DateTime64(6, 'UTC'),
-    match_price Float64,
-    match_qty Int64,
-    side Int32,
-    received_at DateTime64(6, 'UTC'),
+    symbol LowCardinality(String) CODEC(ZSTD(1)),
+    sending_time DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
+    match_price Float64 CODEC(ZSTD(1)),
+    match_qty Int64 CODEC(T64, ZSTD(1)),
+    side Int32 CODEC(T64, ZSTD(1)),
+    received_at DateTime64(6, 'UTC') CODEC(ZSTD(1)),
 """
 
 TICKS_CLICKHOUSE_TABLE = "ticks"
 
 TICKS_CLICKHOUSE_ORDER_BY = "symbol, sending_time, match_price, match_qty, side"
 
+# Codecs below were picked by benchmarking every plausible candidate against 5M
+# real tick rows spread over ~200 symbols (the post-watchlist shape), measuring
+# system.parts_columns. Two results are counter-intuitive enough to record:
+#
+#   * DoubleDelta LOSES on every column here. It encodes the second derivative,
+#     so it only pays when intervals are near-constant. Ticks are irregular, and
+#     because ORDER BY leads with `symbol`, sending_time restarts at every
+#     symbol boundary — ~200 resets per part. Measured vs plain ZSTD(1):
+#     sending_time 90%, match_qty 142%, received_at 124%.
+#   * Gorilla LOSES on match_price (115% of plain ZSTD). Its XOR output is
+#     less compressible for the round, repeated prices in this tape than the
+#     raw values are; FPC merely ties ZSTD (99%), so neither earns its place.
+#
+# Winners, vs plain ZSTD(1): Delta on sending_time 79%, T64 on match_qty 77%,
+# T64 on side 75%. Floats and received_at keep plain ZSTD(1).
+# Re-measure before changing these — the answer depends on the sort order.
 TICKS_CREATE_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS {database}.ticks (
-    symbol String,
-    sending_time DateTime64(6, 'UTC'),
-    match_price Float64,
-    match_qty Int64,
-    side Int32,
-    received_at DateTime64(6, 'UTC')
+CREATE TABLE IF NOT EXISTS {database}.{table} (
+    -- ~200 distinct symbols (watchlist + VN30F contracts): well inside the
+    -- range where LowCardinality's dictionary encoding pays off.
+    symbol LowCardinality(String) CODEC(ZSTD(1)),
+    -- Delta, not DoubleDelta: irregular tick spacing + per-symbol resets.
+    sending_time DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
+    -- Gorilla/FPC measured no better than plain ZSTD on this price tape.
+    match_price Float64 CODEC(ZSTD(1)),
+    match_qty Int64 CODEC(T64, ZSTD(1)),
+    side Int32 CODEC(T64, ZSTD(1)),
+    -- Insert-ordered, so unsorted within a part: delta codecs backfire.
+    received_at DateTime64(6, 'UTC') CODEC(ZSTD(1))
 )
 ENGINE = ReplacingMergeTree(received_at)
 ORDER BY (symbol, sending_time, match_price, match_qty, side)
-PARTITION BY toYYYYMMDD(sending_time)
+PARTITION BY toYYYYMM(sending_time)
 """
 
 # ---------------------------------------------------------------------------

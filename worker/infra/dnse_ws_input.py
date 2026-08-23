@@ -10,16 +10,24 @@ with HMAC-SHA256 authentication and JSON frames:
   2. send an ``auth`` frame signed HMAC-SHA256 over ``{api_key}:{ts}:{nonce}``
   3. subscribe to the Trade-Extra channel per board: ``tick_extra.{board}.json``
      with the watchlist ``symbols``
-  4. consume frames; a matched trade carries ``T == "te"`` and the fields
-     ``symbol``, ``matchPrice``, ``matchQtty``, ``side``, ``time``
-  5. answer server ``ping`` frames with ``pong``
+  4. consume frames; a Trade-Extra payload is a bare market-data object —
+     ``marketId``, ``boardId``, ``isin``, ``symbol``, ``matchPrice``,
+     ``matchQtty``, ``side``, ``avgPrice``, …, ``time {Seconds, Nanos}`` —
+     with **no message-type field**, so trades are matched on shape
+     (see ``is_trade_frame``) rather than on a marker
+  5. answer server ``ping`` frames with ``pong`` (the server pings every 3
+     minutes and closes the socket if unanswered within 1 minute)
 
 The gateway SDK is fully async; Bytewax pulls synchronously via ``next_batch``.
 The partition therefore runs the asyncio client in a background thread and hands
 messages to the runtime through a thread-safe queue. Each matched trade is
 reshaped into the API-style payload that ``core.tick_contract.normalize_tick``
 already parses and emitted as ``(topic, payload_bytes)`` — the exact contract the
-MQTT tick source used, so ``workers.block_episode_ingest`` needs no change.
+MQTT tick source used, so ``workers.tick_ingest`` and
+``workers.block_episode_ingest`` need no per-source handling.
+
+Boards ``G1`` (even lot) and ``G4`` (odd lot) carry both stocks and derivatives,
+so a single subscription covers equities and the VN30F futures contract.
 
 Credentials come from ``DNSE_API_KEY`` / ``DNSE_API_SECRET`` and are never logged.
 """
@@ -30,7 +38,6 @@ import hashlib
 import hmac
 import json
 import logging
-import os
 import queue
 import ssl
 import threading
@@ -119,6 +126,33 @@ def _time_to_iso(value) -> Optional[str]:
     return None
 
 
+# DNSE's published Trade-Extra payload carries no message-type field — it is a
+# bare market-data object (marketId, boardId, isin, symbol, matchPrice,
+# matchQtty, side, avgPrice, ..., time{Seconds,Nanos}). Gating on a marker such
+# as ``T == "te"`` therefore drops the *entire* feed silently, so trades are
+# recognised by shape instead. These three fields are what we actually consume;
+# other channels on the same socket (top_price, ohlc, market_index) carry no
+# ``matchPrice`` and are excluded by it.
+TRADE_REQUIRED_FIELDS = ("symbol", "matchPrice", "time")
+_ENVELOPE_KEYS = ("data", "d", "payload")
+
+
+def unwrap_frame(frame: dict) -> dict:
+    """Return a frame's market-data body, unwrapping an envelope if present."""
+    for key in _ENVELOPE_KEYS:
+        inner = frame.get(key)
+        if isinstance(inner, dict):
+            return inner
+    return frame
+
+
+def is_trade_frame(body: dict) -> bool:
+    """True when ``body`` looks like a tick / Trade-Extra payload."""
+    if body.get("T") == TRADE_EXTRA_MSG_TYPE:
+        return True
+    return all(body.get(field) is not None for field in TRADE_REQUIRED_FIELDS)
+
+
 def trade_extra_to_tick_payload(data: dict) -> Optional[dict]:
     """Reshape a decoded Trade-Extra frame into a ``normalize_tick`` API payload.
 
@@ -158,7 +192,7 @@ class DnseTradePartition(StatelessSourcePartition):
         symbols: List[str],
         boards: Optional[List[str]] = None,
         base_url: str = DEFAULT_BASE_URL,
-        encoding: str = "json",
+        encoding: str = "msgpack",
         batch_size: int = 1024,
         connect_timeout: float = 60.0,
         start: bool = True,
@@ -195,8 +229,9 @@ class DnseTradePartition(StatelessSourcePartition):
         action = data.get("action") or data.get("a")
         if action == "ping":
             return json.dumps({"action": "pong"})
-        if data.get("T") == TRADE_EXTRA_MSG_TYPE:
-            payload = trade_extra_to_tick_payload(data)
+        body = unwrap_frame(data)
+        if is_trade_frame(body):
+            payload = trade_extra_to_tick_payload(body)
             if payload is not None:
                 topic = f"tick_extra/{payload['symbol']}"
                 self._q.put((topic, orjson.dumps(payload)))
