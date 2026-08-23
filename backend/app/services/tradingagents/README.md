@@ -143,7 +143,9 @@ To point at a custom OpenAI-compatible gateway, also set
 | `TRADINGAGENTS_MAX_DEBATE_ROUNDS` | `1` | bull/bear rounds |
 | `TRADINGAGENTS_MAX_RISK_ROUNDS` | `1` | risk-team rounds |
 | `TRADINGAGENTS_OUTPUT_LANGUAGE` | `English` | report language (e.g. `Vietnamese`) |
-| `TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD` | `json_schema` | structured-output method for local models (`json_schema` / `json_mode` / `function_calling`) |
+| `TRADINGAGENTS_STRUCTURED_METHOD` | _(unset)_ | override structured-output method for every role (`json_schema` / `json_mode` / `function_calling` / `none`) |
+| `TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD` | `json_schema` | structured-output method for native Ollama models |
+| `TRADINGAGENTS_OPENAI_COMPATIBLE_STRUCTURED_METHOD` | `function_calling` | structured-output method for OpenAI-compatible proxies (they often accept `json_schema` without enforcing it) |
 | `TRADINGAGENTS_WEB_SEARCH` | `1` | enable internet search for the news/sentiment analysts (`0` to disable) |
 | `TAVILY_API_KEY` | _(unset)_ | use Tavily search instead of keyless DuckDuckGo |
 | `TRADINGAGENTS_NEWS_QUERIES` | _(built-in)_ | comma-separated macro/market queries for `get_global_news` |
@@ -339,13 +341,16 @@ failure degrades to a clear "search unavailable" note; nothing crashes the run.
 
 ## Troubleshooting
 
-**"structured-output invocation failed … retrying once as free text"** — a local
-model didn't emit the output schema as a tool call. It's non-fatal (the agent
-falls back to free text and the run completes), but to get clean structured
-output the runner sets `TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD=json_schema` for
-local models by default, which Ollama handles far more reliably than
-tool-calling. If your Ollama build is old and rejects json-schema
-`response_format`, try `json_mode`, or upgrade Ollama.
+**"structured-output invocation failed … retrying once as free text"** — the
+model didn't emit the output schema. It's non-fatal (the agent falls back to
+free text and the run completes). Native Ollama defaults to `json_schema`, which
+it handles far more reliably than tool-calling; if your Ollama build is old and
+rejects json-schema `response_format`, try
+`TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD=json_mode`, or upgrade Ollama. An
+OpenAI-compatible proxy defaults to `function_calling` instead — those endpoints
+often accept `json_schema` without enforcing it, and a prose reply then crashes
+langchain's strict `.parse()`. If your proxy *does* implement strict structured
+outputs, set `TRADINGAGENTS_OPENAI_COMPATIBLE_STRUCTURED_METHOD=json_schema`.
 
 ## Notes / limitations
 

@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import contextlib
 import functools
+import json
 import logging
 import os
 import re
@@ -108,16 +109,8 @@ _KEY_ALIASES: dict[str, tuple[str, ...]] = {
     "GOOGLE_API_KEY": ("GEMINI_API_KEY", "GOOGLE_GENAI_API_KEY"),
 }
 
-# Structured-output method for local (Ollama / OpenAI-compatible) models. The
-# framework defaults unknown model IDs to "function_calling", which binds the
-# output schema as a tool — local models frequently answer in plain text instead
-# of emitting that tool call, so the structured parse returns nothing and the
-# agent (Research Manager / Trader / Portfolio Manager) noisily falls back to
-# free text. "json_schema" uses Ollama's native structured-output response_format
-# and is far more reliable. Override via TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD
-# ("json_schema" | "json_mode" | "function_calling"); any failure still degrades
-# to free text, so this can only help.
-_LOCAL_PROVIDERS = ("ollama", "openai_compatible")
+# Structured-output defaults differ by local provider (Ollama → json_schema,
+# openai_compatible → function_calling). See apply_structured_method.
 
 # Every data category is served by the single VN vendor.
 _ALL_CATEGORIES = (
@@ -163,6 +156,7 @@ _SPEAKER_RE = re.compile(r"^(" + "|".join(_DEBATE_SPEAKERS) + r"):[ \t]*", re.MU
 
 _registered = False
 _empty_response_patched = False
+_structured_output_patched = False
 
 _EMPTY_TURN = "_(the model returned an empty turn)_"
 
@@ -284,6 +278,109 @@ def _has_text(response: object) -> bool:
     return bool(str(getattr(response, "content", "") or "").strip())
 
 
+def _is_structured_parse_error(exc: BaseException) -> bool:
+    """True when a structured-output invoke failed to parse the model's reply.
+
+    These are "the model answered in prose" misses, not transport or auth errors,
+    and should degrade to a ``None`` result so the agent can retry as free text.
+    """
+    if isinstance(exc, json.JSONDecodeError):
+        return True
+    name = type(exc).__name__
+    if name in {"ValidationError", "OutputParserException"}:
+        return True
+    msg = str(exc)
+    return "Invalid JSON" in msg or "json_invalid" in msg
+
+
+class _RecoveringStructuredRunnable:
+    """Proxy that turns a structured-output parse miss into ``None``.
+
+    ``invoke_structured_or_freetext`` already treats ``None`` as a miss. Wrapping
+    here also covers deployments whose vendored copy does not catch the parse
+    error (a bare ``.parse()`` ``ValidationError`` then failed the whole run).
+    """
+
+    def __init__(self, inner: object, model_name: str) -> None:
+        self._inner = inner
+        self._model_name = model_name
+
+    def invoke(self, *args, **kwargs):
+        try:
+            return self._inner.invoke(*args, **kwargs)
+        except Exception as exc:
+            if not _is_structured_parse_error(exc):
+                raise
+            logger.warning(
+                "%s structured output failed to parse (%s); treating as a miss",
+                self._model_name,
+                exc,
+            )
+            return None
+
+    async def ainvoke(self, *args, **kwargs):
+        try:
+            return await self._inner.ainvoke(*args, **kwargs)
+        except Exception as exc:
+            if not _is_structured_parse_error(exc):
+                raise
+            logger.warning(
+                "%s structured output failed to parse (%s); treating as a miss",
+                self._model_name,
+                exc,
+            )
+            return None
+
+    def __getattr__(self, name: str):
+        return getattr(self._inner, name)
+
+
+def patch_structured_output_recovery() -> None:
+    """Stop a prose reply from crashing a structured-output agent.
+
+    ``json_schema`` goes through langchain_openai's ``.parse()`` path, which
+    raises ``ValidationError: Invalid JSON`` when the server accepted
+    ``response_format`` but the model still answered in free text. An
+    OpenAI-compatible proxy is the usual source. Catch that class of error on
+    the bound runnable and return ``None`` so the agent falls back to free text
+    instead of aborting the run.
+    """
+    global _structured_output_patched
+    if _structured_output_patched:
+        return
+
+    from tradingagents.llm_clients.openai_client import NormalizedChatOpenAI
+
+    original = NormalizedChatOpenAI.with_structured_output
+
+    def with_structured_output(self, schema, *, method=None, **kwargs):
+        bound = original(self, schema, method=method, **kwargs)
+        return _RecoveringStructuredRunnable(
+            bound, getattr(self, "model_name", "") or "?"
+        )
+
+    NormalizedChatOpenAI.with_structured_output = with_structured_output
+    _structured_output_patched = True
+    logger.info("Patched TradingAgents LLM client with structured-output recovery")
+
+
+def _set_local_structured_method(model: str, method: str) -> None:
+    """Pin a local model's preferred structured-output method in the capability table."""
+    from tradingagents.llm_clients import capabilities as caps_mod
+
+    caps_mod._BY_ID[model] = caps_mod.ModelCapabilities(
+        supports_tool_choice=True,
+        supports_json_mode=True,
+        supports_json_schema=True,
+        preferred_structured_method=method,  # type: ignore[arg-type]
+    )
+    logger.info(
+        "Structured-output method for local model %s set to %r",
+        model,
+        method,
+    )
+
+
 def apply_structured_method(cfg: dict) -> None:
     """Steer the configured models onto a structured-output method that holds.
 
@@ -294,11 +391,13 @@ def apply_structured_method(cfg: dict) -> None:
     ``function_calling`` is the weakest option whenever the model also rejects
     ``tool_choice`` — the schema is offered as a tool the model is never *forced*
     to call, so it can return a partial object and fail validation (observed with
-    ``deepseek-v4-pro``: a ResearchPlan missing ``strategic_actions``). Both
-    remedies are applied here:
+    ``deepseek-v4-pro``: a ResearchPlan missing ``strategic_actions``). Remedies:
 
-      * **Local models** (Ollama / OpenAI-compatible) genuinely support Ollama's
-        native ``json_schema`` response format, so declare it outright.
+      * **Ollama** genuinely supports native ``json_schema`` response format, so
+        declare it outright.
+      * **openai_compatible** (arbitrary proxies) often accept ``json_schema``
+        without enforcing it. Default to ``function_calling`` so an uncalled
+        schema-tool is a ``None`` miss, not a hard ``.parse()`` error.
       * **Hosted models** get ``json_schema`` when supported, else forced
         ``function_calling`` when ``tool_choice`` is accepted, else ``"none"`` —
         which tells the framework to skip the structured attempt and generate free
@@ -319,8 +418,10 @@ def apply_structured_method(cfg: dict) -> None:
     provider quirks (e.g. DeepSeek's reasoning-content roundtrip) are preserved, so
     we never advertise a format the API will reject.
 
-    Override with ``TRADINGAGENTS_STRUCTURED_METHOD`` (legacy
-    ``TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD`` still honoured for local).
+    Override with ``TRADINGAGENTS_STRUCTURED_METHOD``. Per-provider:
+    ``TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD`` (default ``json_schema``) and
+    ``TRADINGAGENTS_OPENAI_COMPATIBLE_STRUCTURED_METHOD`` (default
+    ``function_calling``).
 
     Each role is judged against *its own* provider, so a mixed run (say OpenAI
     managers + local analysts) gets the local treatment for the local models and
@@ -331,9 +432,16 @@ def apply_structured_method(cfg: dict) -> None:
     from tradingagents.llm_clients import capabilities as caps_mod
 
     override = os.getenv("TRADINGAGENTS_STRUCTURED_METHOD", "").strip()
-    local_method = (
+    ollama_method = (
         override
         or os.getenv("TRADINGAGENTS_OLLAMA_STRUCTURED_METHOD", "json_schema").strip()
+    )
+    compat_method = (
+        override
+        or os.getenv(
+            "TRADINGAGENTS_OPENAI_COMPATIBLE_STRUCTURED_METHOD",
+            "function_calling",
+        ).strip()
     )
 
     done: set[tuple[str, str]] = set()
@@ -344,20 +452,11 @@ def apply_structured_method(cfg: dict) -> None:
             continue
         done.add((provider, model))
 
-        if provider in _LOCAL_PROVIDERS:
-            if local_method == "function_calling":
-                continue  # explicitly asked for the framework default
-            caps_mod._BY_ID[model] = caps_mod.ModelCapabilities(
-                supports_tool_choice=True,
-                supports_json_mode=True,
-                supports_json_schema=True,
-                preferred_structured_method=local_method,  # type: ignore[arg-type]
-            )
-            logger.info(
-                "Structured-output method for local model %s set to %r",
-                model,
-                local_method,
-            )
+        if provider == "ollama":
+            _set_local_structured_method(model, ollama_method)
+            continue
+        if provider == "openai_compatible":
+            _set_local_structured_method(model, compat_method)
             continue
 
         caps = caps_mod.get_capabilities(model)
@@ -1086,6 +1185,7 @@ def run_analysis_stream(
     symbol = symbol.strip().upper()
     register_vn_vendor()
     patch_empty_response_recovery()
+    patch_structured_output_recovery()
     cfg = build_config(
         deep_think_llm=deep_think_llm,
         quick_think_llm=quick_think_llm,
