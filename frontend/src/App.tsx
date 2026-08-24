@@ -18,7 +18,6 @@ import {
   ListItemText,
 } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
-import ViewListIcon from '@mui/icons-material/ViewList';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 
@@ -38,7 +37,6 @@ import ChatAgents from './pages/ChatAgents';
 import TradingAgents from './pages/TradingAgents';
 import Future from './pages/Future';
 import CW from './pages/CW';
-import BlockEpisodesPanel from './components/blockEpisodes/BlockEpisodesPanel';
 
 const theme = createTheme({
   palette: {
@@ -89,11 +87,9 @@ const queryClient = new QueryClient({
 });
 
 const drawerWidth = 260;
-const episodesWidth = 440;
 
 function AppShell() {
   const [navOpen, setNavOpen] = useState(false);
-  const [episodesOpen, setEpisodesOpen] = useState(false);
   const location = useLocation();
 
   return (
@@ -123,14 +119,6 @@ function AppShell() {
               >
                 Investment Tracker
               </Typography>
-              <IconButton
-                color="inherit"
-                edge="end"
-                onClick={() => setEpisodesOpen((v) => !v)}
-                title="Block Episodes"
-              >
-                <ViewListIcon />
-              </IconButton>
             </Toolbar>
           </Container>
         </AppBar>
@@ -158,18 +146,9 @@ function AppShell() {
         </List>
       </Drawer>
 
-      <Drawer
-        anchor="right"
-        variant="persistent"
-        open={episodesOpen}
-        PaperProps={{ sx: { width: episodesWidth } }}
-      >
-        <BlockEpisodesPanel />
-      </Drawer>
-
       <Box
         component="main"
-        sx={{ py: 3, transition: 'margin 0.2s', mr: episodesOpen ? `${episodesWidth}px` : 0 }}
+        sx={{ py: 3 }}
       >
         <Routes>
           <Route path="/" element={<Home />} />

@@ -115,7 +115,7 @@ write creates the row if the pipeline was started outside the API.
 | `RAG_EMBED_RETRIES` | `3` | retries on transient connection / 429 / 5xx errors |
 | `RAG_MAX_PAGE_CHARS` | `6000` | page-chunk safety cap; longer pages are sub-split |
 | `TORCH_DEVICE` | (marker default) | `cpu` / `cuda` / `mps` for marker |
-| `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DB` | `192.168.1.3` / `3306` / `root` / — / `my_portfolio` | status + detail store (or `MYSQL_URL` for the whole DSN) |
+| `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` / `MYSQL_PASSWORD` / `MYSQL_DB` | `localhost` / `3306` / `root` / — / `my_portfolio` | status + detail store (or `MYSQL_URL` for the whole DSN) |
 | `MYSQL_REPORT_RAG_TABLE` | `report_rag` | status table name |
 
 **marker is heavy** — it pulls `torch` and downloads its models on first parse

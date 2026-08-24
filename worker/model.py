@@ -252,86 +252,64 @@ FROM (
 
 
 # ---------------------------------------------------------------------------
-# Block episodes ("large-execution footprint") — stitched, same-direction
-# candidate bins produced by core.large_execution.detect. One row per episode.
-# A block episode is a *footprint* of sustained/one-sided execution or an
-# outlier large print — NOT proof of an institution or a parent order.
+# Trade-flow features — replaces the block-episode detector.
+#
+# Level 1 (`trade_flow_seconds`): 1-second bars, written by a materialized view
+# on `ticks`. Every column is mergeable so partial rows from separate INSERTs
+# sum/merge exactly — `argMin`/`argMax` states preserve the bar's true first and
+# last traded price, which min/max could not, and `quantilesState` lets window
+# level quantiles be correct rather than a median-of-medians.
+#
+# Level 2 (`trade_flow_windows`): a view deriving N-second features. It reads a
+# table rather than an insert block, which is what makes ordering across seconds
+# — returns, realized volatility, burst intensity — safe to compute.
+#
+# See core/trade_flow.py for the SELECT bodies and the reasoning.
 # ---------------------------------------------------------------------------
 
-BLOCK_EPISODES_COLUMNS = [
-    "symbol",
-    "start_time",
-    "end_time",
-    "side",
-    "candidate_type",
-    "signed_notional",
-    "abs_notional",
-    "num_trades",
-    "num_bins",
-    "large_print_count",
-    "max_abs_z",
-    "max_abs_imbalance",
-    "received_at",
-]
+TRADE_FLOW_SECONDS_TABLE = "trade_flow_seconds"
+TRADE_FLOW_SECONDS_MV = "trade_flow_seconds_mv"
+TRADE_FLOW_WINDOWS_VIEW = "trade_flow_windows"
 
-BLOCK_EPISODES_ARROW_SCHEMA = pa.schema(
-    [
-        pa.field("symbol", pa.string(), nullable=False),
-        pa.field("start_time", pa.timestamp("us", tz="UTC"), nullable=False),
-        pa.field("end_time", pa.timestamp("us", tz="UTC"), nullable=False),
-        pa.field("side", pa.int32(), nullable=False),
-        pa.field("candidate_type", pa.string(), nullable=False),
-        pa.field("signed_notional", pa.float64(), nullable=False),
-        pa.field("abs_notional", pa.float64(), nullable=False),
-        pa.field("num_trades", pa.int64(), nullable=False),
-        pa.field("num_bins", pa.int64(), nullable=False),
-        pa.field("large_print_count", pa.int64(), nullable=False),
-        pa.field("max_abs_z", pa.float64(), nullable=False),
-        pa.field("max_abs_imbalance", pa.float64(), nullable=False),
-        pa.field("received_at", pa.timestamp("us", tz="UTC"), nullable=False),
-    ]
+TRADE_FLOW_SECONDS_CREATE_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {database}.{table} (
+    symbol LowCardinality(String) CODEC(ZSTD(1)),
+    sec DateTime('UTC') CODEC(Delta, ZSTD(1)),
+    trades SimpleAggregateFunction(sum, UInt64) CODEC(T64, ZSTD(1)),
+    volume SimpleAggregateFunction(sum, Int64) CODEC(T64, ZSTD(1)),
+    notional SimpleAggregateFunction(sum, Float64) CODEC(ZSTD(1)),
+    qty_sq SimpleAggregateFunction(sum, Float64) CODEC(ZSTD(1)),
+    buy_volume SimpleAggregateFunction(sum, Int64) CODEC(T64, ZSTD(1)),
+    sell_volume SimpleAggregateFunction(sum, Int64) CODEC(T64, ZSTD(1)),
+    buy_trades SimpleAggregateFunction(sum, UInt64) CODEC(T64, ZSTD(1)),
+    sell_trades SimpleAggregateFunction(sum, UInt64) CODEC(T64, ZSTD(1)),
+    max_qty SimpleAggregateFunction(max, Int64) CODEC(T64, ZSTD(1)),
+    hi SimpleAggregateFunction(max, Float64) CODEC(ZSTD(1)),
+    lo SimpleAggregateFunction(min, Float64) CODEC(ZSTD(1)),
+    open_px AggregateFunction(argMin, Float64, DateTime64(6, 'UTC')),
+    close_px AggregateFunction(argMax, Float64, DateTime64(6, 'UTC')),
+    qty_q AggregateFunction(quantiles(0.5, 0.95), Int64),
+    -- One millisecond-offset per trade. Merges by concatenation, so the window
+    -- view can sort a window's offsets back into arrival order and difference
+    -- them for exact inter-arrival gaps — the piece an incremental MV otherwise
+    -- cannot produce. Averages ~2.6 values per row on this tape.
+    ms_offsets SimpleAggregateFunction(groupArrayArray, Array(UInt16)) CODEC(T64, ZSTD(1))
 )
-
-BLOCK_EPISODES_CLICKHOUSE_SCHEMA = """
-    symbol String,
-    start_time DateTime64(6, 'UTC'),
-    end_time DateTime64(6, 'UTC'),
-    side Int32,
-    candidate_type String,
-    signed_notional Float64,
-    abs_notional Float64,
-    num_trades Int64,
-    num_bins Int64,
-    large_print_count Int64,
-    max_abs_z Float64,
-    max_abs_imbalance Float64,
-    received_at DateTime64(6, 'UTC'),
+ENGINE = AggregatingMergeTree
+ORDER BY (symbol, sec)
+PARTITION BY toYYYYMM(sec)
 """
 
-BLOCK_EPISODES_CLICKHOUSE_TABLE = "block_episodes"
+# `{select}` comes from core.trade_flow.second_bar_sql so the feature
+# definitions have exactly one home.
+TRADE_FLOW_SECONDS_MV_DDL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS {database}.{mv}
+TO {database}.{table}
+AS
+{select}
+"""
 
-# One episode per (symbol, start_time, side) — that tuple is the dedup key.
-# ReplacingMergeTree(received_at) lets a rerun overwrite an earlier episode
-# whose bounds/aggregates changed as more of the day's tape arrived.
-BLOCK_EPISODES_CLICKHOUSE_ORDER_BY = "symbol, start_time, side"
-
-BLOCK_EPISODES_CREATE_TABLE_DDL = """
-CREATE TABLE IF NOT EXISTS {database}.block_episodes (
-    symbol String,
-    start_time DateTime64(6, 'UTC'),
-    end_time DateTime64(6, 'UTC'),
-    side Int32,
-    candidate_type String,
-    signed_notional Float64,
-    abs_notional Float64,
-    num_trades Int64,
-    num_bins Int64,
-    large_print_count Int64,
-    max_abs_z Float64,
-    max_abs_imbalance Float64,
-    received_at DateTime64(6, 'UTC')
-)
-ENGINE = ReplacingMergeTree(received_at)
-ORDER BY (symbol, start_time, side)
-PARTITION BY toYYYYMMDD(start_time)
+TRADE_FLOW_WINDOWS_VIEW_DDL = """
+CREATE OR REPLACE VIEW {database}.{view} AS
+{select}
 """

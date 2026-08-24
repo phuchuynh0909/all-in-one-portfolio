@@ -12,13 +12,22 @@
 import type {
   ChartingLibraryWidgetOptions,
   IChartingLibraryWidget,
+  TradingTerminalWidgetOptions,
 } from './charting_library';
+
+/**
+ * Constructor options for either package. Trading Terminal-only fields (notably
+ * `widgetbar`, which enables the Watch List widget) are accepted so the same
+ * call site works if those library files are ever dropped in; the Advanced
+ * Charts build simply ignores them.
+ */
+export type TvWidgetOptions = ChartingLibraryWidgetOptions | TradingTerminalWidgetOptions;
 
 /** Base URL where `public/charting_library/` is served from. */
 export const LIBRARY_PATH = '/charting_library/';
 
 type ChartingLibraryModule = {
-  widget: new (options: ChartingLibraryWidgetOptions) => IChartingLibraryWidget;
+  widget: new (options: TvWidgetOptions) => IChartingLibraryWidget;
   version: string;
 };
 
@@ -36,7 +45,7 @@ export function loadChartingLibrary(): Promise<ChartingLibraryModule> {
 
 /** Constructs a widget instance, loading the library on first use. */
 export async function createTvWidget(
-  options: ChartingLibraryWidgetOptions,
+  options: TvWidgetOptions,
 ): Promise<IChartingLibraryWidget> {
   const { widget: Widget } = await loadChartingLibrary();
   return new Widget(options);

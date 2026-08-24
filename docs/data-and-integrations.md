@@ -39,7 +39,10 @@ Configured in `core/settings.py` via `MINIO_*` and `*_DELTA_TABLE` settings.
   reports (raw + parsed)
 - `stocks_feature_store` — engineered features for ML
 
-Read via `stores/feature_store.py` and `stores/raw_wichart_report.py`.
+Read via `stores/feature_store.py`. Wichart reports moved off Delta/ClickHouse:
+`stores/raw_wichart_report.py` reads the crawled feed and writes the enriched
+detail rows in **MySQL** (`raw_wichart_report` / `wichart_reports`), created on
+first use — the Delta paths above are the crawler's secondary sink.
 
 ## External integrations
 
@@ -74,5 +77,5 @@ Read via `stores/feature_store.py` and `stores/raw_wichart_report.py`.
    `stores/` + services → frontend charts/tables.
 3. **On-demand quotes:** frontend → backend `quote` route → `dnse_client`
    (signed REST) → frontend.
-4. **Research/agents:** wichart reports (Delta) + ClickHouse OHLCV →
+4. **Research/agents:** wichart reports (MySQL) + ClickHouse OHLCV →
    TradingAgents (Ollama) → `trading_agents` / `chat` routes → frontend.

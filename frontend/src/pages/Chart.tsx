@@ -13,6 +13,7 @@ import {
   Alert,
   Stack,
   Chip,
+  Divider,
   Drawer,
   Fab,
 } from '@mui/material';
@@ -23,7 +24,16 @@ import { getChatNotes, type ChatNoteItem } from '../lib/services/chat';
 import { MarkdownContent } from '../components/chat/MarkdownContent';
 import StockChart from '../components/chart/StockChart';
 import Watchlist from '../components/chart/Watchlist';
+import AnomalyPanel from '../components/chart/AnomalyPanel';
 import ChartSideRail from '../components/chart/ChartSideRail';
+import type { ResolvedWatchList } from '../lib/tv/watchlist';
+
+/** Drag-resize bounds for the right side panel (watchlist + anomalies). */
+const SIDE_PANEL_MIN = 220;
+const SIDE_PANEL_DEFAULT = 320;
+/** Leave the chart at least this much room, whatever the viewport. */
+const CHART_MIN_WIDTH = 480;
+const SIDE_PANEL_WIDTH_KEY = 'chartSidePanelWidth';
 
 export default function ChartPage() {
   const [currentSymbol, setCurrentSymbol] = useState('VNINDEX');
@@ -36,6 +46,17 @@ export default function ChartPage() {
   const [notesOpen, setNotesOpen] = useState(false);
   const [watchlistOpen, setWatchlistOpen] = useState(() => {
     try { return localStorage.getItem('chartWatchlistOpen') !== '0'; } catch { return true; }
+  });
+  // Resolved by StockChart once the widget exists: the library's own Watch List
+  // when this is a Trading Terminal build, the app-side list otherwise.
+  const [watchList, setWatchList] = useState<ResolvedWatchList | null>(null);
+  const [sidePanelWidth, setSidePanelWidth] = useState(() => {
+    try {
+      const stored = Number(localStorage.getItem(SIDE_PANEL_WIDTH_KEY));
+      return Number.isFinite(stored) && stored >= SIDE_PANEL_MIN ? stored : SIDE_PANEL_DEFAULT;
+    } catch {
+      return SIDE_PANEL_DEFAULT;
+    }
   });
   const [notesLoading, setNotesLoading] = useState(false);
   const [notesError, setNotesError] = useState<string | null>(null);
@@ -101,6 +122,43 @@ export default function ChartPage() {
     await loadNotes();
   };
 
+  /** Drag the side panel's left edge. Dragging left widens it, so the delta is
+   *  inverted relative to the notes drawer, which is anchored the other way. */
+  const handleStartSideResize = (event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const startX = event.clientX;
+    const startWidth = sidePanelWidth;
+
+    const handleMouseMove = (moveEvent: MouseEvent) => {
+      const delta = startX - moveEvent.clientX;
+      // Cap against the viewport so the chart can never be squeezed away.
+      const maxWidth = Math.max(SIDE_PANEL_MIN, window.innerWidth - CHART_MIN_WIDTH);
+      setSidePanelWidth(Math.min(maxWidth, Math.max(SIDE_PANEL_MIN, startWidth + delta)));
+    };
+
+    const handleMouseUp = () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+
+    // Held on <body> so the cursor survives the pointer leaving the 6px grip,
+    // and so dragging across the chart does not select text.
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+  };
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDE_PANEL_WIDTH_KEY, String(sidePanelWidth));
+    } catch {
+      /* ignore */
+    }
+  }, [sidePanelWidth]);
+
   const handleStartResize = (event: React.MouseEvent<HTMLDivElement>) => {
     event.preventDefault();
     const startX = event.clientX;
@@ -133,8 +191,10 @@ export default function ChartPage() {
       }}
     >
       {/* Chart — symbol picker, view toggle and sync now live in the widget header.
-          The watchlist sits beside it: the library's own Watch List widget ships
-          only with Trading Terminal, so it is an app-side panel here. */}
+          The watchlist beside it is the app's stand-in for the library's Watch
+          List widget (Trading Terminal only): same `IWatchListApi`, so if that
+          build is ever served the native widget renders in its own widget bar
+          and this panel — along with its rail toggle — drops out. */}
       <Box sx={{ display: 'flex', gap: 2, flex: 1, minHeight: 0 }}>
         <Paper
           ref={chartPaperRef}
@@ -157,15 +217,24 @@ export default function ChartPage() {
             onToggleLargeOrders={(v) => setView(v ? 'largeOrders' : 'chart')}
             onSync={handleSync}
             syncing={syncing}
+            onWatchListResolved={setWatchList}
           />
         </Paper>
 
-        {watchlistOpen && (
+        {watchlistOpen && watchList && !watchList.native && (
           <Paper
             sx={{
-              width: 240,
+              width: sidePanelWidth,
               flexShrink: 0,
               p: 1,
+              pl: 0,
+              // Match StockChart's measured height instead of stretching to the
+              // row. This also makes the inner 60/40 split resolve properly: a
+              // percentage maxHeight needs a definite height to resolve against,
+              // and a stretched flex item does not reliably provide one.
+              height: chartHeight,
+              alignSelf: 'flex-start',
+              overflow: 'hidden',
               display: 'flex',
               minHeight: 0,
               background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
@@ -173,19 +242,68 @@ export default function ChartPage() {
               borderRadius: 2,
             }}
           >
-            <Watchlist activeSymbol={currentSymbol} onSelect={setCurrentSymbol} />
+            {/* Drag grip on the panel's left edge. */}
+            <Box
+              onMouseDown={handleStartSideResize}
+              sx={{
+                width: 6,
+                flexShrink: 0,
+                cursor: 'col-resize',
+                borderRadius: 1,
+                transition: 'background 120ms',
+                '&:hover': { background: 'rgba(99,102,241,0.45)' },
+              }}
+            />
+
+            <Box
+              sx={{
+                flex: 1,
+                minWidth: 0,
+                minHeight: 0,
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 0.5,
+              }}
+            >
+              {/* Content-sized, capped at 60% so a long list scrolls instead of
+                  pushing the anomalies panel out of view. Not `1 1 auto`: that
+                  stretches a short list and leaves dead space beneath it. */}
+              <Box
+                sx={{
+                  flex: '0 1 auto',
+                  minHeight: 0,
+                  maxHeight: '60%',
+                  display: 'flex',
+                  minWidth: 0,
+                }}
+              >
+                <Watchlist
+                  api={watchList.api}
+                  activeSymbol={currentSymbol}
+                  onSelect={setCurrentSymbol}
+                />
+              </Box>
+
+              <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
+
+              {/* Absorbs everything the watchlist does not use. */}
+              <Box sx={{ flex: '1 1 auto', minHeight: 120, display: 'flex', minWidth: 0 }}>
+                <AnomalyPanel symbol={currentSymbol} days={5} />
+              </Box>
+            </Box>
           </Paper>
         )}
 
-        {/* Right-edge rail: one icon per side panel, highlighted while open. */}
+        {/* Right-edge rail: one icon per side panel, highlighted while open.
+            The watchlist toggle is dropped when the library shows its own. */}
         <ChartSideRail
-          items={[{
+          items={watchList && !watchList.native ? [{
             id: 'watchlist',
             label: watchlistOpen ? 'Hide watchlist' : 'Show watchlist',
             icon: <ViewList sx={{ fontSize: 19 }} />,
             active: watchlistOpen,
             onClick: handleToggleWatchlist,
-          }]}
+          }] : []}
         />
       </Box>
 

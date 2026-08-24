@@ -466,66 +466,38 @@ class LargeOrderConfig:
 
 
 @dataclass
-class BlockEpisodeConfig:
-    """Large-execution ("block episode") detection configuration.
+class TradeFlowConfig:
+    """Trade-flow feature and anomaly-scoring configuration.
 
-    Symbol scope, session window, board and request pacing are reused from
-    ``LargeOrderConfig`` (same watchlist tape). These fields only cover the
-    statistical-detection knobs and the output table. ``detection_params``
-    lazily builds the ``core.large_execution.DetectionParams`` used by the
-    reconciler (numpy is imported there, not at config load time).
+    Symbol scope, session window and auction windows are reused from
+    ``LargeOrderConfig`` (same watchlist tape); these fields cover only the
+    feature window and the scoring knobs.
+
+    ``window_seconds`` is read by the worker when it builds the
+    ``trade_flow_windows`` view; the rest are read by the backend, which does
+    the scoring. The env names keep the ``BLOCK_EP_`` prefix because the backend
+    reads the same variables and they are already deployed — renaming them would
+    silently fall back to defaults on every existing environment.
     """
 
-    table: str
-    rolling_seconds: int
-    bin_seconds: int
-    baseline_bins: int
-    min_baseline_bins: int
-    z_threshold: float
-    imbalance_threshold: float
-    min_trades_per_bin: int
-    run_length: int
-    large_print_quantile: float
-    large_print_window: int
-    large_print_min_prior: int
-    episode_gap_bins: int
+    window_seconds: int
+    tod_bucket_minutes: int
+    min_windows_to_fit: int
+    contamination: float
 
     @classmethod
-    def from_env(cls) -> "BlockEpisodeConfig":
+    def from_env(cls) -> "TradeFlowConfig":
         return cls(
-            table=os.getenv("CLICKHOUSE_BLOCK_EPISODES_TABLE", "block_episodes"),
-            rolling_seconds=int(os.getenv("BLOCK_EP_ROLLING_SECONDS", "30")),
-            bin_seconds=int(os.getenv("BLOCK_EP_BIN_SECONDS", "1")),
-            baseline_bins=int(os.getenv("BLOCK_EP_BASELINE_BINS", "1800")),
-            min_baseline_bins=int(os.getenv("BLOCK_EP_MIN_BASELINE_BINS", "300")),
-            z_threshold=float(os.getenv("BLOCK_EP_Z_THRESHOLD", "2.5")),
-            imbalance_threshold=float(os.getenv("BLOCK_EP_IMBALANCE_THRESHOLD", "0.70")),
-            min_trades_per_bin=int(os.getenv("BLOCK_EP_MIN_TRADES_PER_BIN", "3")),
-            run_length=int(os.getenv("BLOCK_EP_RUN_LENGTH", "2")),
-            large_print_quantile=float(os.getenv("BLOCK_EP_LARGE_PRINT_QUANTILE", "0.99")),
-            large_print_window=int(os.getenv("BLOCK_EP_LARGE_PRINT_WINDOW", "500")),
-            large_print_min_prior=int(os.getenv("BLOCK_EP_LARGE_PRINT_MIN_PRIOR", "30")),
-            episode_gap_bins=int(os.getenv("BLOCK_EP_EPISODE_GAP_BINS", "5")),
-        )
-
-    @property
-    def detection_params(self):
-        """Build the DetectionParams for core.large_execution.detect."""
-        from core.large_execution import DetectionParams
-
-        return DetectionParams(
-            rolling_seconds=self.rolling_seconds,
-            bin_seconds=self.bin_seconds,
-            baseline_bins=self.baseline_bins,
-            min_baseline_bins=self.min_baseline_bins,
-            z_threshold=self.z_threshold,
-            imbalance_threshold=self.imbalance_threshold,
-            min_trades_per_bin=self.min_trades_per_bin,
-            run_length=self.run_length,
-            large_print_quantile=self.large_print_quantile,
-            large_print_window=self.large_print_window,
-            large_print_min_prior=self.large_print_min_prior,
-            episode_gap_bins=self.episode_gap_bins,
+            # Feature window. The 1-second bars are window-agnostic, so changing
+            # this only needs the window view recreated, not a backfill.
+            window_seconds=int(os.getenv("BLOCK_EP_WINDOW_SECONDS", "30")),
+            # Robust normalization bucket: features are compared against the same
+            # symbol at the same time of day, because 09:15 and 13:45 behave
+            # differently and an illiquid ticker is not comparable to HPG.
+            tod_bucket_minutes=int(os.getenv("BLOCK_EP_TOD_BUCKET_MINUTES", "30")),
+            min_windows_to_fit=int(os.getenv("BLOCK_EP_MIN_WINDOWS_TO_FIT", "200")),
+            # Isolation Forest expected outlier fraction.
+            contamination=float(os.getenv("BLOCK_EP_CONTAMINATION", "0.01")),
         )
 
 
@@ -607,7 +579,7 @@ class Config:
     reconciler: ReconcilerConfig
     hawkes: HawkesConfig
     large_order: LargeOrderConfig
-    block_episode: BlockEpisodeConfig
+    trade_flow: TradeFlowConfig
     ingest: IngestTuningConfig
 
     @classmethod
@@ -625,7 +597,7 @@ class Config:
             reconciler=ReconcilerConfig.from_env(),
             hawkes=HawkesConfig.from_env(),
             large_order=LargeOrderConfig.from_env(),
-            block_episode=BlockEpisodeConfig.from_env(),
+            trade_flow=TradeFlowConfig.from_env(),
             ingest=IngestTuningConfig.from_env(),
         )
 

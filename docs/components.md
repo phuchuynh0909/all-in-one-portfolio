@@ -64,7 +64,8 @@ Business logic, grouped by concern:
   SQLite; `db/clickhouse.py` yields a `clickhouse_connect` client as a FastAPI
   dependency.
 - `schemas/` — Pydantic v2 request/response models per domain.
-- `stores/` — Delta Lake readers (`feature_store.py`, `raw_wichart_report.py`).
+- `stores/` — Delta Lake reader (`feature_store.py`) and the MySQL wichart
+  report store (`raw_wichart_report.py`: crawled feed + enriched detail rows).
 - `utils/` — helpers (`wichart.py`, `chat_protos.py`).
 
 ### Vendored TradingAgents
@@ -138,6 +139,7 @@ scripts/     Backfills and one-off runs (backfill_ticks, run_pipeline, run_audit
 | `hawkes_signal_worker` | Hawkes-process signal detection; notifies (Telegram). |
 | `isp` | Intraday statistical-profile alerts. |
 | `large_order_ingest` | **Not a worker** — CLI that creates/backfills the `large_order_blocks` materialized view over `ticks`. Run manually. |
+| `block_episode_ingest` | **Not a worker** — CLI that maintains the `trade_flow_seconds` MV + `trade_flow_windows` feature view. Scoring lives in the backend. Run manually. |
 | `large_order_reconciler` | **Retired** — the materialized view is now the only large-order path. Kept as a frozen archive; not run. |
 | `price_alerts` | Evaluate user price alerts (reads `backend/portfolio.db`), notify. |
 | `reconciler` | Audit/backfill consistency (Prefect-scheduled). |

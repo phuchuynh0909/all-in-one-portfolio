@@ -1,20 +1,9 @@
 from typing import List, Optional
-import os
+
 import pandas as pd
-import clickhouse_connect
+
 from app.schemas.report import Report, ReportDetail
-from app.stores.raw_wichart_report import WichartReportStore
-from app.core.settings import settings
-
-
-def _get_clickhouse_client():
-    return clickhouse_connect.get_client(
-        host=settings.clickhouse_host,
-        port=settings.clickhouse_port,
-        username=settings.clickhouse_user,
-        password=settings.clickhouse_password,
-        database=settings.clickhouse_db,
-    )
+from app.stores.raw_wichart_report import WichartReportStore, _query_raw
 
 
 def _none_if_nan(value):
@@ -22,31 +11,13 @@ def _none_if_nan(value):
 
 
 def _query_raw_reports(symbol: str | None = None, report_id: int | None = None) -> pd.DataFrame:
-    table = os.getenv("CLICKHOUSE_WICHART_REPORT_TABLE", "raw_wichart_report")
-    base_query = (
-        "SELECT id, mack, tenbaocao, url, nguon, ngaykn, rsnganh "
-        f"FROM {settings.clickhouse_db}.{table} FINAL"
-    )
-    conditions: list[str] = []
-    params: dict[str, object] = {}
+    """The crawled report feed, from MySQL.
 
-    if symbol:
-        conditions.append("mack = %(symbol)s")
-        params["symbol"] = symbol
-    if report_id is not None:
-        conditions.append("id = %(report_id)s")
-        params["report_id"] = report_id
-
-    if conditions:
-        base_query += " WHERE " + " AND ".join(conditions)
-    base_query += " ORDER BY ngaykn DESC, id DESC"
-
-    client = _get_clickhouse_client()
-    try:
-        result = client.query(base_query, parameters=params if params else None)
-        return pd.DataFrame(result.result_rows, columns=result.column_names)
-    finally:
-        client.close()
+    Thin wrapper over the store's reader so the feed is queried in exactly one
+    place; it returns a couple of columns more than this module reads (the
+    detail seed needs them) and every caller here goes through ``row.get``.
+    """
+    return _query_raw(report_id=report_id, mack=symbol)
 
 
 async def get_reports(symbol: str | None = None) -> List[Report]:

@@ -8,8 +8,8 @@ single ``portfolio`` vendor backed by *this* platform's data:
 
   * OHLCV + technical indicators — ClickHouse ``ohlc_eod`` via
     ``app.services.stock_service._load_delta_stocks`` + ``stockstats``.
-  * Company news — wichart research reports (ClickHouse metadata + DeltaLake
-    report bodies/summaries via ``WichartReportStore``).
+  * Company news — wichart research reports (MySQL metadata + summaries via
+    ``WichartReportStore``).
   * Fundamentals — ruatichsan financial statements plus 24hmoney's valuation and
     ownership snapshot (``money24h_client``).
   * Macro indicators — wichart's xbrain-news macro feed
@@ -687,7 +687,7 @@ def _report_summary(report_id) -> str | None:
 def _report_section(sym: str, start_date: str, end_date: str) -> str | None:
     """Curated wichart research-report section, or None when unavailable/empty.
 
-    Best-effort: a ClickHouse hiccup must not prevent the web-search enrichment
+    Best-effort: a MySQL hiccup must not prevent the web-search enrichment
     in ``get_news`` from still reaching the analyst.
     """
     try:
@@ -837,7 +837,7 @@ def _company_news(ticker: str, start_date: str, end_date: str) -> str:
          reports in Qdrant, filtered to this ticker (``kb_search``).
       2. If neither exists, the wichart xbrain-news company feed (``codetag``)
          provides live ticker-tagged headlines.
-      3. If the KB has no match, the curated report *metadata* (ClickHouse) is a
+      3. If the KB has no match, the curated report *metadata* (MySQL) is a
          cheap secondary internal source.
       4. Only when we have no internal signal at all do we fall back to a live
          **web search**.

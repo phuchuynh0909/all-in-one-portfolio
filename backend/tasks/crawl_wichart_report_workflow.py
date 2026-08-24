@@ -7,7 +7,7 @@ import time
 import json
 import pandas as pd
 from deltalake import DeltaTable, write_deltalake
-from clickhouse_driver import Client  # type: ignore
+from datetime import datetime
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -27,6 +27,21 @@ WICHART_EMAIL = os.getenv("WICHART_EMAIL", "kyostyle1@gmail.com")
 WICHART_PASSWORD = os.getenv("WICHART_PASSWORD", "kyostyle1")
 STORAGE_PATH = os.path.join(CURRENT_DIR, "wichart_storage.json")
 RAW_WICHART_REPORT_DELTA_PATH = "s3://delta-table-storage/raw_wichart_report"
+# Rows per INSERT when upserting the feed into MySQL.
+MYSQL_INSERT_CHUNK = 500
+
+
+def _full_load_on_first_run() -> bool:
+    """Backfill the MySQL feed from the Delta table on this run?
+
+    ``WICHART_CLICKHOUSE_FULL_LOAD_ON_FIRST_RUN`` is still honoured so existing
+    deployments keep working after the move off ClickHouse.
+    """
+    raw = os.getenv(
+        "WICHART_MYSQL_FULL_LOAD_ON_FIRST_RUN",
+        os.getenv("WICHART_CLICKHOUSE_FULL_LOAD_ON_FIRST_RUN", "false"),
+    )
+    return raw.lower() in {"1", "true", "yes", "y"}
 
 # Define the PyArrow schema for WichartReport
 wichart_report_schema = pa.schema([
@@ -218,72 +233,13 @@ def _get_delta_storage_options() -> dict[str, str | None]:
     }
 
 
-def _get_clickhouse_client() -> Client:
-    return Client(
-        host=os.getenv("CLICKHOUSE_HOST", "localhost"),
-        port=int(os.getenv("CLICKHOUSE_PORT", "9010")),
-        user=os.getenv("CLICKHOUSE_USER", "kyostyle1"),
-        password=os.getenv("CLICKHOUSE_PASSWORD", "kyostyle1"),
-        database=os.getenv("CLICKHOUSE_DB", "default"),
-    )
+def _mysql_rows(prepared: pd.DataFrame) -> list[dict]:
+    """Coerce a prepared crawl frame into MySQL-typed row dicts.
 
-
-def _ensure_clickhouse_table(client: Client, database: str, table: str) -> None:
-    client.execute(f"CREATE DATABASE IF NOT EXISTS {database}")
-    client.execute(
-        f"""
-        CREATE TABLE IF NOT EXISTS {database}.{table} (
-            id Int64,
-            mack Nullable(String),
-            tenbaocao Nullable(String),
-            nguon Nullable(String),
-            khuyennghi Nullable(String),
-            giamuctieu Nullable(Float64),
-            giamuctieu_dieuchinh Nullable(Float64),
-            upside_hientai Nullable(Float64),
-            lnst_duphong Nullable(Float64),
-            tt_lnst_duphong_yoy Nullable(Float64),
-            pe_mack_n0 Nullable(Float64),
-            lnst_duphong_pt Nullable(Float64),
-            ngaykn Nullable(DateTime),
-            ngay_congbo Nullable(DateTime),
-            rsnganh Nullable(String),
-            idnganh Nullable(Int64),
-            idnganhcap3 Nullable(Int64),
-            tennganhcap3 Nullable(String),
-            kibaocao Nullable(String),
-            loaibaocao Nullable(String),
-            url Nullable(String),
-            ver DateTime64(3) DEFAULT now64(3)
-        )
-        ENGINE = ReplacingMergeTree(ver)
-        ORDER BY (id)
-        """
-    )
-
-
-@task(log_prints=True)
-def save_to_clickhouse(df: pd.DataFrame) -> int:
-    database = os.getenv("CLICKHOUSE_DB", "default")
-    table = os.getenv("CLICKHOUSE_WICHART_REPORT_TABLE", "raw_wichart_report")
-    client = _get_clickhouse_client()
-    _ensure_clickhouse_table(client, database, table)
-
-    prepared = _prepare_report_df(df)
-
-    full_load_on_first_run = os.getenv("WICHART_CLICKHOUSE_FULL_LOAD_ON_FIRST_RUN", "false").lower() in {"1", "true", "yes", "y"}
-    if full_load_on_first_run:
-        storage_options = _get_delta_storage_options()
-        if DeltaTable.is_deltatable(RAW_WICHART_REPORT_DELTA_PATH, storage_options=storage_options):
-            delta_table = DeltaTable(RAW_WICHART_REPORT_DELTA_PATH, storage_options=storage_options)
-            delta_df = delta_table.to_pyarrow_table().to_pandas()
-            prepared = _prepare_report_df(delta_df)
-            print(f"First run full load enabled. Loading {len(prepared)} rows from Delta Lake.")
-
-    if prepared.empty:
-        print("No data to save to ClickHouse")
-        return 0
-
+    pandas hands back numpy scalars and NaT/NaN; the driver wants Python types
+    and None, so every column is converted explicitly rather than trusting the
+    frame's dtype (a column that is all-null arrives as float64).
+    """
     ordered_columns = [field.name for field in wichart_report_schema]
     for col in ordered_columns:
         if col not in prepared.columns:
@@ -296,8 +252,13 @@ def save_to_clickhouse(df: pd.DataFrame) -> int:
         "giamuctieu", "giamuctieu_dieuchinh", "upside_hientai", "lnst_duphong",
         "tt_lnst_duphong_yoy", "pe_mack_n0", "lnst_duphong_pt",
     ]
+    str_columns = [
+        "mack", "tenbaocao", "nguon", "khuyennghi", "rsnganh", "tennganhcap3",
+        "kibaocao", "loaibaocao", "url",
+    ]
 
-    rows = []
+    now = datetime.now()
+    rows: list[dict] = []
     for row in prepared.itertuples(index=False, name=None):
         row_dict = dict(zip(ordered_columns, row))
 
@@ -313,39 +274,92 @@ def save_to_clickhouse(df: pd.DataFrame) -> int:
             val = row_dict[col]
             row_dict[col] = None if pd.isna(val) else float(val)
 
-        for col in ["mack", "tenbaocao", "nguon", "khuyennghi", "rsnganh", "tennganhcap3", "kibaocao", "loaibaocao", "url"]:
+        for col in str_columns:
             val = row_dict[col]
             row_dict[col] = None if pd.isna(val) else str(val)
 
-        rows.append(tuple(row_dict[col] for col in ordered_columns))
+        if row_dict["id"] is None:
+            continue  # id is the primary key; a feed row without one is unusable
 
-    client.execute(
-        f"INSERT INTO {database}.{table} ({', '.join(ordered_columns)}) VALUES",
-        rows,
-        types_check=False,
+        # ``ver`` mirrors the ReplacingMergeTree version column this table used
+        # to carry in ClickHouse: when the row was last written.
+        row_dict["ver"] = now
+        rows.append(row_dict)
+
+    return rows
+
+
+@task(log_prints=True)
+def save_to_mysql(df: pd.DataFrame) -> int:
+    """Task: upsert crawled reports into MySQL ``raw_wichart_report``.
+
+    The table definition and bootstrap are the store's
+    (``app.stores.raw_wichart_report``), so the crawler and the API can never
+    disagree about the feed's schema. ``ON DUPLICATE KEY UPDATE`` on the ``id``
+    primary key replaces ClickHouse's ReplacingMergeTree: re-crawling a report
+    updates it in place instead of piling up versions to collapse with FINAL.
+    """
+    from sqlalchemy.dialects.mysql import insert as mysql_insert
+
+    from app.db import mysql as mysql_db
+    from app.stores.raw_wichart_report import _ensure_raw_table, raw_reports_table
+
+    prepared = _prepare_report_df(df)
+
+    full_load_on_first_run = _full_load_on_first_run()
+    if full_load_on_first_run:
+        storage_options = _get_delta_storage_options()
+        if DeltaTable.is_deltatable(RAW_WICHART_REPORT_DELTA_PATH, storage_options=storage_options):
+            delta_table = DeltaTable(RAW_WICHART_REPORT_DELTA_PATH, storage_options=storage_options)
+            delta_df = delta_table.to_pyarrow_table().to_pandas()
+            prepared = _prepare_report_df(delta_df)
+            print(f"First run full load enabled. Loading {len(prepared)} rows from Delta Lake.")
+
+    if prepared.empty:
+        print("No data to save to MySQL")
+        return 0
+
+    rows = _mysql_rows(prepared)
+    if not rows:
+        print("No data to save to MySQL")
+        return 0
+
+    engine = _ensure_raw_table()
+    stmt = mysql_insert(raw_reports_table)
+    upsert = stmt.on_duplicate_key_update(
+        **{c.name: stmt.inserted[c.name] for c in raw_reports_table.columns if c.name != "id"}
     )
-    print(f"Inserted {len(rows)} rows to ClickHouse {database}.{table}")
-    return len(rows)
+
+    # Chunked so a full load from Delta doesn't build one multi-megabyte
+    # statement past max_allowed_packet.
+    written = 0
+    with engine.begin() as conn:
+        for start in range(0, len(rows), MYSQL_INSERT_CHUNK):
+            chunk = rows[start:start + MYSQL_INSERT_CHUNK]
+            conn.execute(upsert, chunk)
+            written += len(chunk)
+
+    print(f"Upserted {written} rows to MySQL {mysql_db.endpoint()} ({raw_reports_table.name})")
+    return written
 
 
 @flow(log_prints=True)
 def crawl_wichart_report_workflow():
-    """Flow: Crawl Wichart reports and save to Delta Lake."""
+    """Flow: Crawl Wichart reports, save to Delta Lake and MySQL."""
     
     # Task 1: Crawl reports via browser
     df = crawl_wichart_report()
     
     if df.empty:
-        full_load_on_first_run = os.getenv("WICHART_CLICKHOUSE_FULL_LOAD_ON_FIRST_RUN", "false").lower() in {"1", "true", "yes", "y"}
-        if not full_load_on_first_run:
+        if not _full_load_on_first_run():
             print("No data crawled, exiting workflow")
             return
-        print("No new crawl data, continuing for first-run ClickHouse full load from Delta.")
+        print("No new crawl data, continuing for first-run MySQL full load from Delta.")
 
     # Task 2: Save to Delta Table
     save_to_delta_table(df)
 
-    save_to_clickhouse(df)
+    save_to_mysql(df)
     
     print("Workflow completed successfully!")
 

@@ -14,6 +14,11 @@ import type {
 import { createDatafeed } from '../../lib/tv/datafeed';
 import { tvStore, HISTORY_YEARS } from '../../lib/tv/store';
 import {
+  DEFAULT_WATCHLIST_SYMBOLS,
+  resolveWatchListApi,
+  type ResolvedWatchList,
+} from '../../lib/tv/watchlist';
+import {
   STUDY_CATALOGUE,
   STUDY_NAME_BY_ID,
   computedStudyInputs,
@@ -40,6 +45,11 @@ type StockChartProps = {
   /** Called when the in-header sync button is pressed. */
   onSync?: () => void;
   syncing?: boolean;
+  /**
+   * Called once the Watch List API is resolved — the library's own widget when
+   * this is a Trading Terminal build, the app-side list otherwise.
+   */
+  onWatchListResolved?: (resolved: ResolvedWatchList) => void;
 };
 
 export interface ParamDef {
@@ -262,6 +272,7 @@ export default function StockChart({
   onToggleLargeOrders,
   onSync,
   syncing = false,
+  onWatchListResolved,
 }: StockChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<IChartingLibraryWidget | null>(null);
@@ -277,6 +288,10 @@ export default function StockChart({
   useEffect(() => {
     headerHandlersRef.current = { onSymbolChange, onToggleLargeOrders, onSync };
   }, [onSymbolChange, onToggleLargeOrders, onSync]);
+
+  // Resolved once on mount (below), so read through a ref like the header ones.
+  const onWatchListResolvedRef = useRef(onWatchListResolved);
+  useEffect(() => { onWatchListResolvedRef.current = onWatchListResolved; }, [onWatchListResolved]);
 
   const [indicatorConfigs, setIndicatorConfigs] = useState<IndicatorConfig[]>(() => {
     try {
@@ -477,6 +492,13 @@ export default function StockChart({
       theme: 'dark',
       timezone: 'Asia/Ho_Chi_Minh',
       custom_indicators_getter: customIndicatorsGetter,
+      // Trading Terminal only: asks for the widget bar's Watch List. The
+      // Advanced Charts build has no widget bar and ignores this, which is why
+      // resolveWatchListApi below decides who actually renders the list.
+      widgetbar: {
+        watchlist: true,
+        watchlist_settings: { default_symbols: DEFAULT_WATCHLIST_SYMBOLS },
+      },
       disabled_features: [],
       overrides: {
         'paneProperties.background': '#0a0a0f',
@@ -495,6 +517,10 @@ export default function StockChart({
         setReady(true);
         void applyStudies();
         void drawPositions();
+      });
+      void resolveWatchListApi(widget).then((resolved) => {
+        if (disposed) return;
+        onWatchListResolvedRef.current?.(resolved);
       });
       // Move all app controls into the chart header toolbar: symbol picker,
       // Chart/Large-Orders toggle, and sync on the left; layout + indicators

@@ -90,15 +90,20 @@ every request (the primary debug channel — `make backend-logs`).
 DNSE WebSocket ─▶ worker: tick_ingest ─▶ ClickHouse (ticks)
                     │
                     ├─▶ ClickHouse MV           ─▶ large_order_blocks (no worker)
+                    ├─▶ ClickHouse MV           ─▶ trade_flow_seconds/windows (no worker)
                     ├─▶ worker: ohlc_5m         ─▶ ClickHouse (5m OHLC)
                     ├─▶ worker: hawkes_signal   ─▶ signals + Telegram
                     ├─▶ worker: isp             ─▶ ISP alerts
                     └─▶ worker: price_alerts    ─▶ reads portfolio.db, notifies
 ```
 
-Large-order blocks are aggregated inside ClickHouse by a materialized view on
-`ticks`, so they need no worker container and no reconciliation pass —
-`large_order_reconciler` is retired.
+Large-order blocks and trade-flow features are both aggregated inside ClickHouse
+by materialized views on `ticks`, so neither needs a worker container nor a
+reconciliation pass — `large_order_reconciler` is retired, and the
+`block_episode_reconciler` / `large_execution` detector has been removed
+entirely. Trade-flow anomaly scoring
+(Isolation Forest) runs on demand in the backend at
+`GET /api/v1/trade-flow/anomalies`.
 
 Workers are independent Bytewax dataflows (each its own container). They share
 `worker_state` (a Docker volume) for durable operator state and write results to

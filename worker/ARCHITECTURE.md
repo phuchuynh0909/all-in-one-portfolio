@@ -270,6 +270,85 @@ python workers/large_order_reconciler.py --from-date 2026-06-01 --to-date 2026-0
 
 ---
 
+### 6. `block_episode_ingest.py` — trade-flow features (materialized view)
+
+**Not a running worker**, and no longer a detector. Replaced the Bytewax
+dataflow and the z-score detector it ran, both since deleted. Features are
+maintained by ClickHouse; anomaly scoring happens on demand in the backend.
+
+```
+ticks ──MV──▶ trade_flow_seconds     1-second bars, AggregatingMergeTree
+                    │
+                    └──view──▶ trade_flow_windows     21 features per N-second window
+                                        │
+                          backend: robust z per (symbol, time-of-day)
+                                        │
+                                Isolation Forest
+                                   "unusual?"
+                                        │
+                            GET /api/v1/trade-flow/anomalies
+```
+
+**What the feed allows.** This is a trade/ticker tape, not Market-By-Order:
+no resting book, no order IDs, no quotes, no adds/cancels. OFI, book imbalance,
+replenishment and queue depletion are therefore **not computable**. The features
+target what trade flow does carry — size concentration, temporal clustering,
+directional imbalance, price impact.
+
+**Why two levels.** An MV sees only the rows of one INSERT, and `tick_ingest`
+flushes every ~2s, so computing anything from tick *order* inside it would be
+silently wrong at every insert boundary. Level 1 therefore stores only
+order-independent values — sums, min/max, `argMin`/`argMax`/`quantiles`
+**states**, and a per-tick millisecond offset. Level 2 reads a table, so it can
+restore order: that is where returns, realized volatility, burst intensity and
+inter-arrival are derived. Verified on real ticks: 60k ticks in 200 inserts
+produced 14,085 torn partial bars whose window features are **bit-identical** to
+a one-shot rebuild (`--verify` runs this check on demand).
+
+**Inter-arrival is exact, not approximated.** A tick's millisecond offset within
+its second depends only on that tick, so collecting the offsets is
+order-independent, and `SimpleAggregateFunction(groupArrayArray, Array(UInt16))`
+merges them by concatenation. Level 2 rebuilds absolute milliseconds, sorts them
+back into arrival order and differences them — giving
+`median_interarrival_ms`, `p90_interarrival_ms` and `same_ms_share` that match
+raw ticks exactly (measured: 0 differences across 28,904 windows). Costs
+517 KiB compressed per trading day, ~9% of the bars table.
+
+The per-second proxies alone were **not** sufficient: the best of them
+(`max_trades_per_second`) correlates with true median inter-arrival at only
+r = −0.61, so roughly 60% of the timing variance was invisible before this.
+
+**Deliberate departures from a textbook MBO feature set:**
+
+| Wanted | What is built | Why |
+|---|---|---|
+| `p10_interarrival_ms` | `same_ms_share` | The exchange stamps at **millisecond** resolution and 32% of gaps are already 0, so p10 is pinned at zero for almost every window. The same-millisecond *share* measures the same clustering and stays informative — simultaneous fills are a strong algo tell. |
+| `large_trade_volume_ratio` vs a trailing threshold | `size_hhi` (Σq²/V²), `top_trade_share`, `p95_to_median` | A per-tick threshold is not knowable at aggregation time. Σq² is additive, so HHI is exact and threshold-free; the scorer normalizes per symbol instead. |
+| Tick-rule direction proxy | real aggressor `side` | The feed carries it on ~99.7% of ticks. `side = 0` counts toward volume but neither direction. |
+
+Timestamps are **millisecond**, not nanosecond, despite the `DateTime64(6)`
+column — measured: 0% of ticks carry sub-millisecond detail, so this is the
+exchange's resolution, not truncation on our side. It is why `p10_interarrival`
+is unusable and `same_ms_share` replaces it.
+
+**Run:**
+```bash
+python workers/block_episode_ingest.py --setup      # table + MV + window view
+python workers/block_episode_ingest.py --backfill   # bars from existing ticks
+python workers/block_episode_ingest.py --verify     # MV path vs one-shot rebuild
+python workers/block_episode_ingest.py --status
+```
+
+Changing `BLOCK_EP_WINDOW_SECONDS` only needs `--setup` again — the 1-second bars
+are window-agnostic, so no backfill is required.
+
+> **Removed alongside:** `core/large_execution.py`,
+> `block_episode_reconciler.py`, the `BLOCK_EPISODES_*` schemas, the
+> `block_episodes` table and the `/block-episodes` endpoint and its UI panel.
+> The file name `block_episode_ingest.py` is the last vestige of the old name.
+
+---
+
 ## Data model
 
 ### `large_orders` (Layer 3 blocks)
@@ -327,17 +406,21 @@ All workers read from environment variables (or `.env`). Key variables:
 
 | Variable | Default | Used by |
 |---|---|---|
-| `DNSE_API_KEY` | — (required) | tick_ingest, block_episode_ingest |
-| `DNSE_API_SECRET` | — (required) | tick_ingest, block_episode_ingest |
-| `DNSE_WS_URL` | `wss://ws-openapi.dnse.com.vn` | tick_ingest, block_episode_ingest |
-| `DNSE_TRADE_BOARDS` | `G1,G3,G4,G7,T1,T2,T3,T4,T6` | tick_ingest, block_episode_ingest |
-| `DNSE_WS_ENCODING` | `json` | tick_ingest, block_episode_ingest |
+| `DNSE_API_KEY` | — (required) | tick_ingest |
+| `DNSE_API_SECRET` | — (required) | tick_ingest |
+| `DNSE_WS_URL` | `wss://ws-openapi.dnse.com.vn` | tick_ingest |
+| `DNSE_TRADE_BOARDS` | `G1,G3,G4,G7,T1,T2,T3,T4,T6` | tick_ingest |
+| `DNSE_WS_ENCODING` | `json` | tick_ingest |
 | `INGEST_BATCH_MAX_SIZE` | `100000` | tick_ingest |
 | `INGEST_BATCH_TIMEOUT_SECONDS` | `2.0` | tick_ingest |
 | `INGEST_ASYNC_INSERT` | `1` | tick_ingest |
 | `INGEST_WAIT_FOR_ASYNC_INSERT` | `0` | tick_ingest |
 | `INGEST_ASYNC_BUSY_TIMEOUT_MS` | `1000` | tick_ingest |
 | `INGEST_ASYNC_MAX_DATA_SIZE` | `10485760` | tick_ingest |
+| `BLOCK_EP_WINDOW_SECONDS` | `30` | block_episode_ingest, backend |
+| `BLOCK_EP_TOD_BUCKET_MINUTES` | `30` | backend (normalization) |
+| `BLOCK_EP_MIN_WINDOWS_TO_FIT` | `200` | backend (Isolation Forest) |
+| `BLOCK_EP_CONTAMINATION` | `0.01` | backend (Isolation Forest) |
 | `MQTT_HOST` | `datafeed-lts-krx.dnse.com.vn` | isp, price_alerts |
 | `MQTT_PORT` | `443` | isp, price_alerts |
 | `TICK_SYMBOL` | current VN30F contract | tick_ingest, reconciler |

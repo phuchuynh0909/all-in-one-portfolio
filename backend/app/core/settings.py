@@ -23,10 +23,10 @@ class Settings(BaseSettings):
     clickhouse_password: str = os.getenv("CLICKHOUSE_PASSWORD", "mypassword")
     clickhouse_db: str = os.getenv("CLICKHOUSE_DB", "default")
 
-    # MySQL — the wichart report *detail* store (report_title, llm_summary,
-    # clean_content, status …). The raw report feed stays in ClickHouse
-    # (``raw_wichart_report``); MySQL holds the enriched rows we write back.
-    mysql_host: str = os.getenv("MYSQL_HOST", "192.168.1.3")
+    # MySQL — the wichart report store: both the crawled feed
+    # (``raw_wichart_report``) and the enriched detail rows we write back
+    # (``wichart_reports``: report_title, llm_summary, clean_content, status …).
+    mysql_host: str = os.getenv("MYSQL_HOST", "localhost")
     mysql_port: int = int(os.getenv("MYSQL_PORT", "3306"))
     mysql_user: str = os.getenv("MYSQL_USER", "root")
     mysql_password: str = os.getenv("MYSQL_PASSWORD", "kyostyle1")

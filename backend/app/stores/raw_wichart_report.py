@@ -1,19 +1,20 @@
 """MySQL-backed store for wichart report *details*.
 
-Two tables, two systems, on purpose:
+Two tables, one system:
 
-  * ``raw_wichart_report`` — the crawled feed, read-only here, lives in
-    **ClickHouse** (the same table ``report_service._query_raw_reports`` reads).
+  * ``raw_wichart_report`` — the crawled feed, read-only here.
   * ``wichart_reports`` — the enriched rows we write back (``llm_summary``,
-    ``clean_content``, ``status`` …), lives in **MySQL**.
+    ``clean_content``, ``status`` …).
 
-This replaces the previous Delta-table-on-MinIO implementation of the detail
-side. Delta was only reachable from the API container — its S3 endpoint resolves
-to ``localhost:9000``, so the Prefect worker (which runs on the host) could not
-write a summary at all. MySQL is reachable from both.
+Both now live in **MySQL**. The feed used to be read from ClickHouse and the
+details from a Delta table on MinIO; neither was reachable from every process
+that needs them (Delta's S3 endpoint resolves to ``localhost:9000``, so the
+Prefect worker running on the host could not write a summary at all). MySQL is
+reachable from both the API container and the worker, so one engine serves the
+join between feed and detail rows.
 
 The engine and schema bootstrap are shared with ``report_rag_service`` via
-``app.db.mysql``, so the detail table is created on first use and there is no
+``app.db.mysql``, so both tables are created on first use and there is no
 migration step to run. Callers still get pandas DataFrames, so
 ``report_service`` and ``tradingagents.vn_data`` are unchanged.
 
@@ -32,6 +33,7 @@ from sqlalchemy import (
     BigInteger,
     Column,
     DateTime,
+    Float,
     Integer,
     MetaData,
     String,
@@ -45,11 +47,10 @@ from sqlalchemy import (
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.engine import Engine
 
-from app.core.settings import settings
 from app.db import mysql
 
 _DETAIL_TABLE = os.getenv("MYSQL_WICHART_REPORT_TABLE", "wichart_reports")
-_RAW_TABLE = os.getenv("CLICKHOUSE_WICHART_REPORT_TABLE", "raw_wichart_report")
+_RAW_TABLE = os.getenv("MYSQL_WICHART_RAW_TABLE", "raw_wichart_report")
 
 # Raw columns this store maps into the detail row. Kept explicit (rather than
 # SELECT *) so a schema change upstream surfaces here rather than silently
@@ -88,51 +89,81 @@ reports_table = Table(
     mysql_collate="utf8mb4_unicode_ci",
 )
 
+# The crawled feed. Mirrors the columns the crawl workflow writes (see
+# ``tasks/crawl_wichart_report_workflow.py``): the store reads a subset, but the
+# table it creates on a fresh database has to be the one the crawler can fill.
+# ``id`` is the primary key, so an upserting crawler dedupes on write and reads
+# here need no ClickHouse-style ``FINAL`` pass.
+raw_reports_table = Table(
+    _RAW_TABLE,
+    _metadata,
+    Column("id", BigInteger, primary_key=True, autoincrement=False),
+    Column("mack", String(32), index=True),
+    Column("tenbaocao", String(512)),
+    Column("nguon", String(128)),
+    Column("khuyennghi", String(128)),
+    Column("giamuctieu", Float),
+    Column("giamuctieu_dieuchinh", Float),
+    Column("upside_hientai", Float),
+    Column("lnst_duphong", Float),
+    Column("tt_lnst_duphong_yoy", Float),
+    Column("pe_mack_n0", Float),
+    Column("lnst_duphong_pt", Float),
+    Column("ngaykn", DateTime, index=True),
+    Column("ngay_congbo", DateTime),
+    Column("rsnganh", String(255)),
+    Column("idnganh", BigInteger),
+    Column("idnganhcap3", BigInteger),
+    Column("tennganhcap3", String(255)),
+    Column("kibaocao", String(64)),
+    Column("loaibaocao", String(128)),
+    Column("url", String(1024)),
+    Column("ver", DateTime),
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_unicode_ci",
+)
+
+
 def _ensure_table() -> Engine:
     """Create the database and detail table if they don't exist yet (once)."""
     return mysql.ensure_table(_metadata, reports_table)
 
 
+def _ensure_raw_table() -> Engine:
+    """Create the database and raw feed table if absent (once).
+
+    Read-only here, but created rather than assumed so a fresh database returns
+    an empty feed instead of raising ``Table doesn't exist``.
+    """
+    return mysql.ensure_table(_metadata, raw_reports_table)
+
+
 # ---------------------------------------------------------------------------
-# Raw feed (ClickHouse, read-only)
+# Raw feed (MySQL, read-only)
 # ---------------------------------------------------------------------------
 
 
 def _query_raw(report_id: int | None = None, mack: str | None = None,
                limit: int | None = None) -> pd.DataFrame:
-    """Read the crawled feed from ClickHouse into a DataFrame."""
-    import clickhouse_connect
-
-    query = (
-        f"SELECT {', '.join(_RAW_COLUMNS)} "
-        f"FROM {settings.clickhouse_db}.{_RAW_TABLE} FINAL"
-    )
-    conditions: list[str] = []
-    params: dict[str, Any] = {}
+    """Read the crawled feed from MySQL into a DataFrame."""
+    columns = [raw_reports_table.c[name] for name in _RAW_COLUMNS]
+    stmt = select(*columns)
     if report_id is not None:
-        conditions.append("id = %(report_id)s")
-        params["report_id"] = report_id
+        stmt = stmt.where(raw_reports_table.c.id == int(report_id))
     if mack:
-        conditions.append("mack = %(mack)s")
-        params["mack"] = mack.upper()
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-    query += " ORDER BY ngaykn DESC, id DESC"
-    if limit is not None:
-        query += f" LIMIT {int(limit)}"
-
-    client = clickhouse_connect.get_client(
-        host=settings.clickhouse_host,
-        port=settings.clickhouse_port,
-        username=settings.clickhouse_user,
-        password=settings.clickhouse_password,
-        database=settings.clickhouse_db,
+        stmt = stmt.where(raw_reports_table.c.mack == mack.upper())
+    stmt = stmt.order_by(
+        raw_reports_table.c.ngaykn.desc(), raw_reports_table.c.id.desc()
     )
-    try:
-        result = client.query(query, parameters=params or None)
-        return pd.DataFrame(result.result_rows, columns=result.column_names)
-    finally:
-        client.close()
+    if limit is not None:
+        stmt = stmt.limit(int(limit))
+
+    engine = _ensure_raw_table()
+    with engine.connect() as conn:
+        rows = conn.execute(stmt).all()
+    # Columns passed explicitly so an empty feed still has the shape callers
+    # index into (``raw_df["id"]`` in ``sync_latest_reports``).
+    return pd.DataFrame([tuple(r) for r in rows], columns=list(_RAW_COLUMNS))
 
 
 def _detail_row_from_raw(raw: Any, now: datetime) -> dict[str, Any]:
