@@ -2,7 +2,8 @@
 
 Two tables, one system:
 
-  * ``raw_wichart_report`` — the crawled feed, read-only here.
+  * ``raw_wichart_report`` — the crawled feed. Read-only except for
+    hand-entered reports (``create_manual_report``).
   * ``wichart_reports`` — the enriched rows we write back (``llm_summary``,
     ``clean_content``, ``status`` …).
 
@@ -46,11 +47,21 @@ from sqlalchemy import (
 )
 from sqlalchemy.dialects.mysql import LONGTEXT
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import IntegrityError
 
 from app.db import mysql
 
 _DETAIL_TABLE = os.getenv("MYSQL_WICHART_REPORT_TABLE", "wichart_reports")
 _RAW_TABLE = os.getenv("MYSQL_WICHART_RAW_TABLE", "raw_wichart_report")
+
+# Ids for hand-entered reports come from this reserved band, above anything the
+# crawler can mint (upstream wichart ids are far smaller), so a manual row can
+# never collide with a later crawled one.
+MANUAL_ID_BASE = 9_000_000_000
+
+
+class ReportIdTaken(Exception):
+    """A manual report asked for an id the feed already holds."""
 
 # Raw columns this store maps into the detail row. Kept explicit (rather than
 # SELECT *) so a schema change upstream surfaces here rather than silently
@@ -132,14 +143,14 @@ def _ensure_table() -> Engine:
 def _ensure_raw_table() -> Engine:
     """Create the database and raw feed table if absent (once).
 
-    Read-only here, but created rather than assumed so a fresh database returns
-    an empty feed instead of raising ``Table doesn't exist``.
+    Created rather than assumed so a fresh database returns an empty feed
+    instead of raising ``Table doesn't exist``.
     """
     return mysql.ensure_table(_metadata, raw_reports_table)
 
 
 # ---------------------------------------------------------------------------
-# Raw feed (MySQL, read-only)
+# Raw feed (MySQL)
 # ---------------------------------------------------------------------------
 
 
@@ -252,6 +263,76 @@ class WichartReportStore:
             )
             raise
         return pd.DataFrame([record])
+
+    def create_manual_report(self, report_id: int | None = None, **fields: Any) -> int:
+        """Insert a hand-entered row into the raw feed; return its id.
+
+        The feed's ``id`` comes from upstream and is not auto-increment, so with
+        no ``report_id`` given one is allocated from ``MANUAL_ID_BASE`` upwards.
+        Pass ``report_id`` to pin a specific id (e.g. to match the wichart
+        document the PDF came from); it must be free — ``ReportIdTaken``
+        otherwise, rather than overwriting a row. A detail row is seeded straight
+        away so ``/report/{id}`` and the summary editor work on the new report
+        without waiting for a sync.
+        """
+        engine = _ensure_raw_table()
+        now = datetime.now()
+
+        if report_id is not None:
+            report_id = int(report_id)
+            with engine.begin() as conn:
+                if conn.execute(
+                    select(raw_reports_table.c.id).where(
+                        raw_reports_table.c.id == report_id
+                    )
+                ).first():
+                    raise ReportIdTaken(f"Report id {report_id} already exists")
+                try:
+                    conn.execute(
+                        insert(raw_reports_table).values(
+                            id=report_id, ver=now, **fields
+                        )
+                    )
+                except IntegrityError as exc:  # lost a race with another add
+                    raise ReportIdTaken(
+                        f"Report id {report_id} already exists"
+                    ) from exc
+            logger.info(f"Created manual report in {_RAW_TABLE}: report_id={report_id}")
+            self._create_detail_from_raw(report_id)
+            return report_id
+
+        report_id = None
+        # Two concurrent adds can pick the same id; the PK rejects the loser, so
+        # re-read the max and try again rather than failing the request.
+        for attempt in range(3):
+            with engine.begin() as conn:
+                highest = conn.execute(
+                    select(func.max(raw_reports_table.c.id)).where(
+                        raw_reports_table.c.id >= MANUAL_ID_BASE
+                    )
+                ).scalar()
+                candidate = int(highest) + 1 if highest is not None else MANUAL_ID_BASE
+                try:
+                    conn.execute(
+                        insert(raw_reports_table).values(
+                            id=candidate, ver=now, **fields
+                        )
+                    )
+                except IntegrityError:
+                    logger.warning(
+                        f"Manual report id {candidate} taken, retrying "
+                        f"(attempt {attempt + 1})"
+                    )
+                    continue
+            report_id = candidate
+            break
+
+        if report_id is None:
+            raise RuntimeError("Could not allocate an id for the manual report")
+
+        logger.info(f"Created manual report in {_RAW_TABLE}: report_id={report_id}")
+        self._create_detail_from_raw(report_id)
+        return report_id
 
     def update_summary(self, report_id: int, summary: str) -> bool:
         """Set ``llm_summary`` for a report, creating the row if needed."""

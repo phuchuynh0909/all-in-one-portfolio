@@ -2,8 +2,15 @@ import os
 from fastapi import APIRouter, HTTPException, BackgroundTasks
 from fastapi_cache.decorator import cache
 from loguru import logger
-from app.schemas.report import ReportResponse, ReportDetail, ReportSummaryUpdate
-from app.services.report_service import get_reports, get_report_by_id, update_report_summary, sync_latest_reports
+from app.schemas.report import Report, ReportCreate, ReportResponse, ReportDetail, ReportSummaryUpdate
+from app.services.report_service import (
+    create_report,
+    get_reports,
+    get_report_by_id,
+    update_report_summary,
+    sync_latest_reports,
+)
+from app.stores.raw_wichart_report import ReportIdTaken
 
 router = APIRouter(prefix="/report", tags=["report"])
 
@@ -37,6 +44,25 @@ async def get_all_reports(symbol: str | None = None) -> ReportResponse:
     """Get reports, optionally filtered by symbol."""
     reports = await get_reports(symbol)
     return ReportResponse(reports=reports)
+
+
+@router.post("", response_model=Report, status_code=201)
+async def add_report(payload: ReportCreate) -> Report:
+    """Add a report by hand (for what the crawler missed).
+
+    Lands in the same feed table as crawled reports, so the new row is
+    immediately usable by the detail page and the RAG pipeline. Send ``id`` to
+    pin the feed id (409 if it is already used), or omit it to have one
+    allocated. ``GET /report/list`` is cached for an hour — the client should
+    refetch it with ``Cache-Control: no-cache`` to see the new report right away.
+    """
+    try:
+        return await create_report(payload)
+    except ReportIdTaken as exc:
+        raise HTTPException(status_code=409, detail=str(exc))
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("Failed to add manual report")
+        raise HTTPException(status_code=500, detail=f"Failed to add report: {exc}")
 
 
 @router.get("/{report_id}", response_model=ReportDetail)

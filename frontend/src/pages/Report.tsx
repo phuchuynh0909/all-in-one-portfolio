@@ -11,29 +11,34 @@ import {
   MenuItem,
 } from '@mui/material';
 import SyncIcon from '@mui/icons-material/Sync';
+import AddIcon from '@mui/icons-material/Add';
 import { ReportTable } from '../components/report/ReportTable';
+import { AddReportDialog } from '../components/report/AddReportDialog';
 import {
   fetchReports,
   syncReports,
   fetchRagStatuses,
   triggerReportRag,
 } from '../lib/services/report';
-import type { Report as ReportType, SyncStats, RagStatus, PdfParser } from '../lib/services/report';
+import type { Report as ReportType, RagStatus, PdfParser } from '../lib/services/report';
 
 const RAG_IN_PROGRESS = ['PENDING', 'PARSING', 'EMBEDDING'];
+
+type Notice = { severity: 'success' | 'error'; message: string };
 
 const Report: React.FC = () => {
   const [reports, setReports] = React.useState<ReportType[]>([]);
   const [isLoading, setIsLoading] = React.useState(false);
   const [isSyncing, setIsSyncing] = React.useState(false);
-  const [syncResult, setSyncResult] = React.useState<{ success: boolean; stats?: SyncStats; error?: string } | null>(null);
+  const [notice, setNotice] = React.useState<Notice | null>(null);
   const [ragStatuses, setRagStatuses] = React.useState<Record<number, RagStatus>>({});
   const [parser, setParser] = React.useState<PdfParser>('pymupdf4llm');
+  const [isAddOpen, setIsAddOpen] = React.useState(false);
 
-  const loadReports = async (symbol?: string) => {
+  const loadReports = async (symbol?: string, refresh = false) => {
     try {
       setIsLoading(true);
-      const data = await fetchReports(symbol);
+      const data = await fetchReports(symbol, refresh);
       setReports(data);
     } catch (error) {
       console.error('Error loading reports:', error);
@@ -71,17 +76,30 @@ const Report: React.FC = () => {
   const handleSync = async () => {
     try {
       setIsSyncing(true);
-      setSyncResult(null);
+      setNotice(null);
       const response = await syncReports(100);
-      setSyncResult({ success: true, stats: response.stats });
+      const stats = response.stats;
+      setNotice({
+        severity: 'success',
+        message: `Synced ${stats.created} new reports (${stats.missing} missing, ${stats.failed} failed)`,
+      });
       // Reload reports after sync
       await loadReports();
     } catch (error) {
       console.error('Error syncing reports:', error);
-      setSyncResult({ success: false, error: 'Failed to sync reports' });
+      setNotice({ severity: 'error', message: 'Failed to sync reports' });
     } finally {
       setIsSyncing(false);
     }
+  };
+
+  const handleReportCreated = async (report: ReportType) => {
+    setNotice({
+      severity: 'success',
+      message: `Added report #${report.id}${report.mack ? ` (${report.mack})` : ''}`,
+    });
+    // The list endpoint is cached server-side, so force a recompute.
+    await loadReports(undefined, true);
   };
 
   React.useEffect(() => {
@@ -122,6 +140,13 @@ const Report: React.FC = () => {
               <MenuItem value="pymupdf4llm">PyMuPDF4LLM (fast)</MenuItem>
             </TextField>
             <Button
+              variant="contained"
+              startIcon={<AddIcon />}
+              onClick={() => setIsAddOpen(true)}
+            >
+              Add Report
+            </Button>
+            <Button
               variant="outlined"
               startIcon={isSyncing ? <CircularProgress size={20} /> : <SyncIcon />}
               onClick={handleSync}
@@ -140,20 +165,24 @@ const Report: React.FC = () => {
         />
       </Box>
 
+      <AddReportDialog
+        open={isAddOpen}
+        onClose={() => setIsAddOpen(false)}
+        onCreated={handleReportCreated}
+      />
+
       <Snackbar
-        open={syncResult !== null}
+        open={notice !== null}
         autoHideDuration={6000}
-        onClose={() => setSyncResult(null)}
+        onClose={() => setNotice(null)}
         anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
       >
         <Alert
-          onClose={() => setSyncResult(null)}
-          severity={syncResult?.success ? 'success' : 'error'}
+          onClose={() => setNotice(null)}
+          severity={notice?.severity ?? 'success'}
           sx={{ width: '100%' }}
         >
-          {syncResult?.success
-            ? `Synced ${syncResult.stats?.created} new reports (${syncResult.stats?.missing} missing, ${syncResult.stats?.failed} failed)`
-            : syncResult?.error}
+          {notice?.message}
         </Alert>
       </Snackbar>
     </Container>

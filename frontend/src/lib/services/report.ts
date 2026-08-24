@@ -24,17 +24,66 @@ export interface ReportResponse {
   reports: Report[];
 }
 
-export const fetchReports = async (symbol?: string): Promise<Report[]> => {
+/**
+ * Report list, optionally filtered by symbol.
+ *
+ * The endpoint is cached server-side for an hour; pass `refresh` to make the
+ * backend recompute it (needed right after adding a report by hand).
+ */
+export const fetchReports = async (symbol?: string, refresh = false): Promise<Report[]> => {
   const url = new URL(`${API_BASE_URL}/report/list`);
   if (symbol) {
     url.searchParams.append('symbol', symbol);
   }
-  const response = await fetch(url.toString());
+  const response = await fetch(url.toString(), {
+    headers: refresh ? { 'Cache-Control': 'no-cache' } : undefined,
+  });
   if (!response.ok) {
     throw new Error('Failed to fetch reports');
   }
   const data: ReportResponse = await response.json();
   return data.reports;
+};
+
+export interface ReportCreate {
+  /** Feed id to pin; omit to have the backend allocate one. 409 if taken. */
+  id?: number | null;
+  tenbaocao: string;
+  url: string;
+  mack?: string | null;
+  nguon?: string;
+  /** ISO date/datetime string; defaults to now server-side. */
+  ngaykn?: string | null;
+  rsnganh?: string | null;
+}
+
+/** Add a report by hand (for what the crawler missed). */
+export const createReport = async (payload: ReportCreate): Promise<Report> => {
+  const response = await fetch(`${API_BASE_URL}/report`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!response.ok) {
+    // FastAPI validation errors come back as {detail: [...]}, plain ones as a string.
+    let message = `Failed to add report (${response.status})`;
+    try {
+      const body = await response.json();
+      if (typeof body.detail === 'string') {
+        message = body.detail;
+      } else if (Array.isArray(body.detail) && body.detail.length) {
+        message = body.detail
+          .map((d: { loc?: (string | number)[]; msg: string }) =>
+            `${d.loc?.slice(-1)[0] ?? ''}: ${d.msg}`.trim(),
+          )
+          .join('; ');
+      }
+    } catch {
+      // Non-JSON body — keep the status-code message.
+    }
+    throw new Error(message);
+  }
+  return response.json();
 };
 
 export const fetchReportById = async (reportId: number): Promise<ReportDetail> => {

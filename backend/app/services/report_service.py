@@ -1,9 +1,10 @@
+from datetime import datetime
 from typing import List, Optional
 
 import pandas as pd
 
-from app.schemas.report import Report, ReportDetail
-from app.stores.raw_wichart_report import WichartReportStore, _query_raw
+from app.schemas.report import Report, ReportCreate, ReportDetail
+from app.stores.raw_wichart_report import ReportIdTaken, WichartReportStore, _query_raw
 
 
 def _none_if_nan(value):
@@ -68,6 +69,38 @@ async def get_report_by_id(report_id: int) -> Optional[ReportDetail]:
         recommendation=None,
         report_category=None,
         status=None,
+    )
+
+
+async def create_report(payload: ReportCreate) -> Report:
+    """Add a report by hand to the feed and return it with its id.
+
+    Goes into the same table the crawler fills, so the new report shows up in
+    the list, the detail page and the RAG pipeline like any other. ``payload.id``
+    pins the feed id (``ReportIdTaken`` if it is in use); left unset, one is
+    allocated from the reserved manual band. Note the ``/report/list`` response
+    is cached — refetch with ``Cache-Control: no-cache`` to see the new row
+    immediately.
+    """
+    store = WichartReportStore()
+    ngaykn = payload.ngaykn or datetime.now()
+    report_id = store.create_manual_report(
+        report_id=payload.id,
+        mack=payload.mack,
+        tenbaocao=payload.tenbaocao,
+        url=payload.url,
+        nguon=payload.nguon,
+        ngaykn=ngaykn,
+        rsnganh=payload.rsnganh,
+    )
+    return Report(
+        id=report_id,
+        mack=payload.mack,
+        tenbaocao=payload.tenbaocao,
+        url=payload.url,
+        nguon=payload.nguon,
+        ngaykn=ngaykn,
+        rsnganh=payload.rsnganh,
     )
 
 
