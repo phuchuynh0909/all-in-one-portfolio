@@ -1,7 +1,9 @@
 """Prefect RAG pipeline: report PDF -> markdown -> summary -> embeddings -> Qdrant.
 
 Given a wichart report id, this flow:
-  1. Looks up the report's PDF url / symbol / title (raw_wichart_report).
+  1. Looks up the report's PDF url / symbol / title (raw_wichart_report) and
+     makes sure the report has a ``wichart_reports`` detail row, creating it from
+     the feed when the sync has not reached this report yet.
   2. Downloads and parses the PDF into **page-delimited** markdown with one of
      four parsers (``RAG_PDF_PARSER``): marker, llamaparse, docling or
      pymupdf4llm. Every parser emits pages joined by the same separator, so the
@@ -10,7 +12,9 @@ Given a wichart report id, this flow:
      OpenAI-compatible gateway (``app.services.llm``): one ``##`` section per
      topic, boilerplate dropped, figures preserved verbatim, forecasts and
      opinion attributed rather than restated as fact, and a ``_Source: p. N_``
-     reference under each heading.
+     reference under each heading. The digest is saved to
+     ``wichart_reports.llm_summary`` (overwriting any prior value), so the Report
+     detail page and the trading agents read the same text that was indexed.
   4. Chunks that digest **by heading** — one chunk per section, each carrying its
      heading path so it reads standalone and its cited page so retrieval can
      still point at the PDF — and embeds each with Qwen3-Embedding-8B.
@@ -208,6 +212,20 @@ def fetch_report_metadata(report_id: int) -> Optional[dict]:
         "title": str(_none_if_nan(row.get("tenbaocao")) or ""),
         "pdf_url": str(_none_if_nan(row.get("url")) or ""),
     }
+
+
+@task(retries=1, retry_delay_seconds=10)
+def ensure_detail_row(report_id: int) -> bool:
+    """Create the report's ``wichart_reports`` row if it does not exist yet.
+
+    The detail table is only otherwise filled by ``POST /report/sync`` (newest N
+    reports), so a pipeline run on an older report used to have nowhere to write
+    its summary. Seeding here rather than at summary-save time means the row
+    exists even when the digest step is off (``RAG_SUMMARY=0``) or fails.
+    """
+    from app.stores.raw_wichart_report import WichartReportStore
+
+    return WichartReportStore().ensure_detail(int(report_id))
 
 
 # Canonical page separator used to stitch parser output into one page-delimited
@@ -510,6 +528,22 @@ def summarize_markdown(markdown: str, title: str = "", symbol: str = "") -> str:
             )
 
     return "\n\n".join(sections).strip()
+
+
+@task(retries=1, retry_delay_seconds=10)
+def save_summary(report_id: int, summary: str) -> bool:
+    """Store the digest in ``wichart_reports.llm_summary``.
+
+    Overwrites unconditionally: the pipeline is the authority on this column, so
+    a re-run replaces the previous digest (and any hand edit made in the Report
+    detail page). The store seeds the detail row from the raw feed when the
+    report has none yet, so this works on a report that was never synced.
+    """
+    if not (summary or "").strip():
+        return False
+    from app.stores.raw_wichart_report import WichartReportStore
+
+    return WichartReportStore().update_summary(int(report_id), summary)
 
 
 # ---------------------------------------------------------------------------
@@ -841,6 +875,24 @@ def rag_pipeline_flow(
             meta["pdf_url"],
         )
 
+        # Best-effort: a missing detail row must not stop the report being
+        # indexed, and the summary write later seeds it too as a backstop.
+        try:
+            if ensure_detail_row(report_id):
+                logger.info("Detail row ready for report %s", report_id)
+            else:
+                logger.warning(
+                    "No wichart_reports detail row for report %s and none could "
+                    "be seeded from the feed",
+                    report_id,
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "Could not ensure detail row for report %s (%s); continuing.",
+                report_id,
+                exc,
+            )
+
         which_parser = (parser or PDF_PARSER or "marker").lower()
         logger.info(
             "Parsing PDF (%s) for report %s: %s", which_parser, report_id, meta["pdf_url"]
@@ -882,6 +934,31 @@ def rag_pipeline_flow(
                         report_id,
                         exc,
                     )
+                if digest:
+                    # Persisted before the heading check below: even a digest
+                    # that cannot be heading-chunked is still a good summary.
+                    try:
+                        if save_summary(report_id, digest):
+                            logger.info(
+                                "Saved %d-char summary for report %s to "
+                                "wichart_reports.llm_summary",
+                                len(digest),
+                                report_id,
+                            )
+                        else:
+                            logger.warning(
+                                "Summary for report %s was not saved (no detail "
+                                "row could be created)",
+                                report_id,
+                            )
+                    except Exception as exc:  # noqa: BLE001 — indexing matters more
+                        logger.warning(
+                            "Failed to save summary for report %s (%s); "
+                            "continuing with embedding.",
+                            report_id,
+                            exc,
+                        )
+
                 # Headings only have to exist if the digest is long enough to be
                 # split on them; a short digest is indexed whole either way.
                 if (

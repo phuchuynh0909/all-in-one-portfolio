@@ -264,6 +264,48 @@ class WichartReportStore:
             raise
         return pd.DataFrame([record])
 
+    # Detail-row columns the API layers on top of the feed metadata.
+    _ENRICHED_COLUMNS = (
+        "clean_content", "llm_summary", "recommendation", "report_category",
+        "token_count", "status",
+    )
+
+    def get_enrichment(self, report_id: int) -> dict[str, Any] | None:
+        """The enriched detail fields for a report, or None if it has no row.
+
+        Read-only, unlike :meth:`get_detail`, which seeds a row when one is
+        missing: a GET should not write, and a row seeded on the spot would carry
+        nothing but NULLs in these columns anyway.
+        """
+        columns = [reports_table.c[name] for name in self._ENRICHED_COLUMNS]
+        engine = _ensure_table()
+        with engine.connect() as conn:
+            row = conn.execute(
+                select(*columns).where(
+                    reports_table.c.document_id == int(report_id)
+                )
+            ).mappings().first()
+        return dict(row) if row else None
+
+    def ensure_detail(self, report_id: int) -> bool:
+        """Make sure the report has a detail row, seeding it from the feed.
+
+        Returns whether the row exists afterwards — False only when the report is
+        unknown in the raw feed, which is the one case there is nothing to seed
+        from. Cheaper than :meth:`get_detail`, which reads the LONGTEXT columns
+        back just to answer the same question.
+        """
+        engine = _ensure_table()
+        with engine.connect() as conn:
+            exists = conn.execute(
+                select(reports_table.c.document_id).where(
+                    reports_table.c.document_id == int(report_id)
+                )
+            ).first()
+        if exists:
+            return True
+        return self._create_detail_from_raw(report_id) is not None
+
     def create_manual_report(self, report_id: int | None = None, **fields: Any) -> int:
         """Insert a hand-entered row into the raw feed; return its id.
 
