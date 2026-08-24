@@ -86,6 +86,7 @@ async def crawl_reports_via_browser() -> pd.DataFrame:
             {"name": "Báo cáo chiến lược", "selector": "h2.MuiTypography-subtitle2:has-text('chiến lược')"},
             {"name": "Doanh nghiệp", "selector": "h2.MuiTypography-subtitle2:has-text('Doanh nghiệp')"},
             {"name": "Ngành", "selector": "h2.MuiTypography-subtitle2:has-text('Ngành')"},
+            {"name": "Vĩ mô", "selector": "h2.MuiTypography-subtitle2:has-text('Vĩ mô')"},
         ]
 
         result_df = pd.DataFrame()
