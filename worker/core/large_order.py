@@ -173,6 +173,105 @@ def is_large_block(block: dict, min_value: float) -> bool:
     return block["dollar_value"] >= min_value
 
 
+# ---------------------------------------------------------------------------
+# SQL mirrors of the block contract
+#
+# The live path is a ClickHouse materialized view over `ticks`, so the same
+# bucketing / auction rules exist twice: once in Python above (used by the
+# reconciler) and once as SQL below. They are kept adjacent deliberately —
+# `tests/test_large_order_mv.py` asserts the two agree on real ticks, so a
+# change to one without the other fails the suite.
+# ---------------------------------------------------------------------------
+def seconds_of_day(t: dtime) -> int:
+    """Whole seconds since local midnight — the unit the SQL predicate compares."""
+    return t.hour * 3600 + t.minute * 60 + t.second
+
+
+def auction_predicate_sql(
+    windows: list[tuple[dtime, dtime]],
+    tz_name: str,
+    column: str = "sending_time",
+) -> str:
+    """SQL that is true inside any auction window — the mirror of `is_auction_time`.
+
+    Truncates to whole seconds in exchange-local time (``toSecond`` floors,
+    matching ``local.replace(microsecond=0)``) and compares inclusively.
+    Returns ``"0"`` when auction filtering is disabled, so callers can always
+    embed ``NOT (<predicate>)``.
+    """
+    if not windows:
+        return "0"
+    local = f"toTimeZone({column}, '{tz_name}')"
+    sod = f"(toHour({local}) * 3600 + toMinute({local}) * 60 + toSecond({local}))"
+    return " OR ".join(
+        f"({sod} BETWEEN {seconds_of_day(start)} AND {seconds_of_day(end)})"
+        for start, end in windows
+    )
+
+
+def block_aggregation_sql(
+    source: str,
+    window_seconds: int,
+    tz_name: str,
+    auction_windows: list[tuple[dtime, dtime]],
+    extra_where: str = "",
+) -> str:
+    """SELECT that folds ticks in *source* into blocks — mirror of
+    `merge_ticks_into_blocks`.
+
+    Emits the ``large_order_blocks`` column shape. ``vwap`` is deliberately
+    absent: a ratio is not summable, so it cannot be stored as a partial
+    aggregate and is derived at read time instead.
+
+    Note the bucket is floored with ``toStartOfInterval``, which aligns to the
+    unix epoch rather than ``BLOCK_ALIGN_EPOCH``. Those agree only when
+    ``window_seconds`` divides the epoch offset — see
+    `verify_bucket_alignment`.
+    """
+    where = f"NOT ({auction_predicate_sql(auction_windows, tz_name)})"
+    if extra_where:
+        where = f"({where}) AND ({extra_where})"
+    return f"""
+SELECT
+    symbol,
+    bucket AS sending_time,
+    side,
+    total_qty,
+    dollar_value,
+    num_trades
+FROM (
+    SELECT
+        symbol,
+        toDateTime64(
+            toStartOfInterval(sending_time, INTERVAL {window_seconds} SECOND), 6, 'UTC'
+        ) AS bucket,
+        toInt32(side) AS side,
+        sum(toInt64(match_qty)) AS total_qty,
+        sum(toFloat64(match_price) * toFloat64(match_qty)) AS dollar_value,
+        toUInt64(count()) AS num_trades
+    FROM {source}
+    WHERE {where}
+    GROUP BY symbol, bucket, side
+)""".strip()
+
+
+def verify_bucket_alignment(window_seconds: int) -> None:
+    """Raise when SQL bucketing would disagree with `bucket_start`.
+
+    `bucket_start` floors relative to ``BLOCK_ALIGN_EPOCH``; ClickHouse's
+    ``toStartOfInterval`` floors relative to the unix epoch. The two land on the
+    same instants only if the window divides the offset between them, which
+    holds for every sane value (1, 2, 5, 10, 15, 30, 60, …) but not, say, 7.
+    """
+    offset = int(BLOCK_ALIGN_EPOCH.timestamp())
+    if offset % window_seconds != 0:
+        raise ValueError(
+            f"window_seconds={window_seconds} does not divide the "
+            f"BLOCK_ALIGN_EPOCH offset ({offset}); SQL buckets would not match "
+            "bucket_start(). Pick a window that divides it (1, 2, 5, 10, 15, 30, 60)."
+        )
+
+
 def to_block_tuple(block: dict) -> tuple:
     """Convert a block to a `large_orders` insertion tuple.
 

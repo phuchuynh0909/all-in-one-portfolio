@@ -160,21 +160,46 @@ python hawkes_signal_worker.py --symbol VN30F1M --poll 60
 
 ---
 
-### 4. `large_order_ingest.py` — Layer 3 large-order blocks (always-on)
+### 4. `large_order_ingest.py` — Layer 3 large-order blocks (materialized view)
 
-The sparse counterpart to `tick_ingest`. Subscribes to the live tick feed for
-**every symbol in the watchlist** (not just the VN30F contract) and **merges
-trades into fixed-second blocks** per `(symbol, side)`: a single institutional
-order usually arrives as many sub-second fills, so block-merging captures the
-true size that per-tick filtering would miss. Only blocks whose total notional
-`Σ(price × qty)` clears `LARGE_ORDER_MIN_VALUE` (default `1000`) are stored.
+**Not a running worker.** A single institutional order arrives as many
+sub-second fills, so trades are **merged into fixed-second blocks** per
+`(symbol, side)` to capture the true size that per-tick filtering would miss.
+Since `tick_ingest` already writes every watchlist symbol into `ticks`, that
+merge is a ClickHouse **materialized view** — no second feed subscription, no
+event-time watermark, no process to keep alive. `large_order_ingest.py` is now
+the CLI that creates and backfills it.
 
-Bytewax steps: MQTT input (all watchlist topics) → normalize via
-`tick_contract.normalize_tick` → key by `SYMBOL|SIDE` → **drop ATO/ATC auction
-prints** (`is_auction_time`) → `fold_window` (event-time `TumblingWindower`,
-`LARGE_ORDER_WINDOW_SECONDS`, default `1s`) merging ticks into blocks →
-`finalize_block` (vwap = notional/qty) → `op.filter` keep `is_large_block` →
-ClickHouse `large_orders` sink.
+```
+ticks ──(MV: bucket → drop auctions → sum)──▶ large_order_blocks   AggregatingMergeTree
+                                                      │
+                                                      └──▶ large_orders_live   view: + vwap
+```
+
+**Why `AggregatingMergeTree` and not the `large_orders` table.** An MV sees only
+the rows of one INSERT. `tick_ingest` flushes every ~2s while blocks are 1s
+wide, so one bucket's fills routinely arrive across several inserts and the view
+emits a *partial* block each time. `SimpleAggregateFunction(sum, …)` makes those
+partials additive; `ReplacingMergeTree` would overwrite them and silently
+undercount. Verified on real ticks: 60k ticks inserted in 120 batches produced
+15,971 partial rows that merge to exactly the 15,963 blocks Python computes.
+
+**No threshold in the MV.** A partial block can sit below
+`LARGE_ORDER_MIN_VALUE` while the finished block clears it, so filtering must
+happen on read — `large_orders_live` exposes `dollar_value` just as the
+`large_orders` table did.
+
+**Reading it.** `large_orders_live` aggregates on read, which is required rather
+than cosmetic: `AggregatingMergeTree` merges parts in the background, so a plain
+`SELECT` on `large_order_blocks` sees unmerged partials and reports several
+small blocks where there is one. Aggregating in the view cannot be forgotten by
+a caller, unlike `FINAL`.
+
+**Bucket alignment.** `bucket_start` floors against `BLOCK_ALIGN_EPOCH`;
+ClickHouse's `toStartOfInterval` floors against the unix epoch. They agree only
+when `LARGE_ORDER_WINDOW_SECONDS` divides the offset between them — true for 1,
+2, 5, 10, 15, 30, 60 but not e.g. 7. `verify_bucket_alignment` refuses setup
+rather than letting the live and reconciled paths diverge.
 
 > **Auction exclusion** (on by default, `LARGE_ORDER_EXCLUDE_AUCTIONS=1`):
 > ATO/ATC trades clear at a single auction price and would otherwise form one
@@ -183,20 +208,45 @@ ClickHouse `large_orders` sink.
 > `LARGE_ORDER_ATO_WINDOW` (`09:00:00,09:15:00`) or `LARGE_ORDER_ATC_WINDOW`
 > (`14:30:00,15:00:00`) are dropped on both the live and reconciler paths.
 
-Block aggregation lives in `core/large_order.py` (`new_block_acc` / `fold_tick`
-/ `merge_acc` / `finalize_block`) and is shared verbatim with the reconciler.
+Block aggregation lives in `core/large_order.py` **twice**: the Python
+accumulators (`new_block_acc` / `fold_tick` / `merge_acc` / `finalize_block`),
+still used verbatim by the reconciler, and their SQL mirror
+(`auction_predicate_sql` / `block_aggregation_sql`) used by the MV. They are
+adjacent deliberately — `tests/test_large_order_mv.py` pins the SQL shape and
+`--verify` checks both agree on real ticks.
 
-> Event-time windows flush a block only once the watermark passes the bucket
-> end (driven by later trades + `LARGE_ORDER_WAIT_SECONDS`, default `2s`). A
-> quiet symbol's final block may lag until more ticks arrive; the daily
-> reconciler back-fills the authoritative end-of-day blocks regardless.
+> **The MV only sees future inserts.** History needs `--backfill`, which is
+> idempotent per day (it deletes the day before reinserting, because summing
+> partials twice would double every block).
+
+> **Tick re-inserts double-count.** The MV counts rows as they are inserted, so
+> a tick written to `ticks` twice is aggregated twice, even though
+> `ReplacingMergeTree` later collapses the duplicate. `reconciler.py` inserts
+> only genuinely missing ticks, so this is bounded — but with
+> `large_order_reconciler` retired there is no longer a pass that corrects it.
+> `--backfill` for the affected day recomputes it from `ticks` if needed.
+
+> **Equity history starts 2026-08-24**, when `tick_ingest` began ingesting the
+> watchlist. The MV can only aggregate what is in `ticks`, and equity ticks do
+> not exist before that date, so `--backfill` cannot recover it. Futures blocks
+> go back to 2025-05-05. The 41 reconciled days in `large_orders`
+> (2026-05-04 → 2026-06-29, 1,446 symbol-days) are no longer read.
 
 **Run:**
 ```bash
-python -m bytewax.run workers.large_order_ingest:flow
+python workers/large_order_ingest.py --setup      # create table + MV + view
+python workers/large_order_ingest.py --backfill   # aggregate existing ticks
+python workers/large_order_ingest.py --verify     # view vs core.large_order
+python workers/large_order_ingest.py --status
 ```
 
-### 5. `large_order_reconciler.py` — Layer 3 daily back-fill
+### 5. `large_order_reconciler.py` — Layer 3 daily back-fill (**retired**)
+
+> **No longer run.** The materialized view above is the only large-order path;
+> the backend reads `large_orders_live` and nothing reads `large_orders`. The
+> script and its `large_orders` table are kept as a frozen archive of the 41
+> days it reconciled. Nothing schedules it (no compose service, cron or Prefect
+> flow) — it was always manual. Documented below for the archive's provenance.
 
 **Same DNSE GraphQL API as the tick reconciler** (`DNSEClient.fetch_day_ticks`);
 the only difference is scope — it loops over the watchlist symbols instead of
@@ -288,8 +338,8 @@ All workers read from environment variables (or `.env`). Key variables:
 | `INGEST_WAIT_FOR_ASYNC_INSERT` | `0` | tick_ingest |
 | `INGEST_ASYNC_BUSY_TIMEOUT_MS` | `1000` | tick_ingest |
 | `INGEST_ASYNC_MAX_DATA_SIZE` | `10485760` | tick_ingest |
-| `MQTT_HOST` | `datafeed-lts-krx.dnse.com.vn` | isp, price_alerts, large_order_ingest |
-| `MQTT_PORT` | `443` | isp, price_alerts, large_order_ingest |
+| `MQTT_HOST` | `datafeed-lts-krx.dnse.com.vn` | isp, price_alerts |
+| `MQTT_PORT` | `443` | isp, price_alerts |
 | `TICK_SYMBOL` | current VN30F contract | tick_ingest, reconciler |
 | `CLICKHOUSE_HOST` | `localhost` | all |
 | `CLICKHOUSE_PORT` | `9010` (native) / `8123` (HTTP) | all |

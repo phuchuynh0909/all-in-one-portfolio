@@ -137,7 +137,8 @@ scripts/     Backfills and one-off runs (backfill_ticks, run_pipeline, run_audit
 | `ohlc_5m` | Aggregate ticks into 5-minute OHLC bars. |
 | `hawkes_signal_worker` | Hawkes-process signal detection; notifies (Telegram). |
 | `isp` | Intraday statistical-profile alerts. |
-| `large_order_ingest` / `large_order_reconciler` | Detect & reconcile large orders. |
+| `large_order_ingest` | **Not a worker** — CLI that creates/backfills the `large_order_blocks` materialized view over `ticks`. Run manually. |
+| `large_order_reconciler` | **Retired** — the materialized view is now the only large-order path. Kept as a frozen archive; not run. |
 | `price_alerts` | Evaluate user price alerts (reads `backend/portfolio.db`), notify. |
 | `reconciler` | Audit/backfill consistency (Prefect-scheduled). |
 

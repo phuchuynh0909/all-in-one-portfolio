@@ -174,6 +174,84 @@ PARTITION BY toYYYYMMDD(sending_time)
 
 
 # ---------------------------------------------------------------------------
+# Large-order blocks — the *live* path, a materialized view over `ticks`.
+#
+# Why AggregatingMergeTree and not the ReplacingMergeTree `large_orders` table:
+# a materialized view sees only the rows of one INSERT. `tick_ingest` flushes
+# every ~2s while blocks are 1s wide, so one bucket's fills routinely arrive
+# across several inserts and the view emits a *partial* block each time.
+# SimpleAggregateFunction(sum) makes those partials additive; Replacing would
+# overwrite them and silently undercount.
+#
+# For the same reason the threshold is NOT applied here — a partial can sit
+# below LARGE_ORDER_MIN_VALUE while the finished block clears it. Filtering
+# happens at read time, in LARGE_ORDERS_LIVE_VIEW_DDL.
+#
+# `vwap` is absent: a ratio is not summable. It is derived on read.
+# ---------------------------------------------------------------------------
+
+LARGE_ORDER_BLOCKS_TABLE = "large_order_blocks"
+LARGE_ORDER_BLOCKS_MV = "large_order_blocks_mv"
+LARGE_ORDERS_LIVE_VIEW = "large_orders_live"
+
+LARGE_ORDER_BLOCKS_CREATE_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {database}.{table} (
+    symbol LowCardinality(String) CODEC(ZSTD(1)),
+    sending_time DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
+    side Int32 CODEC(T64, ZSTD(1)),
+    total_qty SimpleAggregateFunction(sum, Int64) CODEC(T64, ZSTD(1)),
+    dollar_value SimpleAggregateFunction(sum, Float64) CODEC(ZSTD(1)),
+    num_trades SimpleAggregateFunction(sum, UInt64) CODEC(T64, ZSTD(1))
+)
+ENGINE = AggregatingMergeTree
+ORDER BY (symbol, sending_time, side)
+PARTITION BY toYYYYMM(sending_time)
+"""
+
+# `{select}` is rendered by core.large_order.block_aggregation_sql so the
+# bucketing and auction rules have exactly one definition.
+LARGE_ORDER_BLOCKS_MV_DDL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS {database}.{mv}
+TO {database}.{table}
+AS
+{select}
+"""
+
+# Serving shape, column-compatible with `large_orders` (minus received_at).
+#
+# The GROUP BY is required, not cosmetic: AggregatingMergeTree merges parts in
+# the background, so a plain SELECT would read unmerged partials and report
+# several small blocks where there is one. Aggregating on read is always
+# correct — unlike FINAL, it cannot be forgotten by a caller.
+# The aggregation sits in a subquery because `sum(total_qty) AS total_qty`
+# shadows the column, and deriving vwap from that alias in the same SELECT is
+# rejected as a nested aggregate (ILLEGAL_AGGREGATION). vwap yields 0.0 on zero
+# quantity, matching `core.large_order.finalize_block`.
+LARGE_ORDERS_LIVE_VIEW_DDL = """
+CREATE OR REPLACE VIEW {database}.{view} AS
+SELECT
+    symbol,
+    sending_time,
+    side,
+    if(total_qty = 0, 0.0, dollar_value / total_qty) AS vwap,
+    total_qty,
+    dollar_value,
+    num_trades
+FROM (
+    SELECT
+        symbol,
+        sending_time,
+        side,
+        sum(total_qty) AS total_qty,
+        sum(dollar_value) AS dollar_value,
+        sum(num_trades) AS num_trades
+    FROM {database}.{table}
+    GROUP BY symbol, sending_time, side
+)
+"""
+
+
+# ---------------------------------------------------------------------------
 # Block episodes ("large-execution footprint") — stitched, same-direction
 # candidate bins produced by core.large_execution.detect. One row per episode.
 # A block episode is a *footprint* of sustained/one-sided execution or an
