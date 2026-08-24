@@ -16,8 +16,7 @@ import orjson
 from datetime import timedelta
 from bytewax.dataflow import Dataflow
 import bytewax.operators as op
-from bytewax.clickhouse import operators as ch_operators
-
+from infra import clickhouse_sink
 from infra.dnse_ws_input import DnseTradeSource
 from infra.mock_clickhouse import MockClickHouseSource
 from infra.clickhouse_client import ClickHouseClient
@@ -27,9 +26,7 @@ from core.vn30f_symbol import current_symbol as vn30f_current_symbol
 from core.watchlist import load_symbols
 from model import (
     TICKS_ARROW_SCHEMA,
-    TICKS_CLICKHOUSE_SCHEMA,
     TICKS_CLICKHOUSE_TABLE,
-    TICKS_CLICKHOUSE_ORDER_BY,
     TICKS_CREATE_TABLE_DDL,
 )
 
@@ -96,15 +93,17 @@ def transform_for_ticks(item):
 
 
 def ensure_ticks_table() -> None:
-    """Create `ticks` with the canonical DDL before the sink can auto-create it.
+    """Create `ticks` with the canonical DDL — engine, codecs and partitioning.
 
-    ``bytewax.clickhouse`` only auto-creates a bare
-    ``ReplacingMergeTree() ORDER BY tuple(...)`` — no PARTITION BY and no
-    version column. On a fresh database that silently costs us partition
-    pruning (every query scans the whole table), cheap per-month
-    ``DROP/REPLACE PARTITION``, and de-duplication on restart.
-    ``TICKS_CREATE_TABLE_DDL`` is ``IF NOT EXISTS``, so this is a no-op
-    against an already-correct table.
+    ``infra.clickhouse_sink`` deliberately never creates tables, so this is the
+    only thing standing between a fresh database and an INSERT against a
+    missing table. It matters that it runs: the DDL carries the
+    ``ReplacingMergeTree(received_at)`` version column, ``PARTITION BY
+    toYYYYMM(sending_time)`` and the per-column codecs, none of which can be
+    added by an ``ALTER`` afterwards (the partition key least of all).
+
+    ``TICKS_CREATE_TABLE_DDL`` is ``IF NOT EXISTS``, so this is a no-op against
+    an already-correct table.
     """
     ClickHouseClient().query(
         TICKS_CREATE_TABLE_DDL.format(
@@ -114,8 +113,7 @@ def ensure_ticks_table() -> None:
 
 
 # ---------- Build dataflow ----------
-# Must run before ch_operators.output below, which creates the table itself
-# (with the wrong engine settings) if it is still missing.
+# The sink never creates tables, so this must succeed before any insert.
 ensure_ticks_table()
 
 flow = Dataflow("tick_ingest")
@@ -173,20 +171,29 @@ filtered = op.filter("filter_valid", keyed, lambda item: item[1] is not None)
 # 4) Transform for ClickHouse insertion
 transformed = op.map("transform_for_ticks", filtered, transform_for_ticks)
 
-# 5) Sink to ClickHouse ticks table
-ch_operators.output(
+# 5) Sink to ClickHouse ticks table.
+#    Batching is global (not per symbol) and inserts are async — see
+#    infra.clickhouse_sink and config.IngestTuningConfig.
+print(
+    f"Ingest tuning: batch<={config.ingest.batch_max_size:,} rows or "
+    f"{config.ingest.batch_timeout_seconds}s, async_insert="
+    f"{int(config.ingest.async_insert)}, wait_for_async_insert="
+    f"{int(config.ingest.wait_for_async_insert)}"
+)
+clickhouse_sink.output(
     "ticks",
     transformed,
     pa_schema=TICKS_ARROW_SCHEMA,
     table_name=TICKS_CLICKHOUSE_TABLE,
-    ch_schema=TICKS_CLICKHOUSE_SCHEMA,
-    order_by=TICKS_CLICKHOUSE_ORDER_BY,
     database=config.clickhouse.database,
     host=config.clickhouse.host,
     port=config.clickhouse.port,
     username=config.clickhouse.user,
     password=config.clickhouse.password,
-    timeout=timedelta(seconds=10),
+    secure=config.clickhouse.secure,
+    timeout=timedelta(seconds=config.ingest.batch_timeout_seconds),
+    max_size=config.ingest.batch_max_size,
+    settings=config.ingest.insert_settings(),
 )
 
 if __name__ == "__main__":

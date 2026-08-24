@@ -530,6 +530,69 @@ class BlockEpisodeConfig:
 
 
 @dataclass
+class IngestTuningConfig:
+    """ClickHouse ingestion tuning for the streaming workers.
+
+    Two levers, per ClickHouse's ingestion guidance:
+
+    * **Client-side batching** — ``batch_max_size`` / ``batch_timeout_seconds``
+      feed ``op.collect``. Whichever limit is hit first flushes the block. The
+      size cap is deliberately large so bursts build big blocks; in practice
+      this tape flushes on the timeout, which is why async inserts matter.
+    * **Server-side buffering** — ``async_insert`` lets ClickHouse coalesce our
+      per-flush blocks into larger parts itself, the documented remedy for
+      clients that cannot reach ~100k rows per insert.
+
+    ``wait_for_async_insert=False`` makes inserts fire-and-forget: the server
+    acknowledges before the data is durably written, so a crash can lose the
+    in-flight buffer and insert-time errors never reach the client. That is a
+    deliberate trade for a tick archive that the daily reconciler back-fills
+    from the authoritative API; set ``INGEST_WAIT_FOR_ASYNC_INSERT=1`` if you
+    would rather have durability confirmation than throughput.
+    """
+
+    batch_max_size: int
+    batch_timeout_seconds: float
+    async_insert: bool
+    wait_for_async_insert: bool
+    async_insert_busy_timeout_ms: int
+    async_insert_max_data_size: int
+
+    @classmethod
+    def from_env(cls) -> "IngestTuningConfig":
+        return cls(
+            batch_max_size=int(os.getenv("INGEST_BATCH_MAX_SIZE", "100000")),
+            batch_timeout_seconds=float(
+                os.getenv("INGEST_BATCH_TIMEOUT_SECONDS", "2.0")
+            ),
+            async_insert=_parse_bool(os.getenv("INGEST_ASYNC_INSERT"), default=True),
+            wait_for_async_insert=_parse_bool(
+                os.getenv("INGEST_WAIT_FOR_ASYNC_INSERT"), default=False
+            ),
+            async_insert_busy_timeout_ms=int(
+                os.getenv("INGEST_ASYNC_BUSY_TIMEOUT_MS", "1000")
+            ),
+            async_insert_max_data_size=int(
+                os.getenv("INGEST_ASYNC_MAX_DATA_SIZE", "10485760")
+            ),
+        )
+
+    def insert_settings(self) -> dict:
+        """clickhouse-connect ``settings`` for one INSERT."""
+        # buffer_size=0 streams the Arrow block straight out, as the upstream
+        # bytewax sink does.
+        settings: dict = {"buffer_size": 0}
+        if self.async_insert:
+            settings.update(
+                async_insert=1,
+                wait_for_async_insert=1 if self.wait_for_async_insert else 0,
+                async_insert_busy_timeout_ms=self.async_insert_busy_timeout_ms,
+                async_insert_max_data_size=self.async_insert_max_data_size,
+            )
+        return settings
+
+
+@dataclass
 class Config:
     """Main configuration container."""
 
@@ -545,6 +608,7 @@ class Config:
     hawkes: HawkesConfig
     large_order: LargeOrderConfig
     block_episode: BlockEpisodeConfig
+    ingest: IngestTuningConfig
 
     @classmethod
     def load(cls) -> "Config":
@@ -562,6 +626,7 @@ class Config:
             hawkes=HawkesConfig.from_env(),
             large_order=LargeOrderConfig.from_env(),
             block_episode=BlockEpisodeConfig.from_env(),
+            ingest=IngestTuningConfig.from_env(),
         )
 
 

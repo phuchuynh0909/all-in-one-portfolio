@@ -55,8 +55,8 @@ Three independent workers run concurrently. Together they form a pipeline from r
 |---|---|
 | **Runtime** | Bytewax streaming dataflow |
 | **Source** | DNSE OpenAPI Trade-Extra WebSocket (live) or `MockClickHouseSource` (dev) |
-| **Sink** | ClickHouse `ticks` table via `bytewax.clickhouse` |
-| **Key modules** | `dnse_ws_input.DnseTradeSource`, `watchlist.load_symbols`, `tick_contract.normalize_tick`, `model.TICKS_*` |
+| **Sink** | ClickHouse `ticks` table via `infra.clickhouse_sink` |
+| **Key modules** | `dnse_ws_input.DnseTradeSource`, `watchlist.load_symbols`, `tick_contract.normalize_tick`, `clickhouse_sink.output`, `model.TICKS_*` |
 
 Symbol scope: every symbol in `watchlist.json` **plus** the current VN30F front-month
 contract (`TICK_SYMBOL`, defaulting to `vn30f_symbol.current_symbol()`).
@@ -69,16 +69,42 @@ on shape (`symbol` + `matchPrice` + `time`).
 
 Steps inside the dataflow:
 
-1. `op.input` — subscribe to `plaintext/quotes/krx/mdds/tick/v1/roundlot/symbol/{symbol}` for every ingested symbol
+1. `op.input` — subscribe to `tick_extra.{board}.json` for every ingested symbol
 2. `key_by_symbol_ingest` — parse JSON, drop symbols outside the ingest set, normalise fields via `tick_contract.normalize_tick`, key by symbol
 3. `op.filter` — drop malformed / non-matching rows
 4. `transform_for_ticks` — convert to ClickHouse insertion tuple
-5. `ch_operators.output` — batch-insert into `ticks`
+5. `clickhouse_sink.output` — coalesce onto one batching key, then batch-insert into `ticks`
 
 **Run:**
 ```bash
 python -m bytewax.run tick_ingest:flow
 ```
+
+#### Ingestion tuning
+
+`bytewax.clickhouse` cannot express either of ClickHouse's ingestion levers, so
+the sink lives in `infra/clickhouse_sink.py` instead:
+
+- **Batching.** `op.collect` is *keyed*. A symbol-keyed stream therefore emits
+  one block per symbol per flush — measured at **196 blocks averaging 25.5
+  rows** for 5,000 ticks, since the previous call also left `max_size` at
+  bytewax's default of 50. The sink re-keys every row onto a single batching
+  key, giving **one block of 5,000**. Limits come from
+  `INGEST_BATCH_MAX_SIZE` (100,000) and `INGEST_BATCH_TIMEOUT_SECONDS` (2.0),
+  whichever is hit first.
+- **Async inserts.** The upstream sink hardcodes `settings={"buffer_size": 0}`,
+  so `async_insert` could not be passed — and this deployment's ClickHouse user
+  lacks `ALTER USER`, ruling out a user-level default. `INGEST_ASYNC_INSERT=1`
+  (default) lets the server coalesce our per-flush blocks into larger parts,
+  which is the documented remedy for clients that cannot reach ~100k rows per
+  insert. At this tape's rate the 2-second timeout fires long before the size
+  cap, so this is the lever that actually does the work.
+
+`INGEST_WAIT_FOR_ASYNC_INSERT=0` (default) is fire-and-forget: the server acks
+before the data is durably written, so a crash can lose the in-flight buffer and
+insert-time errors never reach the client. That is a deliberate trade for a tick
+archive the daily reconciler back-fills from the authoritative API — set it to
+`1` to trade throughput for durability confirmation.
 
 ---
 
@@ -256,6 +282,12 @@ All workers read from environment variables (or `.env`). Key variables:
 | `DNSE_WS_URL` | `wss://ws-openapi.dnse.com.vn` | tick_ingest, block_episode_ingest |
 | `DNSE_TRADE_BOARDS` | `G1,G3,G4,G7,T1,T2,T3,T4,T6` | tick_ingest, block_episode_ingest |
 | `DNSE_WS_ENCODING` | `json` | tick_ingest, block_episode_ingest |
+| `INGEST_BATCH_MAX_SIZE` | `100000` | tick_ingest |
+| `INGEST_BATCH_TIMEOUT_SECONDS` | `2.0` | tick_ingest |
+| `INGEST_ASYNC_INSERT` | `1` | tick_ingest |
+| `INGEST_WAIT_FOR_ASYNC_INSERT` | `0` | tick_ingest |
+| `INGEST_ASYNC_BUSY_TIMEOUT_MS` | `1000` | tick_ingest |
+| `INGEST_ASYNC_MAX_DATA_SIZE` | `10485760` | tick_ingest |
 | `MQTT_HOST` | `datafeed-lts-krx.dnse.com.vn` | isp, price_alerts, large_order_ingest |
 | `MQTT_PORT` | `443` | isp, price_alerts, large_order_ingest |
 | `TICK_SYMBOL` | current VN30F contract | tick_ingest, reconciler |
