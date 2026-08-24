@@ -1311,46 +1311,82 @@ def run_analysis_stream(
         final_state: dict = {}
 
         # stream_mode="values": each chunk is the full accumulated state.
-        for state in graph.stream(init_state, **args):
-            if not isinstance(state, dict):
-                continue
-            final_state = state
-            step += 1
-            yield "node", {"node": f"step {step}"}
+        #
+        # The generator is bound to a name rather than iterated inline so that it
+        # can be shut down deliberately. An SSE client that goes away — the Stop
+        # button, a navigation, a dropped connection — closes *this* generator
+        # while it is parked on one of the yields below, and Python raises
+        # GeneratorExit there. Whatever is left of the graph run then has to be
+        # unwound here, in this thread and before the ``finally`` releases the
+        # checkpointer, or the graph's own cleanup writes its last checkpoint
+        # through a closed SQLite connection from whichever thread the garbage
+        # collector happened to run in.
+        stream = graph.stream(init_state, **args)
+        try:
+            for state in stream:
+                if not isinstance(state, dict):
+                    continue
+                final_state = state
+                step += 1
+                yield "node", {"node": f"step {step}"}
 
-            for key, section in _SECTION_KEYS:
-                value = state.get(key)
-                if value and section not in seen_sections:
-                    seen_sections.add(section)
-                    yield "report", {"section": section, "content": str(value)}
+                for key, section in _SECTION_KEYS:
+                    value = state.get(key)
+                    if value and section not in seen_sections:
+                        seen_sections.add(section)
+                        yield "report", {"section": section, "content": str(value)}
 
-            # Bull vs bear transcript. Held until the research manager has ruled:
-            # the transcript grows a turn at a time, and a judge_decision is what
-            # says the debate is over rather than merely partway through.
-            debate = state.get("investment_debate_state")
-            if (
-                isinstance(debate, dict)
-                and debate.get("judge_decision")
-                and "research_debate" not in seen_sections
-            ):
-                seen_sections.add("research_debate")
-                yield "report", {
-                    "section": "research_debate",
-                    "content": _debate_section(debate),
-                }
+                # Bull vs bear transcript. Held until the research manager has
+                # ruled: the transcript grows a turn at a time, and a
+                # judge_decision is what says the debate is over rather than
+                # merely partway through.
+                debate = state.get("investment_debate_state")
+                if (
+                    isinstance(debate, dict)
+                    and debate.get("judge_decision")
+                    and "research_debate" not in seen_sections
+                ):
+                    seen_sections.add("research_debate")
+                    yield "report", {
+                        "section": "research_debate",
+                        "content": _debate_section(debate),
+                    }
 
-            # Aggressive / conservative / neutral transcript, same gating.
-            risk = state.get("risk_debate_state")
-            if (
-                isinstance(risk, dict)
-                and risk.get("judge_decision")
-                and "risk_debate" not in seen_sections
-            ):
-                seen_sections.add("risk_debate")
-                yield "report", {
-                    "section": "risk_debate",
-                    "content": _debate_section(risk),
-                }
+                # Aggressive / conservative / neutral transcript, same gating.
+                risk = state.get("risk_debate_state")
+                if (
+                    isinstance(risk, dict)
+                    and risk.get("judge_decision")
+                    and "risk_debate" not in seen_sections
+                ):
+                    seen_sections.add("risk_debate")
+                    yield "report", {
+                        "section": "risk_debate",
+                        "content": _debate_section(risk),
+                    }
+        except GeneratorExit:
+            # The client hung up. Nothing may be yielded from here — Python turns
+            # that into "generator ignored GeneratorExit" — and nothing needs to
+            # be, since no one is listening. The checkpoint rows are deliberately
+            # left in place (the ``clear_checkpoint`` below is never reached), so
+            # re-running the same ticker and date resumes from here.
+            logger.info(
+                "Analysis of %s abandoned by the client after %d step(s)",
+                symbol,
+                step,
+            )
+            raise
+        finally:
+            # Closing the graph's generator raises GeneratorExit inside LangGraph's
+            # Pregel loop, which hands it to its callbacks before unwinding — hence
+            # a bare "GeneratorExit" traceback in the logs on every cancelled run.
+            # That line is the cancellation being carried out, not a failure. The
+            # close is guarded because it runs while the client's GeneratorExit is
+            # already in flight, and a teardown error must not displace it.
+            close = getattr(stream, "close", None)
+            if close is not None:
+                with contextlib.suppress(Exception):
+                    close()
 
         final_decision = final_state.get("final_trade_decision", "")
         try:

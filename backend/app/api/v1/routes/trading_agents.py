@@ -247,19 +247,28 @@ def analyze_stream(request: AnalyzeRequest) -> StreamingResponse:
             yield _sse("error", {"error": message})
             return
 
+        # Held by name so the runner's cleanup (releasing the checkpointer,
+        # unwinding the graph) is driven from this thread when the client
+        # disconnects, instead of being left to whenever the generator is
+        # collected. A disconnect closes *this* generator at the yield below, so
+        # GeneratorExit — a BaseException — deliberately passes the handler: there
+        # is no longer a client to send an error event to.
+        events = run_analysis_stream(
+            symbol,
+            trade_date,
+            analysts,
+            deep_think_llm=request.deep_think_llm,
+            quick_think_llm=request.quick_think_llm,
+            analyst_llms=analyst_models,
+        )
         try:
-            for event_type, data in run_analysis_stream(
-                symbol,
-                trade_date,
-                analysts,
-                deep_think_llm=request.deep_think_llm,
-                quick_think_llm=request.quick_think_llm,
-                analyst_llms=analyst_models,
-            ):
+            for event_type, data in events:
                 yield _sse(event_type, data)
         except Exception as exc:  # noqa: BLE001
             logger.exception("TradingAgents stream crashed")
             yield _sse("error", {"error": str(exc)})
+        finally:
+            events.close()
 
     return StreamingResponse(
         event_generator(),
