@@ -5,7 +5,7 @@ from datetime import date
 from decimal import Decimal
 
 import pytest
-from sqlalchemy import inspect, text
+from sqlalchemy import func, inspect, select, text
 from sqlalchemy.exc import IntegrityError
 
 from app.db.base import engine
@@ -244,3 +244,258 @@ def test_create_manual_retries_past_an_event_id_collision(db, monkeypatch):
     assert calls["n"] == 2  # first attempt collided, second succeeded
     assert ca.status == "pending"
     assert ca.event_id < 0  # the negative-id scheme still holds after a retry
+
+
+from app.db.models.corporate_action import CorporateAction, CorporateActionApplication
+
+
+def _pending(db, **kw):
+    defaults = dict(
+        symbol="TST", event_id=_pending.counter, name="Thưởng cổ phiếu",
+        action_type="stock", ex_date=date(2026, 6, 1), ratio=Decimal("0.1"),
+        title="Thưởng cổ phiếu tỷ lệ 100:10", source="dnse_history",
+        status="pending",
+    )
+    _pending.counter += 1
+    defaults.update(kw)
+    ca = CorporateAction(**defaults)
+    db.add(ca)
+    db.flush()
+    return ca
+
+
+_pending.counter = 999200001
+
+
+def _lot(db, ticker="TST", qty="1000", price="20", bought="2025-01-01"):
+    return portfolio_service.create_position(db, PositionCreate(
+        ticker=ticker, quantity=Decimal(qty), purchase_price=Decimal(price),
+        purchase_date=date.fromisoformat(bought)))
+
+
+def test_apply_stock_dividend_mutates_the_lot_and_books_a_transaction(db):
+    db.execute(text("DELETE FROM positions"))
+    lot = _lot(db, qty="10900", price="15.46", bought="2026-03-02")
+    ca = _pending(db, ex_date=date(2026, 6, 17))
+
+    result = cas.apply_action(db, ca.id)
+
+    assert result.status == "applied"
+    assert result.total_shares_added == Decimal("1090")
+    refreshed = portfolio_service.get_position(db, lot.id)
+    assert refreshed.quantity == Decimal("11990.000000")
+    assert refreshed.purchase_price == Decimal("14.054545")
+
+    tx = db.execute(text(
+        "SELECT transaction_type, quantity, price FROM transactions WHERE id = :i"
+    ), {"i": result.lots[0].transaction_id}).one()
+    assert tx.transaction_type == "dividend_stock"
+    assert tx.quantity == Decimal("1090.000000")
+    assert tx.price == Decimal("0.000000")
+
+
+def test_apply_cash_dividend_leaves_the_lot_alone(db):
+    db.execute(text("DELETE FROM positions"))
+    lot = _lot(db, qty="1000", price="20")
+    ca = _pending(db, name="Trả cổ tức bằng tiền mặt", action_type="cash",
+                  ratio=None, amount_per_share=Decimal("800"),
+                  tax_withheld_pct=Decimal("0.05"),
+                  title="Trả cổ tức năm 2025 bằng tiền 800 đồng/CP")
+
+    result = cas.apply_action(db, ca.id)
+
+    assert result.total_cash_gross == Decimal("800000")
+    assert result.total_shares_added == Decimal("0")
+    refreshed = portfolio_service.get_position(db, lot.id)
+    assert refreshed.quantity == Decimal("1000.000000")
+    assert refreshed.purchase_price == Decimal("20.000000")
+
+
+def test_apply_skips_lots_bought_after_the_ex_date(db):
+    db.execute(text("DELETE FROM positions"))
+    _lot(db, qty="1000", price="20", bought="2026-01-01")
+    _lot(db, qty="500", price="21", bought="2026-12-01")
+    ca = _pending(db, ex_date=date(2026, 6, 1))
+
+    result = cas.apply_action(db, ca.id)
+
+    assert len(result.lots) == 1
+    assert result.total_shares_added == Decimal("100")
+
+
+def test_apply_twice_is_rejected(db):
+    db.execute(text("DELETE FROM positions"))
+    _lot(db)
+    ca = _pending(db)
+    cas.apply_action(db, ca.id)
+
+    with pytest.raises(ValueError, match="already applied"):
+        cas.apply_action(db, ca.id)
+
+
+def test_apply_an_unparsed_event_is_rejected(db):
+    ca = _pending(db, status="unparsed", ratio=None)
+    with pytest.raises(ValueError, match="unparsed"):
+        cas.apply_action(db, ca.id)
+
+
+def test_apply_with_no_eligible_lot_still_marks_applied(db):
+    db.execute(text("DELETE FROM positions"))
+    ca = _pending(db)
+
+    result = cas.apply_action(db, ca.id)
+
+    assert result.lots == []
+    assert result.status == "applied"
+
+
+def test_unapply_restores_quantity_and_price_and_removes_the_transaction(db):
+    db.execute(text("DELETE FROM positions"))
+    lot = _lot(db, qty="10900", price="15.46", bought="2026-03-02")
+    ca = _pending(db, ex_date=date(2026, 6, 17))
+    applied = cas.apply_action(db, ca.id)
+    tx_id = applied.lots[0].transaction_id
+
+    cas.unapply_action(db, ca.id)
+
+    refreshed = portfolio_service.get_position(db, lot.id)
+    assert refreshed.quantity == Decimal("10900.000000")
+    assert refreshed.purchase_price == Decimal("15.460000")
+    assert db.get(CorporateAction, ca.id).status == "pending"
+    assert db.execute(text("SELECT COUNT(*) FROM transactions WHERE id = :i"),
+                      {"i": tx_id}).scalar() == 0
+    assert db.execute(select(func.count()).select_from(CorporateActionApplication)
+                      .where(CorporateActionApplication.corporate_action_id == ca.id)
+                      ).scalar() == 0
+
+
+def test_unapply_a_pending_event_is_rejected(db):
+    ca = _pending(db)
+    with pytest.raises(ValueError, match="not applied"):
+        cas.unapply_action(db, ca.id)
+
+
+def test_unapplying_the_cash_half_leaves_the_bonus_in_place(db):
+    """A cash dividend never moved the lot, so reversing it must not either."""
+    lot, bonus, cash_ca = _pan_same_day(db)
+    cas.apply_action(db, bonus.id)
+
+    cas.unapply_action(db, cash_ca.id)
+
+    refreshed = portfolio_service.get_position(db, lot.id)
+    assert refreshed.quantity == Decimal("79488.000000")
+    assert refreshed.purchase_price == Decimal("18.891667")
+    assert db.get(CorporateAction, bonus.id).status == "applied"
+    assert db.get(CorporateAction, cash_ca.id).status == "pending"
+
+
+def test_unapplying_the_bonus_half_restores_the_lot(db):
+    lot, bonus, cash_ca = _pan_same_day(db)
+    cas.apply_action(db, bonus.id)
+
+    cas.unapply_action(db, bonus.id)
+
+    refreshed = portfolio_service.get_position(db, lot.id)
+    assert refreshed.quantity == Decimal("66240.000000")
+    assert refreshed.purchase_price == Decimal("22.670000")
+
+
+def test_ignore_marks_the_event_and_touches_nothing(db):
+    db.execute(text("DELETE FROM positions"))
+    lot = _lot(db, qty="1000", price="20")
+    ca = _pending(db)
+
+    assert cas.ignore_action(db, ca.id).status == "ignored"
+    assert portfolio_service.get_position(db, lot.id).quantity == Decimal("1000.000000")
+
+
+def _pan_same_day(db):
+    """PAN 2026-05-29: a bonus and a cash dividend on one ex-date."""
+    db.execute(text("DELETE FROM positions"))
+    lot = _lot(db, ticker="PAN", qty="66240", price="22.67", bought="2026-01-01")
+    bonus = _pending(db, symbol="PAN", ex_date=date(2026, 5, 29), ratio=Decimal("0.2"),
+                     title="Thưởng cổ phiếu tỷ lệ 100:20")
+    cash_ca = _pending(db, symbol="PAN", ex_date=date(2026, 5, 29),
+                       name="Trả cổ tức bằng tiền mặt", action_type="cash", ratio=None,
+                       amount_per_share=Decimal("3000"),
+                       tax_withheld_pct=Decimal("0.05"),
+                       title="Trả cổ tức năm 2026 bằng tiền 3000 đồng/CP")
+    return lot, bonus, cash_ca
+
+
+def test_applying_one_event_settles_its_whole_ex_date_group(db):
+    """The cash must pay on the pre-bonus 66,240, not the post-bonus 79,488.
+
+    Applying the two separately cannot achieve that — the first call has already
+    moved the share count — so one apply covers the ex-date group.
+    """
+    lot, bonus, cash_ca = _pan_same_day(db)
+
+    result = cas.apply_action(db, bonus.id)
+
+    assert sorted(result.applied_action_ids) == sorted([bonus.id, cash_ca.id])
+    assert result.total_cash_gross == Decimal("198720000")
+    assert result.total_shares_added == Decimal("13248")
+    refreshed = portfolio_service.get_position(db, lot.id)
+    assert refreshed.quantity == Decimal("79488.000000")
+    assert refreshed.purchase_price == Decimal("18.891667")
+    assert db.get(CorporateAction, cash_ca.id).status == "applied"
+
+
+def test_applying_the_cash_half_first_gives_the_same_result(db):
+    """Whichever sibling the user clicks, the group settles identically."""
+    lot, bonus, cash_ca = _pan_same_day(db)
+
+    result = cas.apply_action(db, cash_ca.id)
+
+    assert result.total_cash_gross == Decimal("198720000")
+    assert portfolio_service.get_position(db, lot.id).quantity == Decimal("79488.000000")
+    assert db.get(CorporateAction, bonus.id).status == "applied"
+
+
+def test_applying_a_sibling_after_its_group_is_rejected(db):
+    """The group already ran; the second click must not double-apply."""
+    _lot_bonus_cash = _pan_same_day(db)
+    _, bonus, cash_ca = _lot_bonus_cash
+    cas.apply_action(db, bonus.id)
+
+    with pytest.raises(ValueError, match="already applied"):
+        cas.apply_action(db, cash_ca.id)
+
+
+def test_a_different_ex_date_is_not_dragged_into_the_group(db):
+    db.execute(text("DELETE FROM positions"))
+    _lot(db, ticker="TST", qty="1000", price="20", bought="2025-01-01")
+    first = _pending(db, ex_date=date(2026, 6, 1), ratio=Decimal("0.1"))
+    later = _pending(db, ex_date=date(2026, 9, 1), ratio=Decimal("0.1"))
+
+    result = cas.apply_action(db, first.id)
+
+    assert result.applied_action_ids == [first.id]
+    assert db.get(CorporateAction, later.id).status == "pending"
+
+
+def test_another_symbol_on_the_same_ex_date_is_not_dragged_in(db):
+    db.execute(text("DELETE FROM positions"))
+    _lot(db, ticker="TST", qty="1000", price="20", bought="2025-01-01")
+    mine = _pending(db, symbol="TST", ex_date=date(2026, 6, 1), ratio=Decimal("0.1"))
+    other = _pending(db, symbol="OTH", ex_date=date(2026, 6, 1), ratio=Decimal("0.1"))
+
+    result = cas.apply_action(db, mine.id)
+
+    assert result.applied_action_ids == [mine.id]
+    assert db.get(CorporateAction, other.id).status == "pending"
+
+
+def test_an_unparsed_sibling_does_not_block_the_group(db):
+    """It cannot be settled, so it stays for review rather than failing the group."""
+    db.execute(text("DELETE FROM positions"))
+    _lot(db, ticker="TST", qty="1000", price="20", bought="2025-01-01")
+    good = _pending(db, ex_date=date(2026, 6, 1), ratio=Decimal("0.1"))
+    bad = _pending(db, ex_date=date(2026, 6, 1), ratio=None, status="unparsed",
+                   title="Thưởng cổ phiếu nothing here")
+
+    result = cas.apply_action(db, good.id)
+
+    assert result.applied_action_ids == [good.id]
+    assert db.get(CorporateAction, bad.id).status == "unparsed"

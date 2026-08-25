@@ -14,9 +14,10 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.db.models.corporate_action import CorporateAction
-from app.db.models.portfolio import Position
-from app.schemas.corporate_action import ManualDividendCreate
+from app.db.models.corporate_action import CorporateAction, CorporateActionApplication
+from app.db.models.portfolio import Position, Transaction
+from app.schemas.corporate_action import AppliedLot, ApplyResult, ManualDividendCreate
+from app.services.corporate_action_engine import Event, Lot, settle
 from app.services.dnse_corporate_actions import (
     ParsedAction, RawEvent, classify, fetch_history, parse_action,
 )
@@ -181,3 +182,231 @@ def create_manual(db: Session, payload: ManualDividendCreate) -> CorporateAction
         return action
 
     raise last_error
+
+
+def _load(db: Session, corporate_action_id: int) -> CorporateAction:
+    action = db.get(CorporateAction, corporate_action_id)
+    if action is None:
+        raise ValueError(f"Corporate action {corporate_action_id} not found")
+    return action
+
+
+def _ex_date_group(db: Session, action: CorporateAction) -> List[CorporateAction]:
+    """Every pending action sharing this one's symbol and ex-date.
+
+    The group, not the single event, is the unit of application: rule 2 requires
+    them all to settle against one opening quantity, which is impossible once an
+    earlier apply has already moved the share count.
+
+    ``unparsed`` siblings are left out — they carry no amount to settle — and
+    stay pending for manual entry rather than failing the whole group.
+    """
+    return list(db.execute(
+        select(CorporateAction)
+        .where(
+            CorporateAction.symbol == action.symbol,
+            CorporateAction.ex_date == action.ex_date,
+            CorporateAction.status == "pending",
+        )
+        .order_by(CorporateAction.id)
+    ).scalars().all())
+
+
+def _as_event(action: CorporateAction) -> Event:
+    return Event(
+        corporate_action_id=action.id,
+        action_type=action.action_type,
+        ex_date=action.ex_date,
+        amount_per_share=action.amount_per_share,
+        ratio=action.ratio,
+    )
+
+
+def apply_action(db: Session, corporate_action_id: int) -> ApplyResult:
+    """Apply an event — and its ex-date siblings — to every eligible lot.
+
+    All of it lands in one transaction: the lot mutations, the ledger rows, the
+    application records and the status changes commit together or not at all,
+    the same all-or-nothing shape ``close_position`` uses. A half-applied
+    dividend would leave a cost basis nobody can reconstruct.
+
+    An event with no eligible lot is still marked applied. It genuinely has
+    nothing to do, and leaving it pending would mean reviewing it forever.
+    """
+    action = _load(db, corporate_action_id)
+    if action.status == "applied":
+        raise ValueError(f"Corporate action {corporate_action_id} is already applied")
+    if action.status == "unparsed":
+        raise ValueError(
+            f"Corporate action {corporate_action_id} is unparsed; "
+            "record it manually instead of guessing an amount"
+        )
+    if action.status == "ignored":
+        raise ValueError(f"Corporate action {corporate_action_id} is ignored")
+
+    try:
+        group = _ex_date_group(db, action)
+        events = [_as_event(a) for a in group]
+        by_id = {a.id: a for a in group}
+
+        lots = (
+            db.query(Position)
+            .filter(Position.ticker == action.symbol)
+            .with_for_update()
+            .all()
+        )
+
+        applied: List[AppliedLot] = []
+        for position in lots:
+            for s in settle(
+                Lot(position.id, position.quantity, position.purchase_price,
+                    position.purchase_date),
+                events,
+            ):
+                source = by_id[s.corporate_action_id]
+                transaction = Transaction(
+                    ticker=action.symbol,
+                    transaction_type=(
+                        "dividend_cash" if s.action_type == "cash" else "dividend_stock"
+                    ),
+                    quantity=(
+                        s.qty_before if s.action_type == "cash" else s.shares_added
+                    ),
+                    price=(
+                        source.amount_per_share
+                        if s.action_type == "cash" else Decimal(0)
+                    ),
+                    transaction_date=source.ex_date,
+                    fees=Decimal(0),
+                    notes=f"{source.name}: {source.title}",
+                )
+                db.add(transaction)
+                db.flush()
+
+                # Only a stock event moves the lot. A cash settlement reports
+                # ``qty_after == qty_before`` by design, so writing it blindly
+                # would undo a bonus applied earlier in the same group — PAN
+                # 2026-05-29 would land back on 66,240. Where several stock
+                # events share an ex-date they all carry the group's final
+                # quantity, so writing each is idempotent.
+                if s.shares_added > 0:
+                    position.quantity = s.qty_after
+                    position.purchase_price = s.price_after
+
+                db.add(CorporateActionApplication(
+                    corporate_action_id=s.corporate_action_id,
+                    position_id=position.id,
+                    transaction_id=transaction.id,
+                    qty_before=s.qty_before,
+                    qty_after=s.qty_after,
+                    price_before=s.price_before,
+                    price_after=s.price_after,
+                    cash_amount=s.cash_amount,
+                ))
+                applied.append(AppliedLot(
+                    position_id=position.id,
+                    qty_before=s.qty_before, qty_after=s.qty_after,
+                    price_before=s.price_before, price_after=s.price_after,
+                    shares_added=s.shares_added, cash_amount=s.cash_amount,
+                    transaction_id=transaction.id,
+                ))
+
+        applied_at = datetime.now()
+        for member in group:
+            member.status = "applied"
+            member.applied_at = applied_at
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return ApplyResult(
+        corporate_action_id=action.id,
+        applied_action_ids=[a.id for a in group],
+        status="applied",
+        lots=applied,
+        total_shares_added=sum((l.shares_added for l in applied), Decimal(0)),
+        total_cash_gross=sum((l.cash_amount or Decimal(0) for l in applied), Decimal(0)),
+    )
+
+
+def unapply_action(db: Session, corporate_action_id: int) -> ApplyResult:
+    """Reverse an applied event from its own application records.
+
+    The records carry the before values, so this restores them exactly rather
+    than recomputing an inverse — dividing by ``1+ratio`` would not land back on
+    the original after truncation.
+    """
+    action = _load(db, corporate_action_id)
+    if action.status != "applied":
+        raise ValueError(f"Corporate action {corporate_action_id} is not applied")
+
+    try:
+        records = list(db.execute(
+            select(CorporateActionApplication).where(
+                CorporateActionApplication.corporate_action_id == action.id
+            )
+        ).scalars().all())
+
+        reverted: List[AppliedLot] = []
+        for record in records:
+            # A record that did not move the lot (any cash dividend) must not
+            # write to it. Restoring its ``qty_before`` would revert a stock
+            # event from the same ex-date that is still applied.
+            moved = (
+                record.qty_after != record.qty_before
+                or record.price_after != record.price_before
+            )
+            if moved and record.position_id is not None:
+                position = (
+                    db.query(Position)
+                    .filter(Position.id == record.position_id)
+                    .with_for_update()
+                    .first()
+                )
+                if position is not None:
+                    position.quantity = record.qty_before
+                    position.purchase_price = record.price_before
+
+            if record.transaction_id is not None:
+                transaction = db.get(Transaction, record.transaction_id)
+                if transaction is not None:
+                    db.delete(transaction)
+
+            reverted.append(AppliedLot(
+                position_id=record.position_id,
+                qty_before=record.qty_after, qty_after=record.qty_before,
+                price_before=record.price_after, price_after=record.price_before,
+                shares_added=record.qty_before - record.qty_after,
+                cash_amount=record.cash_amount,
+                transaction_id=record.transaction_id,
+            ))
+            db.delete(record)
+
+        action.status = "pending"
+        action.applied_at = None
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return ApplyResult(
+        corporate_action_id=action.id,
+        status="pending",
+        lots=reverted,
+        total_shares_added=Decimal(0),
+        total_cash_gross=Decimal(0),
+    )
+
+
+def ignore_action(db: Session, corporate_action_id: int) -> CorporateAction:
+    """Mark an event as deliberately not applicable. Touches no lot."""
+    action = _load(db, corporate_action_id)
+    if action.status == "applied":
+        raise ValueError(
+            f"Corporate action {corporate_action_id} is applied; unapply it first"
+        )
+    action.status = "ignored"
+    db.commit()
+    db.refresh(action)
+    return action
