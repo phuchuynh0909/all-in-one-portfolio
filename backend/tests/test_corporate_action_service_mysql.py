@@ -114,3 +114,106 @@ def test_transaction_schema_allows_dividend_rows():
         price=Decimal("800"), transaction_date=date(2026, 1, 1),
     )
     assert cash.transaction_type == "dividend_cash"
+
+
+from unittest.mock import Mock
+
+from app.services import corporate_action_service as cas
+from app.services.dnse_corporate_actions import RawEvent
+from app.schemas.corporate_action import ManualDividendCreate
+from app.schemas.portfolio import PositionCreate
+from app.services import portfolio_service
+
+
+def _raw(event_id, name, title, ex, symbol="TST"):
+    return RawEvent(symbol=symbol, event_id=event_id, name=name, title=title,
+                    ex_date=date.fromisoformat(ex), record_date=None,
+                    pay_date=None, url=None)
+
+
+def _fake_fetch(events):
+    return Mock(side_effect=lambda symbol, **kw: [e for e in events if e.symbol == symbol])
+
+
+def test_held_symbols_are_distinct_and_upper(db):
+    db.execute(text("DELETE FROM positions"))
+    for tk in ("aaa", "AAA", "bbb"):
+        portfolio_service.create_position(db, PositionCreate(
+            ticker=tk, quantity=Decimal("10"), purchase_price=Decimal("10"),
+            purchase_date=date(2025, 1, 1)))
+
+    assert cas.held_symbols(db) == ["AAA", "BBB"]
+
+
+def test_sync_inserts_parsed_events_and_flags_the_rest(db, monkeypatch):
+    events = [
+        _raw(999100001, "Trả cổ tức bằng tiền mặt",
+             "Trả cổ tức năm 2025 bằng tiền 800 đồng/CP", "2026-01-10"),
+        _raw(999100002, "Thưởng cổ phiếu", "Thưởng cổ phiếu tỷ lệ 100:10", "2026-02-10"),
+        _raw(999100003, "Thưởng cổ phiếu", "Thưởng cổ phiếu nothing here", "2026-03-10"),
+        _raw(999100004, "Họp ĐHCĐ bất thường", "Họp ĐHCĐ bất thường 2026", "2026-04-10"),
+    ]
+    monkeypatch.setattr(cas, "fetch_history", _fake_fetch(events))
+
+    counts = cas.sync_symbol(db, "TST")
+
+    assert counts == {"inserted": 3, "skipped": 0, "unparsed": 1, "ignored": 1}
+    rows = {r.event_id: r for r in cas.list_actions(db, symbol="TST", status=None)}
+    assert rows[999100001].status == "pending"
+    assert rows[999100001].amount_per_share == Decimal("800.000000")
+    assert rows[999100001].tax_withheld_pct == Decimal("0.0500")
+    assert rows[999100002].ratio == Decimal("0.10000000")
+    assert rows[999100002].tax_withheld_pct is None
+    assert rows[999100003].status == "unparsed"
+    assert rows[999100003].title == "Thưởng cổ phiếu nothing here"
+    assert 999100004 not in rows  # meetings are never stored
+
+
+def test_sync_is_idempotent(db, monkeypatch):
+    events = [_raw(999100010, "Thưởng cổ phiếu", "Thưởng cổ phiếu tỷ lệ 100:10",
+                   "2026-02-10")]
+    monkeypatch.setattr(cas, "fetch_history", _fake_fetch(events))
+
+    first = cas.sync_symbol(db, "TST")
+    second = cas.sync_symbol(db, "TST")
+
+    assert first["inserted"] == 1
+    assert second == {"inserted": 0, "skipped": 1, "unparsed": 0, "ignored": 0}
+    assert len(cas.list_actions(db, symbol="TST", status=None)) == 1
+
+
+def test_list_actions_defaults_to_pending(db, monkeypatch):
+    events = [
+        _raw(999100020, "Thưởng cổ phiếu", "Thưởng cổ phiếu tỷ lệ 100:10", "2026-02-10"),
+        _raw(999100021, "Thưởng cổ phiếu", "Thưởng cổ phiếu broken", "2026-02-11"),
+    ]
+    monkeypatch.setattr(cas, "fetch_history", _fake_fetch(events))
+    cas.sync_symbol(db, "TST")
+
+    pending = cas.list_actions(db, symbol="TST")
+    assert [r.event_id for r in pending] == [999100020]
+
+
+def test_manual_cash_dividend_is_stored_pending(db):
+    ca = cas.create_manual(db, ManualDividendCreate(
+        symbol="tst", action_type="cash", ex_date=date(2026, 5, 1),
+        amount_per_share=Decimal("1200"), notes="from broker statement"))
+
+    assert ca.status == "pending"
+    assert ca.source == "manual"
+    assert ca.symbol == "TST"
+    assert ca.amount_per_share == Decimal("1200.000000")
+    assert ca.tax_withheld_pct == Decimal("0.0500")
+    assert ca.event_id < 0  # synthetic, cannot collide with a DNSE id
+
+
+def test_manual_stock_dividend_requires_a_ratio(db):
+    with pytest.raises(ValueError, match="ratio"):
+        cas.create_manual(db, ManualDividendCreate(
+            symbol="TST", action_type="stock", ex_date=date(2026, 5, 1)))
+
+
+def test_manual_cash_dividend_requires_an_amount(db):
+    with pytest.raises(ValueError, match="amount_per_share"):
+        cas.create_manual(db, ManualDividendCreate(
+            symbol="TST", action_type="cash", ex_date=date(2026, 5, 1)))
