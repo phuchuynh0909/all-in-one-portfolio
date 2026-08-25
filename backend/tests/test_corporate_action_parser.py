@@ -91,3 +91,73 @@ def test_unparseable_returns_none(name, title):
 
 def test_ignored_name_returns_none_even_with_parseable_body():
     assert parse_action("Họp ĐHCĐ bất thường", "Thưởng cổ phiếu tỷ lệ 100:8") is None
+
+
+from datetime import date
+from unittest.mock import Mock
+
+from app.services.dnse_corporate_actions import RawEvent, fetch_history
+
+
+def _page(rows, total):
+    r = Mock()
+    r.raise_for_status = Mock()
+    r.json = Mock(return_value={"corporateActions": rows, "total": total,
+                                "page": 1, "pageSize": 100})
+    return r
+
+
+def _row(sym="VCG", eid=1, name=CASH, ex="2026-07-14T00:00:00+07:00", pay=""):
+    return {"symbol": sym, "eventId": eid, "name": name,
+            "title": "Trả cổ tức năm 2025 bằng tiền 800 đồng/CP",
+            "exRightsDate": ex, "recordDate": "2026-07-15T00:00:00+07:00",
+            "actionDate": pay, "url": "https://example.test/x"}
+
+
+def test_fetch_history_parses_rows_and_dates():
+    session = Mock()
+    session.get = Mock(return_value=_page([_row()], 1))
+
+    events = fetch_history("VCG", session=session)
+
+    assert events == [RawEvent(
+        symbol="VCG", event_id=1, name=CASH,
+        title="Trả cổ tức năm 2025 bằng tiền 800 đồng/CP",
+        ex_date=date(2026, 7, 14), record_date=date(2026, 7, 15),
+        pay_date=None, url="https://example.test/x",
+    )]
+
+
+def test_fetch_history_follows_pages_until_total_reached():
+    session = Mock()
+    session.get = Mock(side_effect=[
+        _page([_row(eid=1), _row(eid=2)], 3),
+        _page([_row(eid=3)], 3),
+    ])
+
+    events = fetch_history("VCG", session=session, page_size=2)
+
+    assert [e.event_id for e in events] == [1, 2, 3]
+    assert session.get.call_count == 2
+
+
+def test_fetch_history_sorts_oldest_first():
+    session = Mock()
+    session.get = Mock(return_value=_page([
+        _row(eid=2, ex="2026-07-14T00:00:00+07:00"),
+        _row(eid=1, ex="2025-05-27T00:00:00+07:00"),
+    ], 2))
+
+    events = fetch_history("VCG", session=session)
+
+    assert [e.event_id for e in events] == [1, 2]
+
+
+def test_fetch_history_stops_on_empty_page_even_if_total_lies():
+    session = Mock()
+    session.get = Mock(side_effect=[_page([_row()], 99), _page([], 99)])
+
+    events = fetch_history("VCG", session=session, page_size=1)
+
+    assert len(events) == 1
+    assert session.get.call_count == 2

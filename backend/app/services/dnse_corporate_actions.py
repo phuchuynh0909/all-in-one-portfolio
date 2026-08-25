@@ -13,7 +13,11 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
+from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
+from typing import Any, Optional
+
+import requests
 
 # DNSE ``name`` -> our action_type. Anything absent here is not price-affecting.
 ACTION_NAMES: dict[str, str] = {
@@ -108,3 +112,86 @@ def parse_action(name: str, title: str) -> ParsedAction | None:
     if ratio is None:
         return None
     return ParsedAction("stock", None, ratio)
+
+
+# Complete per-symbol history. Past events only — the sibling calendar endpoint
+# holds upcoming ones but ignores every filter parameter, so it is unused here.
+# Because this endpoint is complete, a missed poll self-heals on the next run.
+HISTORY_URL = "https://api-bo.dnse.com.vn/senses-api/corporate-actions/history"
+
+_TIMEOUT = 30
+
+
+@dataclass(frozen=True)
+class RawEvent:
+    """One DNSE row, dates decoded, text untouched."""
+
+    symbol: str
+    event_id: int
+    name: str
+    title: str
+    ex_date: date | None
+    record_date: date | None
+    pay_date: date | None
+    url: str | None
+
+
+def _as_date(value: Any) -> date | None:
+    """``2026-07-14T00:00:00+07:00`` -> date. Empty string -> None."""
+    if not value:
+        return None
+    try:
+        return datetime.fromisoformat(str(value)).date()
+    except ValueError:
+        return None
+
+
+def fetch_history(
+    symbol: str,
+    *,
+    session: Optional[Any] = None,
+    page_size: int = 100,
+) -> list[RawEvent]:
+    """Every past corporate action for ``symbol``, oldest ``ex_date`` first.
+
+    ``session`` takes anything with a ``requests``-style ``get`` so tests need
+    no network. Paging stops on an empty page as well as on ``total``, because
+    trusting ``total`` alone would loop forever if it ever overreported.
+    """
+    http = session or requests
+    collected: list[RawEvent] = []
+    page = 1
+
+    while True:
+        response = http.get(
+            HISTORY_URL,
+            params={"symbol": symbol, "pageSize": page_size, "page": page},
+            headers={"Accept": "application/json"},
+            timeout=_TIMEOUT,
+        )
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload.get("corporateActions") or []
+        if not rows:
+            break
+
+        for row in rows:
+            collected.append(
+                RawEvent(
+                    symbol=(row.get("symbol") or symbol).strip().upper(),
+                    event_id=int(row["eventId"]),
+                    name=(row.get("name") or "").strip(),
+                    title=(row.get("title") or "").strip(),
+                    ex_date=_as_date(row.get("exRightsDate")),
+                    record_date=_as_date(row.get("recordDate")),
+                    pay_date=_as_date(row.get("actionDate")),
+                    url=row.get("url") or None,
+                )
+            )
+
+        if len(collected) >= int(payload.get("total") or 0):
+            break
+        page += 1
+
+    collected.sort(key=lambda e: (e.ex_date or date.min, e.event_id))
+    return collected
