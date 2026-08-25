@@ -83,7 +83,10 @@ class _TunedClickHousePartition(StatelessSinkPartition):
         self.client.insert_arrow(self._target, table, settings=self._settings)
         self._rows += table.num_rows
         self._inserts += 1
-        if self._inserts % 100 == 0:
+        # The first insert is logged as well as every hundredth: on a quiet tape
+        # a 100-insert threshold alone can take an hour to trip, which is
+        # indistinguishable from a sink that is not writing at all.
+        if self._inserts == 1 or self._inserts % 100 == 0:
             log.info(
                 "%s: %d inserts, %d rows (avg %.0f rows/insert)",
                 self._target, self._inserts, self._rows, self._rows / self._inserts,

@@ -20,7 +20,13 @@ import bytewax.operators as op
 from infra.mqtt_input import MqttSource
 from infra.mock_clickhouse import MockClickHouseSource
 from config import config
+from infra.logging_setup import setup_logging
 from infra.telegram_notifier import AlertNotification, send_alert_sync
+
+# Same reason as tick_ingest: bytewax.run owns __main__, so without this the
+# infra modules' log.info() calls never reach the container's stdout. This
+# worker's own status lines use print(), which is why they show regardless.
+setup_logging()
 
 
 @dataclass

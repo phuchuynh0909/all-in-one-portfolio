@@ -29,6 +29,13 @@ MQTT tick source used, so ``workers.tick_ingest`` and
 Boards ``G1`` (even lot) and ``G4`` (odd lot) carry both stocks and derivatives,
 so a single subscription covers equities and the VN30F futures contract.
 
+The endpoint is **only served during the exchange session**. Out of hours
+``ws-openapi.dnse.com.vn`` stops resolving altogether, so a connect attempt fails
+in ``getaddrinfo`` with ``[Errno -2] Name or service not known`` rather than
+anything protocol-shaped. The reconnect loop therefore consults the clock first
+and sleeps until the next open (see ``seconds_until_session``), which is what
+keeps an overnight worker from logging a DNS failure every few seconds.
+
 Credentials come from ``DNSE_API_KEY`` / ``DNSE_API_SECRET`` and are never logged.
 """
 
@@ -39,11 +46,14 @@ import hmac
 import json
 import logging
 import queue
+import socket
 import ssl
 import threading
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from datetime import time as dtime
 from typing import List, Optional
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import certifi
 import orjson
@@ -60,6 +70,31 @@ DEFAULT_BASE_URL = "wss://ws-openapi.dnse.com.vn"
 # Continuous-trading + odd/negotiated boards DNSE exposes for KRX equities.
 DEFAULT_BOARDS = ["G1", "G3", "G4", "G7", "T1", "T2", "T3", "T4", "T6"]
 TRADE_EXTRA_MSG_TYPE = "te"
+
+# The window the socket is attempted in, wide enough to cover the pre-open
+# auction through the post-close run-off rather than only continuous trading —
+# the point is to skip the hours when the host is simply gone, not to police the
+# session. Vietnam observes no DST, so a wall-clock window needs no offset care.
+DEFAULT_SESSION_TZ = "Asia/Ho_Chi_Minh"
+DEFAULT_SESSION_START = "08:00"
+DEFAULT_SESSION_END = "16:00"
+
+# Longest single sleep while waiting for the next open. ``Event.wait`` returns as
+# soon as ``close()`` sets the flag, so this is not about shutdown latency: it
+# keeps a wrong clock, a stale tz database, or a host resumed from suspend from
+# parking the thread for hours, and leaves a heartbeat in the log.
+_SESSION_WAIT_CAP = 900.0
+
+# In-session reconnect backoff. Starts where the old fixed delay was and doubles
+# up to the cap, so a mid-session blip still recovers in seconds while a broken
+# endpoint is retried once a minute instead of twelve times.
+_BACKOFF_START = 5.0
+_BACKOFF_CAP = 60.0
+
+# A connection that stayed up this long is evidence the endpoint is healthy, so
+# the next hiccup starts from the short delay again instead of inheriting a
+# backoff grown during an earlier outage.
+_HEALTHY_SESSION_SECS = 60.0
 
 # DNSE Trade-Extra reports the *aggressor* side as "BUY"/"SELL" (chiều mua/bán
 # chủ động). Map it to this repo's canonical side ints so normalize_tick
@@ -99,6 +134,79 @@ def build_auth_message(api_key: str, api_secret: str, now: Optional[float] = Non
         "timestamp": timestamp,
         "nonce": nonce,
     }
+
+
+def parse_hhmm(text: str, fallback: str) -> dtime:
+    """Parse an ``"HH:MM"`` session bound, falling back rather than crashing.
+
+    A typo in ``DNSE_WS_SESSION_START`` should not stop the ingester from
+    starting — losing the gate costs some log noise out of hours, while raising
+    here would cost the whole feed.
+    """
+    try:
+        hour, _, minute = str(text).strip().partition(":")
+        return dtime(int(hour), int(minute or 0))
+    except (TypeError, ValueError):
+        log.warning("Unparseable session time %r; using %s", text, fallback)
+        hour, _, minute = fallback.partition(":")
+        return dtime(int(hour), int(minute))
+
+
+def seconds_until_session(
+    now: datetime,
+    start: dtime,
+    end: dtime,
+    weekdays_only: bool = True,
+) -> float:
+    """Seconds until the exchange session opens; ``0.0`` when it is open now.
+
+    ``now`` must be timezone-aware **in the exchange's own zone**, so that the
+    comparison is against Ho Chi Minh wall-clock time however the container is
+    configured. Weekends count as closed.
+
+    Public holidays are deliberately not modelled — the exchange publishes no
+    machine-readable calendar this worker can follow — so a holiday still opens
+    the socket and lands in the ordinary in-session backoff. That is the safe
+    direction to be wrong in: a missed session costs ticks that cannot be
+    recovered from a stream, while an extra connect attempt costs one log line.
+    """
+    open_at = now.replace(
+        hour=start.hour, minute=start.minute, second=0, microsecond=0
+    )
+    close_at = now.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
+    trading_day = not weekdays_only or now.weekday() < 5
+
+    if trading_day and open_at <= now < close_at:
+        return 0.0
+
+    # Either side of today's window: before it, today's open still counts;
+    # after it (or on a weekend), scan forward for the next trading day.
+    candidate = open_at if trading_day and now < open_at else open_at + timedelta(days=1)
+    for _ in range(8):
+        if not weekdays_only or candidate.weekday() < 5:
+            return max(0.0, (candidate - now).total_seconds())
+        candidate += timedelta(days=1)
+    return _SESSION_WAIT_CAP  # unreachable: a week always contains a weekday
+
+
+def _is_endpoint_unreachable(exc: BaseException) -> bool:
+    """True when the failure is "the endpoint isn't there", not a protocol error.
+
+    Out of hours the feed's host stops resolving, which surfaces as
+    ``socket.gaierror: [Errno -2] Name or service not known`` from
+    ``getaddrinfo`` — nothing to do with the auth or subscribe framing, and not
+    worth a warning. ``websockets`` wraps connect failures in its own exception,
+    so the ``__cause__``/``__context__`` chain is walked rather than just the
+    outermost type.
+    """
+    seen: set[int] = set()
+    cur: Optional[BaseException] = exc
+    while cur is not None and id(cur) not in seen:
+        seen.add(id(cur))
+        if isinstance(cur, (socket.gaierror, ConnectionError, TimeoutError)):
+            return True
+        cur = cur.__cause__ or cur.__context__
+    return False
 
 
 def trade_extra_channel(board: str, encoding: str = "json") -> str:
@@ -195,6 +303,10 @@ class DnseTradePartition(StatelessSourcePartition):
         encoding: str = "msgpack",
         batch_size: int = 1024,
         connect_timeout: float = 60.0,
+        session_tz: str = DEFAULT_SESSION_TZ,
+        session_start: str = DEFAULT_SESSION_START,
+        session_end: str = DEFAULT_SESSION_END,
+        session_gate: bool = True,
         start: bool = True,
     ):
         if not api_key or not api_secret:
@@ -209,6 +321,22 @@ class DnseTradePartition(StatelessSourcePartition):
         self._encoding = encoding
         self._batch_size = batch_size
         self._connect_timeout = connect_timeout
+
+        # An unknown zone name would otherwise take the whole worker down at
+        # build time; the gate is a convenience, so it degrades to the exchange
+        # default instead.
+        self._session_gate = session_gate
+        try:
+            self._session_tz = ZoneInfo(session_tz)
+        except (ZoneInfoNotFoundError, ValueError):
+            log.warning(
+                "Unknown session timezone %r; using %s",
+                session_tz,
+                DEFAULT_SESSION_TZ,
+            )
+            self._session_tz = ZoneInfo(DEFAULT_SESSION_TZ)
+        self._session_start = parse_hhmm(session_start, DEFAULT_SESSION_START)
+        self._session_end = parse_hhmm(session_end, DEFAULT_SESSION_END)
 
         self._q: "queue.Queue[tuple]" = queue.Queue()
         self._stop = threading.Event()
@@ -237,16 +365,85 @@ class DnseTradePartition(StatelessSourcePartition):
                 self._q.put((topic, orjson.dumps(payload)))
         return None
 
+    # -- session gate --------------------------------------------------------
+    def seconds_until_open(self) -> float:
+        """Seconds until the feed is expected to be served; 0.0 when it is now."""
+        if not self._session_gate:
+            return 0.0
+        return seconds_until_session(
+            datetime.now(self._session_tz), self._session_start, self._session_end
+        )
+
     # -- async client (background thread) ------------------------------------
     def _run(self) -> None:
+        """Reconnect loop: wait for the session, connect, back off on failure.
+
+        The clock is consulted before every attempt because DNSE only serves the
+        endpoint during the session — out of hours its hostname does not resolve,
+        and a loop that reconnected regardless spent each night emitting
+        ``[Errno -2] Name or service not known`` every five seconds. Waiting for
+        the next open turns that into one line per evening.
+        """
         import asyncio
 
+        backoff = _BACKOFF_START
+        announced_closed = False
+
         while not self._stop.is_set():
+            wait = self.seconds_until_open()
+            if wait > 0.0:
+                # Logged once per closure, not once per sleep: the cap below can
+                # wake this loop many times before the market opens.
+                if not announced_closed:
+                    log.info(
+                        "Outside the %s-%s %s session; DNSE serves the feed only "
+                        "during it, so waiting %.1fh for the next open",
+                        self._session_start.strftime("%H:%M"),
+                        self._session_end.strftime("%H:%M"),
+                        self._session_tz.key,
+                        wait / 3600.0,
+                    )
+                    announced_closed = True
+                self._stop.wait(min(wait, _SESSION_WAIT_CAP))
+                continue
+
+            announced_closed = False
+            started = time.monotonic()
             try:
                 asyncio.run(self._consume())
             except Exception as exc:  # noqa: BLE001 - keep the thread alive
-                log.warning("DNSE WS session ended (%s); reconnecting in 5s", exc)
-                self._stop.wait(5.0)
+                if _is_endpoint_unreachable(exc):
+                    # In-session and unreachable: a blip, or the session ended
+                    # early / a holiday the gate cannot know about. Expected
+                    # enough not to warrant a warning.
+                    log.info(
+                        "DNSE WS endpoint unreachable (%s); retrying in %.0fs",
+                        exc,
+                        backoff,
+                    )
+                else:
+                    # Auth rejected, bad frame, TLS — something that will not fix
+                    # itself, and worth surfacing.
+                    log.warning(
+                        "DNSE WS session ended (%s); reconnecting in %.0fs",
+                        exc,
+                        backoff,
+                    )
+            else:
+                # A clean return means the server hung up (it does so at the end
+                # of the session and across its own restarts) or close() was
+                # called. Not an error, but reconnecting without a pause would
+                # spin, so it waits like a failure does.
+                if not self._stop.is_set():
+                    log.info(
+                        "DNSE WS closed by the server; reconnecting in %.0fs", backoff
+                    )
+
+            if time.monotonic() - started >= _HEALTHY_SESSION_SECS:
+                backoff = _BACKOFF_START
+            if not self._stop.is_set():
+                self._stop.wait(backoff)
+            backoff = min(backoff * 2.0, _BACKOFF_CAP)
 
     async def _consume(self) -> None:
         url = f"{self._base_url}/v1/stream?encoding={self._encoding}"
@@ -313,6 +510,10 @@ class DnseTradeSource(DynamicSource):
         base_url: str = DEFAULT_BASE_URL,
         encoding: str = "json",
         batch_size: int = 1024,
+        session_tz: str = DEFAULT_SESSION_TZ,
+        session_start: str = DEFAULT_SESSION_START,
+        session_end: str = DEFAULT_SESSION_END,
+        session_gate: bool = True,
     ):
         self._api_key = api_key
         self._api_secret = api_secret
@@ -321,6 +522,10 @@ class DnseTradeSource(DynamicSource):
         self._base_url = base_url
         self._encoding = encoding
         self._batch_size = batch_size
+        self._session_tz = session_tz
+        self._session_start = session_start
+        self._session_end = session_end
+        self._session_gate = session_gate
 
     def build(self, _step_id: str, _worker_index: int, _worker_count: int):
         return DnseTradePartition(
@@ -331,4 +536,8 @@ class DnseTradeSource(DynamicSource):
             base_url=self._base_url,
             encoding=self._encoding,
             batch_size=self._batch_size,
+            session_tz=self._session_tz,
+            session_start=self._session_start,
+            session_end=self._session_end,
+            session_gate=self._session_gate,
         )

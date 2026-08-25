@@ -16,6 +16,7 @@ import orjson
 from datetime import timedelta
 from bytewax.dataflow import Dataflow
 import bytewax.operators as op
+from infra.logging_setup import setup_logging
 from infra import clickhouse_sink
 from infra.dnse_ws_input import DnseTradeSource
 from infra.mock_clickhouse import MockClickHouseSource
@@ -29,6 +30,12 @@ from model import (
     TICKS_CLICKHOUSE_TABLE,
     TICKS_CREATE_TABLE_DDL,
 )
+
+# At import, because `python -m bytewax.run` owns __main__: without a root
+# handler the infra modules' log.info() calls (the sink's insert counters, the
+# DNSE session gate) are dropped by logging.lastResort, which passes WARNING and
+# above only.
+setup_logging()
 
 
 def _ingest_symbols() -> list[str]:
@@ -159,6 +166,10 @@ else:
             boards=config.dnse_ws.boards,
             base_url=config.dnse_ws.base_url,
             encoding=config.dnse_ws.encoding,
+            session_tz=config.dnse_ws.session_tz,
+            session_start=config.dnse_ws.session_start,
+            session_end=config.dnse_ws.session_end,
+            session_gate=config.dnse_ws.session_gate,
         ),
     )
 

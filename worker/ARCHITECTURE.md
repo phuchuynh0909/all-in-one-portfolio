@@ -67,6 +67,15 @@ stocks and derivatives, so one subscription covers equities and the futures
 contract. Trade-Extra payloads have no message-type field — trades are matched
 on shape (`symbol` + `matchPrice` + `time`).
 
+Session gate: DNSE serves this endpoint only while the exchange is open — out of
+hours `ws-openapi.dnse.com.vn` does not resolve, so a connect attempt fails in
+`getaddrinfo` (`[Errno -2] Name or service not known`). The reconnect loop checks
+the clock first and sleeps until the next open, defaulting to a 08:00–16:00 ICT
+window on weekdays (`DNSE_WS_SESSION_START` / `_END` / `_TZ`, or
+`DNSE_WS_SESSION_GATE=0` to dial around the clock). In-session failures retry
+with exponential backoff, 5s doubling to 60s. Public holidays are not modelled:
+the socket is attempted and falls back to that backoff.
+
 Steps inside the dataflow:
 
 1. `op.input` — subscribe to `tick_extra.{board}.json` for every ingested symbol
@@ -406,11 +415,16 @@ All workers read from environment variables (or `.env`). Key variables:
 
 | Variable | Default | Used by |
 |---|---|---|
+| `LOG_LEVEL` | `INFO` | all workers |
 | `DNSE_API_KEY` | — (required) | tick_ingest |
 | `DNSE_API_SECRET` | — (required) | tick_ingest |
 | `DNSE_WS_URL` | `wss://ws-openapi.dnse.com.vn` | tick_ingest |
 | `DNSE_TRADE_BOARDS` | `G1,G3,G4,G7,T1,T2,T3,T4,T6` | tick_ingest |
 | `DNSE_WS_ENCODING` | `json` | tick_ingest |
+| `DNSE_WS_SESSION_START` | `08:00` | tick_ingest |
+| `DNSE_WS_SESSION_END` | `16:00` | tick_ingest |
+| `DNSE_WS_SESSION_TZ` | `EXCHANGE_TZ` / `Asia/Ho_Chi_Minh` | tick_ingest |
+| `DNSE_WS_SESSION_GATE` | `1` | tick_ingest |
 | `INGEST_BATCH_MAX_SIZE` | `100000` | tick_ingest |
 | `INGEST_BATCH_TIMEOUT_SECONDS` | `2.0` | tick_ingest |
 | `INGEST_ASYNC_INSERT` | `1` | tick_ingest |
