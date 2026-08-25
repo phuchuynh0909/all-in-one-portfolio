@@ -82,6 +82,30 @@ def test_events_sharing_an_ex_date_settle_off_one_opening_quantity():
     assert results[10].price_after == Decimal("18.891667")
 
 
+def test_cash_settlement_preserves_opening_quantity_in_mixed_groups():
+    """Regression: cash records must report the ex-date's opening quantity, not diluted.
+
+    In a same-ex-date group, a stock bonus changes the lot but the cash dividend
+    must report the pre-bonus quantity. A consumer gating on `shares_added > 0`
+    relies on this contract to avoid reverting the bonus (PAN: stock cid 10 sets
+    qty to 79,488, then cash cid 11 must *not* revert it to 66,240 by reporting
+    the post-dilution qty).
+    """
+    events = [stock("2026-05-29", "0.2", cid=10), cash("2026-05-29", "3000", cid=11)]
+    results = {s.corporate_action_id: s for s in settle(lot(qty="66240", price="22.67"), events)}
+
+    # Stock event should have moved the quantity
+    assert results[10].qty_after == Decimal("79488")
+    # But cash event must report the opening quantity, not the diluted one
+    assert results[11].qty_before == Decimal("66240")
+    assert results[11].qty_after == Decimal("66240")
+    assert results[11].price_before == Decimal("22.67")
+    assert results[11].price_after == Decimal("22.67")
+    assert results[11].shares_added == Decimal("0")
+    # Explicit contract: stock and cash report different quantities
+    assert results[10].qty_after != results[11].qty_after
+
+
 def test_same_ex_date_order_of_events_does_not_matter():
     a = [stock("2026-05-29", "0.2", cid=10), cash("2026-05-29", "3000", cid=11)]
     b = [cash("2026-05-29", "3000", cid=11), stock("2026-05-29", "0.2", cid=10)]
