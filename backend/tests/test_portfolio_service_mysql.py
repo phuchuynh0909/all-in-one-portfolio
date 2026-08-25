@@ -267,3 +267,105 @@ def test_investment_amount_upsert_keeps_one_row(db):
     assert current.amount == Decimal("2500.75")
     assert current.date == date(2025, 6, 1)
     assert db.execute(text("SELECT COUNT(*) FROM investment_amounts")).scalar() == 1
+
+
+def test_dividend_income_is_gross_and_net(db):
+    from app.db.models.corporate_action import (
+        CorporateAction, CorporateActionApplication,
+    )
+
+    db.execute(text("DELETE FROM corporate_action_application"))
+    db.execute(text("DELETE FROM corporate_action"))
+
+    ca = CorporateAction(
+        symbol="TST", event_id=999300001, name="Trả cổ tức bằng tiền mặt",
+        action_type="cash", ex_date=date(2026, 1, 1),
+        amount_per_share=Decimal("800"), tax_withheld_pct=Decimal("0.05"),
+        title="Trả cổ tức năm 2025 bằng tiền 800 đồng/CP",
+        source="dnse_history", status="applied",
+    )
+    db.add(ca)
+    db.flush()
+    db.add(CorporateActionApplication(
+        corporate_action_id=ca.id, position_id=None, transaction_id=None,
+        qty_before=Decimal("1000"), qty_after=Decimal("1000"),
+        price_before=Decimal("20"), price_after=Decimal("20"),
+        cash_amount=Decimal("800000"),
+    ))
+    db.flush()
+
+    gross, net = svc._calculate_dividend_income(db)
+    assert gross == Decimal("800000")
+    assert net == Decimal("760000")
+
+
+def test_dividend_income_is_zero_with_no_events(db):
+    db.execute(text("DELETE FROM corporate_action_application"))
+    assert svc._calculate_dividend_income(db) == (Decimal(0), Decimal(0))
+
+
+def test_stock_events_contribute_no_income(db):
+    from app.db.models.corporate_action import (
+        CorporateAction, CorporateActionApplication,
+    )
+
+    db.execute(text("DELETE FROM corporate_action_application"))
+    db.execute(text("DELETE FROM corporate_action"))
+    ca = CorporateAction(
+        symbol="TST", event_id=999300002, name="Thưởng cổ phiếu",
+        action_type="stock", ex_date=date(2026, 1, 1), ratio=Decimal("0.1"),
+        title="Thưởng cổ phiếu tỷ lệ 100:10", source="dnse_history",
+        status="applied",
+    )
+    db.add(ca)
+    db.flush()
+    db.add(CorporateActionApplication(
+        corporate_action_id=ca.id, position_id=None, transaction_id=None,
+        qty_before=Decimal("1000"), qty_after=Decimal("1100"),
+        price_before=Decimal("20"), price_after=Decimal("18.181818"),
+        cash_amount=None,
+    ))
+    db.flush()
+
+    assert svc._calculate_dividend_income(db) == (Decimal(0), Decimal(0))
+
+
+async def test_summary_adds_net_dividend_income_to_realized_pl(db, monkeypatch):
+    from app.db.models.corporate_action import (
+        CorporateAction, CorporateActionApplication,
+    )
+
+    async def fake_price(ticker: str):
+        return Decimal("30")
+
+    monkeypatch.setattr(svc, "get_current_price", fake_price)
+    db.execute(text("DELETE FROM corporate_action_application"))
+    db.execute(text("DELETE FROM corporate_action"))
+    db.execute(text("DELETE FROM transactions"))
+    db.execute(text("DELETE FROM positions"))
+
+    svc.create_position(db, _position(ticker="SUM", qty="10", price="20"))
+    ca = CorporateAction(
+        symbol="SUM", event_id=999300003, name="Trả cổ tức bằng tiền mặt",
+        action_type="cash", ex_date=date(2026, 1, 1),
+        amount_per_share=Decimal("800"), tax_withheld_pct=Decimal("0.05"),
+        title="Trả cổ tức năm 2025 bằng tiền 800 đồng/CP",
+        source="dnse_history", status="applied",
+    )
+    db.add(ca)
+    db.flush()
+    db.add(CorporateActionApplication(
+        corporate_action_id=ca.id, position_id=None, transaction_id=None,
+        qty_before=Decimal("10"), qty_after=Decimal("10"),
+        price_before=Decimal("20"), price_after=Decimal("20"),
+        cash_amount=Decimal("8000"),
+    ))
+    db.flush()
+
+    summary = await svc.get_portfolio_summary(db)
+
+    assert summary.total_dividend_income_gross == Decimal("8000")
+    assert summary.total_dividend_income == Decimal("7600")
+    # no sells, so realized P/L is the dividend income alone
+    assert summary.total_realized_pl == Decimal("7600")
+    assert summary.total_value == Decimal("300")

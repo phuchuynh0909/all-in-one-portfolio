@@ -278,15 +278,18 @@ async def get_portfolio_summary(db: Session) -> PortfolioSummary:
         else ZERO
     )
 
-    # Calculate realized P/L from sell transactions
-    total_realized_pl = _calculate_realized_pl(db)
+    # Realized P/L = trading gains on sells + net dividend income
+    trading_pl = _calculate_realized_pl(db)
+    dividend_gross, dividend_net = _calculate_dividend_income(db)
 
     return PortfolioSummary(
         total_value=total_value,
         total_invested=total_invested,
         total_profit_loss=total_profit_loss,
         total_profit_loss_pct=total_profit_loss_pct,
-        total_realized_pl=total_realized_pl,
+        total_realized_pl=trading_pl + dividend_net,
+        total_dividend_income_gross=dividend_gross,
+        total_dividend_income=dividend_net,
         positions=positions,
     )
 
@@ -342,3 +345,35 @@ def _load_price_history(db: Session, tickers: list[str], start: date, end: date)
     df = pd.DataFrame(data, index=dates)
     df.index.name = "date"
     return df
+
+
+def _calculate_dividend_income(db: Session) -> tuple[Decimal, Decimal]:
+    """Cash dividend income, ``(gross, net)``.
+
+    Read from the application ledger rather than the ``transactions`` rows,
+    because the withholding rate lives on the event and the ledger already
+    holds the gross amount per lot. Stock events carry a NULL ``cash_amount``
+    and so contribute nothing.
+    """
+    from app.db.models.corporate_action import (
+        CorporateAction,
+        CorporateActionApplication,
+    )
+
+    cash = func.coalesce(CorporateActionApplication.cash_amount, 0)
+    kept = 1 - func.coalesce(CorporateAction.tax_withheld_pct, 0)
+
+    row = db.execute(
+        select(
+            func.coalesce(func.sum(cash), 0),
+            func.coalesce(func.sum(cash * kept), 0),
+        )
+        .select_from(CorporateActionApplication)
+        .join(
+            CorporateAction,
+            CorporateAction.id == CorporateActionApplication.corporate_action_id,
+        )
+        .where(CorporateAction.action_type == "cash")
+    ).one()
+
+    return Decimal(str(row[0])), Decimal(str(row[1]))

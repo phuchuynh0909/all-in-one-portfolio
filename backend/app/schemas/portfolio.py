@@ -75,6 +75,9 @@ class PortfolioSummary(BaseModel):
     total_profit_loss: Decimal
     total_profit_loss_pct: Decimal
     total_realized_pl: Decimal
+    # Gross is the factual record; the headline figure is net of withholding.
+    total_dividend_income_gross: Decimal = Decimal(0)
+    total_dividend_income: Decimal = Decimal(0)
     positions: List[Position]
 
     class Config:
