@@ -21,7 +21,10 @@ class Transaction(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     ticker = Column(String(10), nullable=False)
-    transaction_type = Column(Enum("buy", "sell"), nullable=False)
+    # Four values, matching the widened ENUM from migration d5a91c3e7b20.
+    transaction_type = Column(
+        Enum("buy", "sell", "dividend_cash", "dividend_stock"), nullable=False
+    )
     quantity = Column(DECIMAL(15, 6), nullable=False)
     price = Column(DECIMAL(15, 6), nullable=False)
     close_price = Column(DECIMAL(15, 6))

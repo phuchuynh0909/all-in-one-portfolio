@@ -6,6 +6,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import inspect, text
+from sqlalchemy.exc import IntegrityError
 
 from app.db.base import engine
 from app.db.models.corporate_action import CorporateAction, CorporateActionApplication
@@ -39,8 +40,36 @@ def test_event_id_is_unique(db):
         db.flush()
 
     add(999000001)
-    with pytest.raises(Exception):
+    with pytest.raises(IntegrityError):
         add(999000001)
+
+
+def test_application_position_pair_is_unique(db):
+    """One event applied to one lot twice must be rejected.
+
+    Idempotency depends on this: a later re-run of the same corporate action
+    against the same position must not be allowed to double-apply.
+    """
+    ca = CorporateAction(
+        symbol="TST", event_id=999000003, name="Thưởng cổ phiếu",
+        action_type="stock", ex_date=date(2026, 1, 1),
+        ratio=Decimal("0.1"), title="Thưởng cổ phiếu tỷ lệ 100:10",
+        source="dnse_history", status="pending",
+    )
+    db.add(ca)
+    db.flush()
+
+    def add_application():
+        db.add(CorporateActionApplication(
+            corporate_action_id=ca.id, position_id=42,
+            qty_before=Decimal("100"), qty_after=Decimal("110"),
+            price_before=Decimal("20"), price_after=Decimal("18.18"),
+        ))
+        db.flush()
+
+    add_application()
+    with pytest.raises(IntegrityError):
+        add_application()
 
 
 def test_vietnamese_title_round_trips(db):

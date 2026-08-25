@@ -79,13 +79,17 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
+    # corporate_action_application.transaction_id -> transactions.id is a plain
+    # (RESTRICT) FK, so it must be dropped before the DELETE below or a
+    # dividend row referenced by an application row blocks the delete.
+    #
     # Dividend rows must go before the type can narrow, or the ALTER truncates
     # them to an empty string.
+    op.drop_table('corporate_action_application')
     op.execute("DELETE FROM transactions "
                "WHERE transaction_type IN ('dividend_cash', 'dividend_stock')")
     op.alter_column('transactions', 'transaction_type',
                     existing_type=_NEW_TYPES, type_=_OLD_TYPES, nullable=False)
-    op.drop_table('corporate_action_application')
     op.drop_index('ix_corporate_action_ex_date', table_name='corporate_action')
     op.drop_index('ix_corporate_action_symbol', table_name='corporate_action')
     op.drop_table('corporate_action')
