@@ -10,6 +10,7 @@ Base = declarative_base()
 # Import all models to ensure they're registered with SQLAlchemy
 from app.db.models.portfolio import Position, Transaction, InvestmentAmount
 from app.db.models.market import Sector, StockSymbol
+from app.db.models.corporate_action import CorporateAction, CorporateActionApplication
 
 
 def _engine_kwargs(url: str) -> dict:

@@ -28,9 +28,11 @@ class Position(PositionBase):
 
 class TransactionBase(BaseModel):
     ticker: str = Field(..., min_length=1, max_length=10)
-    transaction_type: str = Field(..., pattern="^(buy|sell)$")
+    # dividend rows share this ledger; the ENUM migration is inert without them
+    transaction_type: str = Field(..., pattern="^(buy|sell|dividend_cash|dividend_stock)$")
     quantity: Decimal = Field(..., gt=0)
-    price: Decimal = Field(..., gt=0)
+    # ge=0: a stock-dividend row books shares at zero cost
+    price: Decimal = Field(..., ge=0)
     close_price: Optional[Decimal] = None
     transaction_date: date
     fees: Optional[Decimal] = Field(default=0, ge=0)

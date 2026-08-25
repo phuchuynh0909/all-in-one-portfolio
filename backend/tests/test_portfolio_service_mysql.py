@@ -15,52 +15,16 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
 
-from app.core.settings import settings
-from app.db.base import SessionLocal, engine
 from app.schemas.portfolio import (
     ClosePositionRequest,
     PositionCreate,
     TransactionCreate,
 )
 from app.services import portfolio_service as svc
+from tests.conftest import requires_mysql
 
-
-def _mysql_available() -> bool:
-    if not settings.database_url.startswith("mysql"):
-        return False
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        return True
-    except OperationalError:
-        return False
-
-
-pytestmark = pytest.mark.skipif(
-    not _mysql_available(),
-    reason=f"MySQL not reachable at {settings.mysql_host}:{settings.mysql_port}",
-)
-
-
-@pytest.fixture
-def db():
-    """A session whose work is always rolled back.
-
-    The service functions call ``commit()``, which would normally end the outer
-    transaction. Binding the session to a connection that already has one open
-    nests them, so the outer ``rollback()`` still discards everything.
-    """
-    connection = engine.connect()
-    outer = connection.begin()
-    session = SessionLocal(bind=connection, join_transaction_mode="create_savepoint")
-    try:
-        yield session
-    finally:
-        session.close()
-        outer.rollback()
-        connection.close()
+pytestmark = requires_mysql
 
 
 def _position(ticker: str = "TST", qty: str = "100", price: str = "25.5") -> PositionCreate:
