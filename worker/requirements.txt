@@ -30,6 +30,11 @@ paho-mqtt>=1.6.0
 # pytest>=7.4.0
 # pytest-asyncio>=0.21.0
 vectorbt>=0.26.2
-# DNSE OpenAPI market-data WebSocket source (infra/dnse_ws_input.py)
+# DNSE OpenAPI market-data WebSocket source (infra/dnse_ws_input.py).
+# The source drives the official SDK vendored at worker/dnse_sdk — the source
+# itself is committed here, but its third-party dependencies are installed from
+# this file. msgpack backs DNSE_WS_ENCODING=msgpack; urllib3 (used by the SDK's
+# REST client) arrives with requests above.
 websockets>=12.0
 certifi>=2024.0.0
+msgpack>=1.0.0

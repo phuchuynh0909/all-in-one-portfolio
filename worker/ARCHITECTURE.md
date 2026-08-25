@@ -17,7 +17,7 @@ Three independent workers run concurrently. Together they form a pipeline from r
                             ▼
                  ClickHouse — table: ticks
                  (symbol, sending_time, match_price,
-                  match_qty, side, received_at)
+                  match_qty, side, received_at, board_id)
                  ENGINE = ReplacingMergeTree
                             │
               ┌─────────────┴──────────────────────┐
@@ -56,16 +56,104 @@ Three independent workers run concurrently. Together they form a pipeline from r
 | **Runtime** | Bytewax streaming dataflow |
 | **Source** | DNSE OpenAPI Trade-Extra WebSocket (live) or `MockClickHouseSource` (dev) |
 | **Sink** | ClickHouse `ticks` table via `infra.clickhouse_sink` |
-| **Key modules** | `dnse_ws_input.DnseTradeSource`, `watchlist.load_symbols`, `tick_contract.normalize_tick`, `clickhouse_sink.output`, `model.TICKS_*` |
+| **Key modules** | `dnse_ws_input.DnseTradeSource`, `dnse_sdk` (vendored `TradingClient`), `watchlist.load_symbols`, `tick_contract.normalize_tick`, `clickhouse_sink.output`, `model.TICKS_*` |
 
 Symbol scope: every symbol in `watchlist.json` **plus** the current VN30F front-month
 contract (`TICK_SYMBOL`, defaulting to `vn30f_symbol.current_symbol()`).
 
 Feed: `wss://ws-openapi.dnse.com.vn/v1/stream`, HMAC-SHA256 auth, channel
-`tick_extra.{board}.json`. Boards `G1` (even lot) and `G4` (odd lot) carry both
-stocks and derivatives, so one subscription covers equities and the futures
-contract. Trade-Extra payloads have no message-type field — trades are matched
-on shape (`symbol` + `matchPrice` + `time`).
+`tick_extra.{board}.{json|msgpack}`. Boards `G1` (even lot) and `G4` (odd lot)
+carry both stocks and derivatives, so one subscription covers equities and the
+futures contract.
+
+SDK: transport, TLS, the welcome/auth handshake, message encoding and the
+heartbeat come from the **official DNSE SDK vendored at `worker/dnse_sdk`**
+(`dnse.websocket.TradingClient`). It sits inside the worker tree alongside
+`core/`, `infra/` and `workers/`, so it is an ordinary top-level `import
+dnse_sdk` off the root that is already on the path (`PYTHONPATH=/app`) — no
+`sys.path` shim, no bind mount, and it is copied into the image by the normal
+build. Only its third-party deps (`msgpack`) need `worker/requirements.txt`.
+`worker/dnse_sdk/dnse/**` is upstream code and mostly stays that way — local
+*policy* belongs in `_TradeExtraClient` below. It carries two deliberate
+patches, each marked `LOCAL PATCH` in the source. Both are fixed there rather
+than worked around in the Bytewax module because both govern every channel, not
+just Trade-Extra:
+
+- **`websocket/client.py` — message routing.** Upstream routed market data
+  solely on the abbreviated `T` tag, with no `else` on the chain, so a frame
+  without that tag was discarded silently. DNSE's Trade-Extra payload has no
+  `T`, which made a tick_extra subscription look healthy while delivering
+  nothing. `_infer_msg_type` now recovers the type from the frame's shape,
+  using the client's subscription set to break ties, and unroutable frames are
+  logged once per shape.
+- **`websocket/models.py` — `parse_timestamp`.** Upstream built every datetime
+  with a bare `fromtimestamp()` and formatted with `strftime`, dropping the
+  offset: protobuf and unix inputs came out in the *host's* zone, a string came
+  out in whichever zone it arrived in, and the three were indistinguishable
+  once returned. It now resolves to UTC and keeps the offset, refuses to guess
+  a naive timestamp, and still accepts a naive calendar date under `date_only`
+  (`finalTradeDate`, `listingDate`).
+
+**Re-vendoring the SDK reverts both**; the tests under "Vendored-SDK patch" in
+`test_dnse_ws_input.py` are what will tell you.
+
+`_TradeExtraClient` subclasses `TradingClient` for one behaviour that is a
+choice for this ingester rather than an SDK defect (both upstream defects — `T`
+routing and timestamps — are fixed in the SDK itself, above):
+
+- **Session-gated reconnection.** The SDK's own reconnect is disabled
+  (`auto_reconnect=False`, `max_retries=1`) so the loop below owns the pacing.
+
+Subscribing goes through the SDK's `subscribe_trade_extra`, one frame per board,
+driven from the configured board list — its `board_id=None` default means the
+SDK's *nine* boards, not ours, so the loop has to be on this side. An earlier
+version batched every board into a single frame; that assumed `channels` accepts
+multiple entries, which no upstream path exercises (every SDK subscribe sends
+exactly one, and `subscribe_trade_extra` fans its nine-board default out as nine
+separate frames). A gateway reading only `channels[0]` would have left the rest
+silently unsubscribed — indistinguishable from quiet boards, which is the very
+failure the batching was meant to avoid.
+
+Frames are consumed as raw dicts rather than through `TradeExtra` — the
+partition reshapes them for `normalize_tick` and logs unrecognised control
+frames, and the model renames `matchPrice`→`price`. A fit question, not a
+correctness one: `TradeExtra.time` is trustworthy since the timestamp patch.
+
+Encoding: `DNSE_WS_ENCODING` accepts `json` (default) or `msgpack`, both decoded
+by the SDK codec; anything else is refused at construction. A frame the codec
+cannot read is counted and skipped rather than ending the session.
+
+Stall detection: `_consume` polls `is_stalled()` every 10s and drops the session
+when it trips, so `_run` rebuilds it. This wraps rather than uses the SDK's
+`is_healthy` because that fails any connection with no `pong` inside twice the
+heartbeat, and DNSE only documents the *server* pinging us — if the gateway
+never answers our heartbeat, raw `is_healthy` would read false 50s into every
+connection and turn the reconnect loop into a storm. The pong clock is therefore
+only trusted once a pong has actually been seen; before that the check falls
+back to socket and auth state. It is polled on a slow cadence because
+`is_healthy` logs a warning every time it finds a stale clock.
+
+Boards: each trade carries the order book it matched on, stored in the
+`board_id` column (`G1` main continuous, `G4`/`G7` odd lot, `T1`..`T6`
+put-through). Only `TICK_ALLOWED_BOARDS` (default `G1`) is written — put-through
+prices are negotiated off-book and would distort any bar or VWAP built from
+`ticks`; the backend excludes them for the same reason
+(`dnse_client.BOARD_PRIORITY`).
+
+`DNSE_TRADE_BOARDS` decides what arrives and `TICK_ALLOWED_BOARDS` what is
+stored; both now default to `G1` alone, so nothing is received and then thrown
+away before insert. G1 carries derivatives as well as equities, so the VN30F
+contract still arrives on it. The subscription *can* be widened independently
+(`DNSE_TRADE_BOARDS=G1,G4,G7,…`, the full valid set being
+`dnse_ws_input.ALL_BOARDS`), and the source logs the per-board split of
+everything that arrives — which is the only place boards that get filtered out
+are still visible. Note the default lives in **two** places that must agree,
+`config.DEFAULT_TRADE_BOARDS` and `dnse_ws_input.DEFAULT_BOARDS`: config is what
+`tick_ingest` actually passes, so changing only the module constant looks
+effective and is not. A test asserts they match. Rows written
+before this column exists read back as `''` (board unknown, not `G1`), so
+`WHERE board_id = 'G1'` excludes history: use `board_id IN ('', 'G1')` to span
+the migration.
 
 Session gate: DNSE serves this endpoint only while the exchange is open — out of
 hours `ws-openapi.dnse.com.vn` does not resolve, so a connect attempt fails in
@@ -419,8 +507,9 @@ All workers read from environment variables (or `.env`). Key variables:
 | `DNSE_API_KEY` | — (required) | tick_ingest |
 | `DNSE_API_SECRET` | — (required) | tick_ingest |
 | `DNSE_WS_URL` | `wss://ws-openapi.dnse.com.vn` | tick_ingest |
-| `DNSE_TRADE_BOARDS` | `G1,G3,G4,G7,T1,T2,T3,T4,T6` | tick_ingest |
-| `DNSE_WS_ENCODING` | `json` | tick_ingest |
+| `DNSE_TRADE_BOARDS` | `G1` | tick_ingest (subscribed; `ALL_BOARDS` is the full set) |
+| `TICK_ALLOWED_BOARDS` | `G1` | tick_ingest (stored; empty = all) |
+| `DNSE_WS_ENCODING` | `json` | tick_ingest (`json` or `msgpack`) |
 | `DNSE_WS_SESSION_START` | `08:00` | tick_ingest |
 | `DNSE_WS_SESSION_END` | `16:00` | tick_ingest |
 | `DNSE_WS_SESSION_TZ` | `EXCHANGE_TZ` / `Asia/Ho_Chi_Minh` | tick_ingest |

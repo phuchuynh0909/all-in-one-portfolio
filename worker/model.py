@@ -65,6 +65,11 @@ TICKS_ARROW_SCHEMA = pa.schema(
         # Non-nullable: use 0 as sentinel (0=unknown, 1=BUY, 2=SELL).
         pa.field("side", pa.int32(), nullable=False),
         pa.field("received_at", pa.timestamp("us", tz="UTC"), nullable=False),
+        # Order book the trade matched on — "G1" main continuous, "G4"/"G7"
+        # odd lot, "T1".."T6" put-through. Empty for rows written before this
+        # column existed. Last in the tuple because it was added last; see
+        # TICKS_ADD_BOARD_ID_DDL.
+        pa.field("board_id", pa.string(), nullable=False),
     ]
 )
 
@@ -76,6 +81,7 @@ TICKS_CLICKHOUSE_SCHEMA = """
     match_qty Int64 CODEC(T64, ZSTD(1)),
     side Int32 CODEC(T64, ZSTD(1)),
     received_at DateTime64(6, 'UTC') CODEC(ZSTD(1)),
+    board_id LowCardinality(String) DEFAULT '' CODEC(ZSTD(1)),
 """
 
 TICKS_CLICKHOUSE_TABLE = "ticks"
@@ -110,11 +116,27 @@ CREATE TABLE IF NOT EXISTS {database}.{table} (
     match_qty Int64 CODEC(T64, ZSTD(1)),
     side Int32 CODEC(T64, ZSTD(1)),
     -- Insert-ordered, so unsorted within a part: delta codecs backfire.
-    received_at DateTime64(6, 'UTC') CODEC(ZSTD(1))
+    received_at DateTime64(6, 'UTC') CODEC(ZSTD(1)),
+    -- Which order book matched the trade: "G1" main continuous, "G4"/"G7" odd
+    -- lot, "T1".."T6" put-through (negotiated off-book). A handful of distinct
+    -- values, so LowCardinality costs almost nothing. Deliberately NOT in the
+    -- ORDER BY: that tuple is the ReplacingMergeTree dedup key, and the codecs
+    -- above were benchmarked against this exact sort order.
+    board_id LowCardinality(String) DEFAULT '' CODEC(ZSTD(1))
 )
 ENGINE = ReplacingMergeTree(received_at)
 ORDER BY (symbol, sending_time, match_price, match_qty, side)
 PARTITION BY toYYYYMM(sending_time)
+"""
+
+# CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so an
+# established deployment needs this as well to gain the column. Adding a column
+# is metadata-only in ClickHouse — no rewrite of existing parts — and existing
+# rows read back as '' (board unknown, not "G1": they were ingested from a
+# nine-board subscription).
+TICKS_ADD_BOARD_ID_DDL = """
+ALTER TABLE {database}.{table}
+ADD COLUMN IF NOT EXISTS board_id LowCardinality(String) DEFAULT '' CODEC(ZSTD(1))
 """
 
 # ---------------------------------------------------------------------------

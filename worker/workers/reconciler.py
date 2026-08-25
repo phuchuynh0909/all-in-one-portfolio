@@ -193,6 +193,7 @@ def patch_ticks(
         ch_client.client.insert(
             table,
             insert_rows,
+            # Must match to_clickhouse_tuple's order, board_id last.
             column_names=[
                 "symbol",
                 "sending_time",
@@ -200,6 +201,7 @@ def patch_ticks(
                 "match_qty",
                 "side",
                 "received_at",
+                "board_id",
             ],
         )
         log.info("Patched %d rows into %s", len(insert_rows), table)

@@ -8,6 +8,11 @@ canonical ticks into the ClickHouse ``ticks`` table.
 Boards ``G1`` (even lot) and ``G4`` (odd lot) carry both stocks and
 derivatives, so one subscription covers equities and the futures contract.
 
+Each trade records the board it matched on in the ``board_id`` column, and only
+``TICK_ALLOWED_BOARDS`` (default ``G1``, the main continuous book) is stored:
+odd-lot and put-through prints are priced outside continuous trading and would
+distort bars built from this table.
+
 Run:
     python -m bytewax.run workers.tick_ingest:flow
 """
@@ -26,6 +31,7 @@ from core.tick_contract import normalize_tick, to_clickhouse_tuple
 from core.vn30f_symbol import current_symbol as vn30f_current_symbol
 from core.watchlist import load_symbols
 from model import (
+    TICKS_ADD_BOARD_ID_DDL,
     TICKS_ARROW_SCHEMA,
     TICKS_CLICKHOUSE_TABLE,
     TICKS_CREATE_TABLE_DDL,
@@ -60,6 +66,13 @@ ALLOWED_SYMBOLS = (
     set(config.mock.symbols) if config.mock.enabled else set(INGEST_SYMBOLS)
 )
 
+# Which order books may be stored. "G1" is the main continuous book — the one
+# daily bars track; "G4"/"G7" are odd lot and "T1".."T6" put-through, whose
+# prices are negotiated off-book and would distort any bar or VWAP built from
+# the ticks table. The subscription (DNSE_TRADE_BOARDS) can stay wide; this is
+# what decides what gets written. Empty value = store every board.
+ALLOWED_BOARDS = config.tick_sync.allowed_boards
+
 
 def key_by_symbol_ingest(item):
     """Parse a source message and normalize tick data.
@@ -87,6 +100,14 @@ def key_by_symbol_ingest(item):
     if normalized is None:
         return (raw_symbol, None)
 
+    # Board filter after normalization, so both spellings of boardId
+    # ("G1" from the WebSocket, "BOARD_ID_G1" from the legacy/mock payloads)
+    # are compared in the same form. A row whose board is unknown ('') is kept:
+    # dropping it would silently discard any feed that omits the field.
+    board = normalized["board_id"]
+    if ALLOWED_BOARDS and board and board not in ALLOWED_BOARDS:
+        return (raw_symbol, None)
+
     return (normalized["symbol"], normalized)
 
 
@@ -110,10 +131,19 @@ def ensure_ticks_table() -> None:
     added by an ``ALTER`` afterwards (the partition key least of all).
 
     ``TICKS_CREATE_TABLE_DDL`` is ``IF NOT EXISTS``, so this is a no-op against
-    an already-correct table.
+    an already-correct table — which is exactly why the ``board_id`` migration
+    has to follow it: a table created before that column existed would never
+    gain it from the CREATE alone. ``ADD COLUMN IF NOT EXISTS`` is
+    metadata-only and idempotent, so it costs nothing on every start.
     """
-    ClickHouseClient().query(
+    client = ClickHouseClient()
+    client.query(
         TICKS_CREATE_TABLE_DDL.format(
+            database=config.clickhouse.database, table=TICKS_CLICKHOUSE_TABLE
+        )
+    )
+    client.query(
+        TICKS_ADD_BOARD_ID_DDL.format(
             database=config.clickhouse.database, table=TICKS_CLICKHOUSE_TABLE
         )
     )

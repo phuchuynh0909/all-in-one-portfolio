@@ -22,6 +22,8 @@ NOW = dt.datetime(2026, 8, 21, 3, 0, 0, tzinfo=dt.timezone.utc)
 
 
 def _rows(n: int, n_symbols: int):
+    # Column order matches TICKS_ARROW_SCHEMA / to_clickhouse_tuple, board_id
+    # last.
     return [
         (
             f"SYM{i % n_symbols:03d}",
@@ -30,6 +32,7 @@ def _rows(n: int, n_symbols: int):
             (i % 7) + 1,
             (i % 2) + 1,
             NOW,
+            "G1",
         )
         for i in range(n)
     ]

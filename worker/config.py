@@ -11,6 +11,14 @@ from core.vn30f_symbol import current_symbol as _current_vn30f_symbol
 # Load environment variables from .env file
 load_dotenv()
 
+# Boards subscribed on the DNSE Trade-Extra feed when DNSE_TRADE_BOARDS is unset.
+# Kept here rather than imported from ``infra.dnse_ws_input`` so that config stays
+# free of the websocket SDK, which every other worker would then pay for on
+# import. ``test_dnse_ws_input`` asserts the two defaults agree — they silently
+# drifted once, and the module constant looked authoritative while this one was
+# what production actually used.
+DEFAULT_TRADE_BOARDS = ("G1",)
+
 
 def _parse_bool(raw: str | None, default: bool = False) -> bool:
     """Parse a bool-like environment variable."""
@@ -146,8 +154,10 @@ class DnseWsConfig:
     """DNSE OpenAPI market-data WebSocket source configuration.
 
     Used by ``infra.dnse_ws_input.DnseTradeSource`` to consume the Trade-Extra
-    feed at ``wss://ws-openapi.dnse.com.vn/v1/stream`` (HMAC auth, JSON frames).
-    Credentials come from ``DNSE_API_KEY`` / ``DNSE_API_SECRET``.
+    feed at ``wss://ws-openapi.dnse.com.vn/v1/stream``, which it reaches through
+    the official SDK vendored at ``worker/dnse_sdk`` (HMAC auth; ``json`` or
+    ``msgpack`` frames per ``DNSE_WS_ENCODING``). Credentials come from
+    ``DNSE_API_KEY`` / ``DNSE_API_SECRET``.
 
     The session window bounds the hours the socket is attempted in. DNSE serves
     the endpoint only while the exchange is open — out of hours the hostname
@@ -169,11 +179,15 @@ class DnseWsConfig:
 
     @classmethod
     def from_env(cls) -> "DnseWsConfig":
+        # Defaults to G1 alone — the board TICK_ALLOWED_BOARDS stores anyway, so
+        # a wider subscription only bought the per-board diagnostic. G1 carries
+        # derivatives as well as equities, so the VN30F contract still arrives.
+        # Widen with DNSE_TRADE_BOARDS (dnse_ws_input.ALL_BOARDS is the full set).
         boards_str = os.getenv("DNSE_TRADE_BOARDS", "")
         boards = (
             [b.strip() for b in boards_str.split(",") if b.strip()]
             if boards_str
-            else ["G1", "G3", "G4", "G7", "T1", "T2", "T3", "T4", "T6"]
+            else list(DEFAULT_TRADE_BOARDS)
         )
         return cls(
             base_url=os.getenv("DNSE_WS_URL", "wss://ws-openapi.dnse.com.vn"),
@@ -299,6 +313,9 @@ class TickSyncConfig:
     session_start_str: str
     session_end_str: str
     dry_run: bool
+    # Order books whose trades may be stored in `ticks`, as bare ids ("G1").
+    # Empty = store every board. See TICK_ALLOWED_BOARDS in from_env.
+    allowed_boards: frozenset[str]
 
     @property
     def session_start(self) -> dtime:
@@ -329,6 +346,16 @@ class TickSyncConfig:
         session_end_str = os.getenv("TICK_SESSION_END", "15:00")
         dry_run = os.getenv("TICK_DRY_RUN", "0") in ("1", "true", "True")
 
+        # Default G1 only: the main continuous order book. Odd lot (G4/G7) and
+        # put-through (T1..T6) print at prices set outside continuous trading —
+        # the backend already excludes them when picking a quote — so storing
+        # them in the same table would distort any bar or VWAP built from it.
+        # Widen with TICK_ALLOWED_BOARDS=G1,G7,G4; set it empty to store all.
+        boards_str = os.getenv("TICK_ALLOWED_BOARDS", "G1")
+        allowed_boards = frozenset(
+            b.strip().upper() for b in boards_str.split(",") if b.strip()
+        )
+
         return cls(
             symbol=symbol,
             board=board,
@@ -336,6 +363,7 @@ class TickSyncConfig:
             session_start_str=session_start_str,
             session_end_str=session_end_str,
             dry_run=dry_run,
+            allowed_boards=allowed_boards,
         )
 
 

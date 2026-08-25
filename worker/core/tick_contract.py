@@ -19,6 +19,30 @@ SIDE_BUY = 1
 SIDE_SELL = 2
 SIDE_UNKNOWN = 0
 
+# Board of the order book a trade matched on: "G1" is the main continuous book,
+# "G4"/"G7" odd lot, "T1".."T6" put-through (negotiated off-book, and priced
+# accordingly). Feeds spell it two ways — the OpenAPI Trade-Extra frames send
+# "G1" while the legacy stream and the mock source send "BOARD_ID_G1" — so the
+# prefix is stripped here, before the value reaches a column that queries filter
+# on. Two spellings in one LowCardinality column would make `board_id = 'G1'`
+# quietly miss half the rows.
+_BOARD_ID_PREFIX = "BOARD_ID_"
+
+# Rows written before board_id existed carry this. It is deliberately not "G1":
+# those rows were ingested from a nine-board subscription, so their board is
+# genuinely unknown rather than known to be the main book.
+BOARD_UNKNOWN = ""
+
+
+def normalize_board(value) -> str:
+    """Map a raw ``boardId`` to its bare form ("BOARD_ID_G1" -> "G1")."""
+    if value is None:
+        return BOARD_UNKNOWN
+    text = str(value).strip().upper()
+    if text.startswith(_BOARD_ID_PREFIX):
+        text = text[len(_BOARD_ID_PREFIX):]
+    return text
+
 
 def normalize_tick(raw: dict) -> Optional[dict]:
     """
@@ -167,6 +191,9 @@ def normalize_tick(raw: dict) -> Optional[dict]:
             "match_qty": match_qty if match_qty is not None else 0,
             "side": side,
             "received_at": received_at,
+            # Both input styles spell the field "boardId"; absent in older
+            # stream payloads, which is what BOARD_UNKNOWN records.
+            "board_id": normalize_board(raw.get("boardId")),
         }
 
     except Exception as e:
@@ -183,7 +210,13 @@ def to_clickhouse_tuple(tick: dict) -> tuple:
 
     Returns:
         Tuple in TICKS_ARROW_SCHEMA column order:
-        (symbol, sending_time, match_price, match_qty, side, received_at)
+        (symbol, sending_time, match_price, match_qty, side, received_at,
+         board_id)
+
+    ``board_id`` is last because it was added after the other six: the column
+    goes at the end of the ClickHouse table too, so an existing table takes it
+    as a plain ADD COLUMN and every explicit column list stays valid. Read with
+    ``.get`` so a dict built before this field existed still converts.
     """
     return (
         tick["symbol"],
@@ -192,4 +225,5 @@ def to_clickhouse_tuple(tick: dict) -> tuple:
         tick["match_qty"],
         tick["side"],
         tick["received_at"],
+        tick.get("board_id", BOARD_UNKNOWN),
     )
