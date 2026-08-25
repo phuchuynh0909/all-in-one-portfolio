@@ -11,13 +11,14 @@ from decimal import Decimal
 from typing import Any, List, Optional
 
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.db.models.corporate_action import CorporateAction
 from app.db.models.portfolio import Position
 from app.schemas.corporate_action import ManualDividendCreate
 from app.services.dnse_corporate_actions import (
-    RawEvent, classify, fetch_history, parse_action,
+    ParsedAction, RawEvent, classify, fetch_history, parse_action,
 )
 
 # Vietnam withholds 5% PIT on cash dividends. Stored as a rate so the net
@@ -39,8 +40,12 @@ def _existing_event_ids(db: Session, symbol: str) -> set[int]:
     )
 
 
-def _store(db: Session, raw: RawEvent, action_type: str) -> None:
-    """Insert one event, parsed if possible and flagged if not."""
+def _store(db: Session, raw: RawEvent, action_type: str) -> ParsedAction | None:
+    """Insert one event, parsed if possible and flagged if not.
+
+    Returns what it parsed (or ``None``) so the caller can count it without
+    parsing the same title a second time.
+    """
     parsed = parse_action(raw.name, raw.title)
     db.add(CorporateAction(
         symbol=raw.symbol,
@@ -61,6 +66,7 @@ def _store(db: Session, raw: RawEvent, action_type: str) -> None:
         source="dnse_history",
         status="pending" if parsed else "unparsed",
     ))
+    return parsed
 
 
 def sync_symbol(db: Session, symbol: str, *, session: Optional[Any] = None) -> dict:
@@ -82,10 +88,10 @@ def sync_symbol(db: Session, symbol: str, *, session: Optional[Any] = None) -> d
             counts["skipped"] += 1
             continue
 
-        _store(db, raw, action_type)
+        parsed = _store(db, raw, action_type)
         seen.add(raw.event_id)
         counts["inserted"] += 1
-        if parse_action(raw.name, raw.title) is None:
+        if parsed is None:
             counts["unparsed"] += 1
 
     db.commit()
@@ -118,13 +124,28 @@ def list_actions(
 
 
 def _next_manual_event_id(db: Session) -> int:
-    """A negative synthetic id, so a manual row can never collide with DNSE's."""
+    """A negative synthetic id, so a manual row can never collide with DNSE's.
+
+    Advisory only: computed from an unlocked ``SELECT MIN(event_id)``, so two
+    concurrent callers can compute the same value. ``create_manual`` is what
+    makes the id actually safe, by retrying on the resulting unique-constraint
+    collision.
+    """
     lowest = db.execute(select(func.min(CorporateAction.event_id))).scalar()
     return min(0, int(lowest or 0)) - 1
 
 
+_MAX_MANUAL_INSERT_ATTEMPTS = 3
+
+
 def create_manual(db: Session, payload: ManualDividendCreate) -> CorporateAction:
-    """Record a dividend by hand, for what the feed missed or misparsed."""
+    """Record a dividend by hand, for what the feed missed or misparsed.
+
+    ``event_id`` is minted from an unlocked query, so two concurrent calls can
+    race to the same negative id. The insert is retried a bounded number of
+    times on the resulting ``IntegrityError``, recomputing the id each time,
+    rather than assuming the race away.
+    """
     if payload.action_type == "cash" and payload.amount_per_share is None:
         raise ValueError("amount_per_share is required for a cash dividend")
     if payload.action_type == "stock" and payload.ratio is None:
@@ -134,20 +155,29 @@ def create_manual(db: Session, payload: ManualDividendCreate) -> CorporateAction
     if payload.action_type == "cash" and tax is None:
         tax = DEFAULT_CASH_TAX_PCT
 
-    action = CorporateAction(
-        symbol=payload.symbol.strip().upper(),
-        event_id=_next_manual_event_id(db),
-        name="Manual entry",
-        action_type=payload.action_type,
-        ex_date=payload.ex_date,
-        amount_per_share=payload.amount_per_share,
-        ratio=payload.ratio,
-        tax_withheld_pct=tax if payload.action_type == "cash" else None,
-        title=payload.notes or "Manual entry",
-        source="manual",
-        status="pending",
-    )
-    db.add(action)
-    db.commit()
-    db.refresh(action)
-    return action
+    last_error: IntegrityError | None = None
+    for _ in range(_MAX_MANUAL_INSERT_ATTEMPTS):
+        action = CorporateAction(
+            symbol=payload.symbol.strip().upper(),
+            event_id=_next_manual_event_id(db),
+            name="Manual entry",
+            action_type=payload.action_type,
+            ex_date=payload.ex_date,
+            amount_per_share=payload.amount_per_share,
+            ratio=payload.ratio,
+            tax_withheld_pct=tax if payload.action_type == "cash" else None,
+            title=payload.notes or "Manual entry",
+            source="manual",
+            status="pending",
+        )
+        db.add(action)
+        try:
+            db.commit()
+        except IntegrityError as exc:
+            db.rollback()
+            last_error = exc
+            continue
+        db.refresh(action)
+        return action
+
+    raise last_error

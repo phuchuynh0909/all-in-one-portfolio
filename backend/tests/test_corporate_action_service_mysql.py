@@ -217,3 +217,30 @@ def test_manual_cash_dividend_requires_an_amount(db):
     with pytest.raises(ValueError, match="amount_per_share"):
         cas.create_manual(db, ManualDividendCreate(
             symbol="TST", action_type="cash", ex_date=date(2026, 5, 1)))
+
+
+def test_create_manual_retries_past_an_event_id_collision(db, monkeypatch):
+    """Two racing manual inserts can mint the same negative id.
+
+    Rather than simulate real concurrency, force the first commit attempt to
+    raise the ``IntegrityError`` a colliding insert would produce, and let the
+    second attempt go through for real.
+    """
+    calls = {"n": 0}
+    real_commit = db.commit
+
+    def flaky_commit():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise IntegrityError("INSERT", {}, Exception("duplicate event_id"))
+        return real_commit()
+
+    monkeypatch.setattr(db, "commit", flaky_commit)
+
+    ca = cas.create_manual(db, ManualDividendCreate(
+        symbol="TST", action_type="cash", ex_date=date(2026, 5, 1),
+        amount_per_share=Decimal("500")))
+
+    assert calls["n"] == 2  # first attempt collided, second succeeded
+    assert ca.status == "pending"
+    assert ca.event_id < 0  # the negative-id scheme still holds after a retry
