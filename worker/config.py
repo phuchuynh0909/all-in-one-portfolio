@@ -285,17 +285,39 @@ class TelegramConfig:
 
 @dataclass
 class PriceAlertConfig:
-    """Price alert worker configuration."""
+    """Price alert worker configuration.
 
-    db_path: str
+    The alerts live in MySQL (``my_portfolio.price_alerts``) since the backend
+    moved off the single-file ``portfolio.db``. The worker only reads them, but
+    it has to read the same rows the API writes — pointed at the retired SQLite
+    file it would see an empty table and silently never fire an alert.
+
+    Connection: ``MYSQL_HOST/PORT/USER/PASSWORD/DB``, the same variables the
+    backend uses.
+    """
+
+    mysql_host: str
+    mysql_port: int
+    mysql_user: str
+    mysql_password: str
+    mysql_db: str
     check_interval_seconds: float
     rate_limit_seconds: int
+
+    @property
+    def endpoint(self) -> str:
+        """``host:port/db``, for startup logging. Never includes the password."""
+        return f"{self.mysql_host}:{self.mysql_port}/{self.mysql_db}"
 
     @classmethod
     def from_env(cls) -> "PriceAlertConfig":
         """Load price alert configuration from environment variables."""
         return cls(
-            db_path=os.getenv("PRICE_ALERT_DB_PATH", "../backend/portfolio.db"),
+            mysql_host=os.getenv("MYSQL_HOST", "192.168.1.3"),
+            mysql_port=int(os.getenv("MYSQL_PORT", "3306")),
+            mysql_user=os.getenv("MYSQL_USER", "root"),
+            mysql_password=os.getenv("MYSQL_PASSWORD", "kyostyle1"),
+            mysql_db=os.getenv("MYSQL_DB", "my_portfolio"),
             check_interval_seconds=float(
                 os.getenv("PRICE_ALERT_CHECK_INTERVAL", "1.0")
             ),

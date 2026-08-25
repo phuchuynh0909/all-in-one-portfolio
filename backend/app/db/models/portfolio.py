@@ -49,7 +49,7 @@ class PriceAlert(Base):
     symbol = Column(String(20), nullable=False, index=True)
     condition = Column(Enum("gt", "gte", "lt", "lte", "eq", name="alert_condition"), nullable=False)
     target_price = Column(DECIMAL(15, 6), nullable=False)
-    is_active = Column(Integer, server_default=text("1"), nullable=False)  # 1 = active, 0 = inactive
+    is_active = Column(Integer, server_default=text("1"), nullable=False, index=True)  # 1 = active, 0 = inactive
     is_triggered = Column(Integer, server_default=text("0"), nullable=False)  # 1 = triggered, 0 = not triggered
     triggered_at = Column(TIMESTAMP, nullable=True)
     notes = Column(Text)
