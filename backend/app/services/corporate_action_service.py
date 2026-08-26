@@ -403,6 +403,19 @@ def apply_action(db: Session, corporate_action_id: int) -> ApplyResult:
     )
 
 
+def _moved_the_lot(record: CorporateActionApplication) -> bool:
+    """Whether this application actually changed the position row.
+
+    A cash dividend reports ``qty_after == qty_before`` by design and leaves the
+    lot alone, so reversing it must not write to the position either — doing so
+    would revert a stock event from the same ex-date that is still applied.
+    """
+    return (
+        record.qty_after != record.qty_before
+        or record.price_after != record.price_before
+    )
+
+
 def unapply_action(db: Session, corporate_action_id: int) -> ApplyResult:
     """Reverse an applied event from its own application records.
 
@@ -421,16 +434,34 @@ def unapply_action(db: Session, corporate_action_id: int) -> ApplyResult:
             )
         ).scalars().all())
 
+        # ``close_position`` reduces ``positions.quantity`` without touching this
+        # ledger, so ``qty_before`` is only a safe thing to restore while the lot
+        # still stands exactly where the apply left it. Apply a bonus
+        # (10,900 -> 11,990), sell 5,000 (-> 6,990), unapply, and restoring
+        # ``qty_before`` would invent 3,910 shares and put the pre-dividend cost
+        # basis on top of them. Checked for every record before anything is
+        # written, so a refusal leaves the whole reversal undone.
+        # Only records that actually moved the lot are restored below, so only
+        # those can invent shares. A cash record writes nothing to the position,
+        # and its lot legitimately differs from ``qty_after`` whenever a
+        # same-ex-date bonus is still applied (PAN: 79,488 vs 66,240).
+        for record in records:
+            if record.position_id is None or not _moved_the_lot(record):
+                continue
+            position = db.get(Position, record.position_id)
+            if position is not None and position.quantity != record.qty_after:
+                raise ValueError(
+                    f"Corporate action {corporate_action_id} cannot be unapplied: "
+                    f"lot {record.position_id} now holds {position.quantity} "
+                    f"shares but the action left it at {record.qty_after}. The "
+                    "lot changed after the action was applied (a sale, or a "
+                    "later event), so restoring its earlier quantity would "
+                    "invent shares. Reverse the later change first."
+                )
+
         reverted: List[AppliedLot] = []
         for record in records:
-            # A record that did not move the lot (any cash dividend) must not
-            # write to it. Restoring its ``qty_before`` would revert a stock
-            # event from the same ex-date that is still applied.
-            moved = (
-                record.qty_after != record.qty_before
-                or record.price_after != record.price_before
-            )
-            if moved and record.position_id is not None:
+            if _moved_the_lot(record) and record.position_id is not None:
                 position = (
                     db.query(Position)
                     .filter(Position.id == record.position_id)

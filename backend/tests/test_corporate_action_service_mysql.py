@@ -400,6 +400,39 @@ def test_unapply_restores_quantity_and_price_and_removes_the_transaction(db):
                       ).scalar() == 0
 
 
+def test_unapply_after_a_partial_close_is_rejected(db):
+    """A sale moved the lot, so ``qty_before`` is no longer safe to restore.
+
+    ``close_position`` reduces ``positions.quantity`` without touching the
+    application ledger. Restoring 10,900 over a lot that now holds 6,990 would
+    invent 3,910 shares and put the pre-dividend cost basis on top of them.
+    """
+    from app.schemas.portfolio import ClosePositionRequest
+
+    db.execute(text("DELETE FROM positions"))
+    lot = _lot(db, qty="10900", price="15.46", bought="2026-03-02")
+    ca = _pending(db, ex_date=date(2026, 6, 17))
+    cas.apply_action(db, ca.id)
+    assert portfolio_service.get_position(db, lot.id).quantity == Decimal("11990.000000")
+
+    portfolio_service.close_position(db, ClosePositionRequest(
+        position_id=lot.id, quantity_to_close=Decimal("5000"),
+        closing_price=Decimal("20"), closing_date=date(2026, 7, 1),
+        fees=Decimal("0")))
+    assert portfolio_service.get_position(db, lot.id).quantity == Decimal("6990.000000")
+
+    with pytest.raises(ValueError) as exc:
+        cas.unapply_action(db, ca.id)
+
+    assert "not found" not in str(exc.value)  # must be a 409, not a 404
+    # Nothing was reversed: the sale stands and the action is still applied.
+    assert portfolio_service.get_position(db, lot.id).quantity == Decimal("6990.000000")
+    assert db.get(CorporateAction, ca.id).status == "applied"
+    assert db.execute(select(func.count()).select_from(CorporateActionApplication)
+                      .where(CorporateActionApplication.corporate_action_id == ca.id)
+                      ).scalar() == 1
+
+
 def test_unapply_a_pending_event_is_rejected(db):
     ca = _pending(db)
     with pytest.raises(ValueError, match="not applied"):
