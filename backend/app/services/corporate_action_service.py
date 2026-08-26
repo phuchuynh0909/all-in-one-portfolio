@@ -222,6 +222,61 @@ def _ex_date_group(db: Session, action: CorporateAction) -> List[CorporateAction
     ).scalars().all())
 
 
+def _assert_ex_date_order(db: Session, action: CorporateAction) -> None:
+    """Refuse to apply an event out of ex-date order (spec rule 5).
+
+    ``apply_action`` hands the engine a single ex-date group, so the engine's
+    own ordering logic never runs in production — the *caller* decides what is
+    applied when, and ``POST /{id}/apply`` will accept any id in any order.
+    Nothing else stops the three silent money errors that follow:
+
+    * VCG lot 4's 2026-07-14 cash applied before its 2025-06-11 stock event pays
+      on 40,820 shares instead of 44,085 — 2,612,000 VND understated — while the
+      final quantity still lands correctly, so nothing looks wrong afterwards.
+    * PAN's cash re-applied after an unapply, with the same-day bonus still
+      applied, settles on 79,488 instead of 66,240.
+    * A sibling left ``unparsed`` and corrected manually later is this same path.
+
+    Neither message may contain "not found": the HTTP layer maps that substring
+    to 404, and an ordering violation must surface as 409.
+    """
+    earlier_pending = db.execute(
+        select(CorporateAction)
+        .where(
+            CorporateAction.symbol == action.symbol,
+            CorporateAction.status == "pending",
+            CorporateAction.ex_date < action.ex_date,
+        )
+        .order_by(CorporateAction.ex_date, CorporateAction.id)
+    ).scalars().first()
+    if earlier_pending is not None:
+        raise ValueError(
+            f"Corporate action {action.id} ({action.symbol}, ex-date "
+            f"{action.ex_date}) cannot be applied yet: the earlier event "
+            f"{earlier_pending.id} with ex-date {earlier_pending.ex_date} is "
+            "still pending. Apply that one first — events must be applied "
+            "strictly ascending by ex-date."
+        )
+
+    later_applied = db.execute(
+        select(CorporateAction)
+        .where(
+            CorporateAction.symbol == action.symbol,
+            CorporateAction.status == "applied",
+            CorporateAction.ex_date >= action.ex_date,
+        )
+        .order_by(CorporateAction.ex_date.desc(), CorporateAction.id.desc())
+    ).scalars().first()
+    if later_applied is not None:
+        raise ValueError(
+            f"Corporate action {action.id} ({action.symbol}, ex-date "
+            f"{action.ex_date}) cannot be applied: event {later_applied.id} "
+            f"with ex-date {later_applied.ex_date} is already applied and is "
+            "not earlier. Unapply that one first — events must be applied "
+            "strictly ascending by ex-date."
+        )
+
+
 def _as_event(action: CorporateAction) -> Event:
     return Event(
         corporate_action_id=action.id,
@@ -253,6 +308,7 @@ def apply_action(db: Session, corporate_action_id: int) -> ApplyResult:
         )
     if action.status == "ignored":
         raise ValueError(f"Corporate action {corporate_action_id} is ignored")
+    _assert_ex_date_order(db, action)
 
     try:
         group = _ex_date_group(db, action)

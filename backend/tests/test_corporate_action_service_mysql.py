@@ -521,6 +521,76 @@ def test_another_symbol_on_the_same_ex_date_is_not_dragged_in(db):
     assert db.get(CorporateAction, other.id).status == "pending"
 
 
+def _vcg_two_dates(db):
+    """VCG lot 4: a 2025-06-11 stock event, then a 2026-07-14 cash dividend."""
+    db.execute(text("DELETE FROM positions"))
+    lot = _lot(db, ticker="VCG", qty="40820", price="20", bought="2025-01-01")
+    stock = _pending(db, symbol="VCG", ex_date=date(2025, 6, 11),
+                     ratio=Decimal("0.08"),
+                     title="Trả cổ tức năm 2025 bằng cổ phiếu tỷ lệ 100:8")
+    cash_ca = _pending(db, symbol="VCG", ex_date=date(2026, 7, 14),
+                       name="Trả cổ tức bằng tiền mặt", action_type="cash",
+                       ratio=None, amount_per_share=Decimal("800"),
+                       tax_withheld_pct=Decimal("0.05"),
+                       title="Trả cổ tức năm 2025 bằng tiền 800 đồng/CP")
+    return lot, stock, cash_ca
+
+
+def test_applying_a_later_event_while_an_earlier_one_is_pending_is_rejected(db):
+    """Spec rule 5: strictly ascending by ex-date.
+
+    Paying VCG's 2026 cash before its 2025 stock event settles on 40,820 shares
+    instead of 44,085 — 2,612,000 VND understated — and the final quantity still
+    lands correctly, so nothing looks wrong afterwards.
+    """
+    lot, stock, cash_ca = _vcg_two_dates(db)
+
+    with pytest.raises(ValueError) as exc:
+        cas.apply_action(db, cash_ca.id)
+
+    assert "2025-06-11" in str(exc.value)
+    # The HTTP layer maps "not found" to 404; this must surface as 409.
+    assert "not found" not in str(exc.value)
+    assert db.get(CorporateAction, cash_ca.id).status == "pending"
+    assert db.get(CorporateAction, stock.id).status == "pending"
+    assert portfolio_service.get_position(db, lot.id).quantity == Decimal("40820.000000")
+
+
+def test_applying_in_ex_date_order_pays_on_the_grown_share_count(db):
+    """The counterpart: correct order pays cash on the post-stock 44,085."""
+    lot, stock, cash_ca = _vcg_two_dates(db)
+
+    cas.apply_action(db, stock.id)
+    assert portfolio_service.get_position(db, lot.id).quantity == Decimal("44085.000000")
+
+    result = cas.apply_action(db, cash_ca.id)
+
+    # 800 VND x 44,085 = 35,268,000 VND = 35,268 price units.
+    # Out of order it would have been 800 x 40,820 = 32,656.
+    assert result.total_cash_gross == Decimal("35268")
+
+
+def test_reapplying_beneath_a_still_applied_same_day_event_is_rejected(db):
+    """PAN's cash must not re-settle on the post-bonus share count.
+
+    Unapplying only the cash half leaves the same-ex-date bonus applied, so the
+    lot now holds 79,488. Re-applying the cash would pay 3000 x 79,488 =
+    238,464,000 VND instead of the correct 198,720,000.
+    """
+    lot, bonus, cash_ca = _pan_same_day(db)
+    cas.apply_action(db, bonus.id)
+    cas.unapply_action(db, cash_ca.id)
+
+    with pytest.raises(ValueError) as exc:
+        cas.apply_action(db, cash_ca.id)
+
+    assert "2026-05-29" in str(exc.value)
+    assert "not found" not in str(exc.value)
+    assert db.get(CorporateAction, cash_ca.id).status == "pending"
+    assert db.get(CorporateAction, bonus.id).status == "applied"
+    assert portfolio_service.get_position(db, lot.id).quantity == Decimal("79488.000000")
+
+
 def test_an_unparsed_sibling_does_not_block_the_group(db):
     """It cannot be settled, so it stays for review rather than failing the group."""
     db.execute(text("DELETE FROM positions"))
