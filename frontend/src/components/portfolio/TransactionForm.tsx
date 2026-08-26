@@ -16,7 +16,8 @@ import { API_BASE_URL } from '../../lib/api';
 
 type Transaction = {
   ticker: string;
-  transaction_type: 'buy' | 'sell';
+  // Dividend rows share the transactions ledger; buy|sell alone was false.
+  transaction_type: 'buy' | 'sell' | 'dividend_cash' | 'dividend_stock';
   quantity: number;
   price: number;
   close_price?: number;
@@ -41,7 +42,7 @@ export default function TransactionForm({
   mode,
 }: TransactionFormProps) {
   const [ticker, setTicker] = useState(transaction?.ticker || '');
-  const [type, setType] = useState<'buy' | 'sell'>(
+  const [type, setType] = useState<'buy' | 'sell' | 'dividend_cash' | 'dividend_stock'>(
     transaction?.transaction_type || 'buy'
   );
   const [quantity, setQuantity] = useState(

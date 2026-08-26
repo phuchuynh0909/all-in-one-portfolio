@@ -27,6 +27,28 @@ target_metadata = Base.metadata
 def get_url():
     return settings.database_url
 
+
+def include_object(object_, name, type_, reflected, compare_to):
+    """Keep autogenerate off tables this metadata does not own.
+
+    The ORM now shares the MySQL database ``my_portfolio`` with stores that
+    create their own tables on demand rather than through a migration —
+    ``raw_wichart_report``, ``wichart_reports`` (``app/stores/``) and
+    ``report_rag``, all bootstrapped by ``app/db/mysql.py``.
+
+    Alembic reflects the whole schema, so without this filter every
+    ``--autogenerate`` would see those tables, find them absent from
+    ``Base.metadata``, and emit ``drop_table`` for each — destroying the report
+    data. Reflected tables that no model declares are ignored instead.
+
+    This only constrains autogenerate; explicit ``op.*`` calls in a revision are
+    unaffected.
+    """
+    if type_ == "table" and reflected and name not in target_metadata.tables:
+        return False
+    return True
+
+
 def run_migrations_offline() -> None:
     url = get_url()
     context.configure(
@@ -34,6 +56,7 @@ def run_migrations_offline() -> None:
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        include_object=include_object,
     )
 
     with context.begin_transaction():
@@ -50,7 +73,9 @@ def run_migrations_online() -> None:
 
     with connectable.connect() as connection:
         context.configure(
-            connection=connection, target_metadata=target_metadata
+            connection=connection,
+            target_metadata=target_metadata,
+            include_object=include_object,
         )
 
         with context.begin_transaction():

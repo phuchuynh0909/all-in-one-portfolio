@@ -14,7 +14,14 @@ services:
       - APP_ENVIRONMENT=development
       - APP_PROJECT_NAME=Investment Tracker API
       - APP_API_V1_PREFIX=/api/v1
-      - APP_DATABASE_URL=sqlite:///portfolio.db
+      # The ORM runs on MySQL (my_portfolio) — settings.database_url is built
+      # from these. There is deliberately no APP_DATABASE_URL here: setting it
+      # overrides the lot and is how you'd point back at a SQLite file.
+      - MYSQL_HOST=${MYSQL_HOST:-192.168.1.3}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-kyostyle1}
+      - MYSQL_DB=${MYSQL_DB:-my_portfolio}
       - CLICKHOUSE_HOST=${CLICKHOUSE_HOST:-192.168.1.3}
       - CLICKHOUSE_PORT=${CLICKHOUSE_PORT:-8123}
       - CLICKHOUSE_USER=${CLICKHOUSE_USER:-kyostyle1}
@@ -65,9 +72,15 @@ services:
     build: ./worker
     command: ["python", "-m", "bytewax.run", "workers.price_alerts:flow"]
     volumes:
-      - ./backend/portfolio.db:/app/portfolio.db
+      # No portfolio.db mount: the alerts this worker reads live in MySQL now.
       - ./worker:/app
       - worker_state:/app/state_dir
+    environment:
+      - MYSQL_HOST=${MYSQL_HOST:-192.168.1.3}
+      - MYSQL_PORT=${MYSQL_PORT:-3306}
+      - MYSQL_USER=${MYSQL_USER:-root}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD:-kyostyle1}
+      - MYSQL_DB=${MYSQL_DB:-my_portfolio}
     env_file:
       - ./worker/.env
     networks:

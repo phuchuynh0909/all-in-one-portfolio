@@ -196,8 +196,9 @@ def register_vn_vendor() -> None:
     """Wire the VN data adapter into TradingAgents (idempotent).
 
     Registers each VN implementation under the ``portfolio`` vendor key in the
-    dispatch table and repoints the verification-snapshot loader at VN OHLCV.
-    Safe to call on every run.
+    dispatch table, and repoints the two tools that bypass the router — the
+    verification-snapshot loader and the knowledge-base search — at their VN
+    implementations. Safe to call on every run.
     """
     global _registered
     if _registered:
@@ -214,6 +215,13 @@ def register_vn_vendor() -> None:
     import tradingagents.dataflows.market_data_validator as validator
 
     validator.load_ohlcv = vn_data.load_ohlcv
+
+    # search_knowledge_base is not in the router's dispatch table either — the KB
+    # is ours alone, with no competing vendor to choose between — so the tool
+    # reads a module global the same way. Unregistered, it answers KB_UNAVAILABLE.
+    from tradingagents.dataflows import knowledge_base
+
+    knowledge_base.search_kb = vn_data.search_knowledge_base
 
     _registered = True
     logger.info("Registered VN 'portfolio' data vendor into TradingAgents dispatch")

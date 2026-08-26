@@ -448,7 +448,14 @@ export default function StockChart({
       }
     };
 
-    txs.forEach((tx) => {
+    // Only real trades get an execution marker. A dividend row is not a sell:
+    // drawn as one it became a red "S" labelled e.g. `Ban 10900 CP @ 800.00`,
+    // which never happened.
+    const trades = txs.filter(
+      (tx) => tx.transaction_type === 'buy' || tx.transaction_type === 'sell',
+    );
+
+    trades.forEach((tx) => {
       const side = tx.transaction_type === 'buy' ? 'buy' : 'sell';
       addMark(
         formatChartTime(tx.transaction_date),

@@ -1,20 +1,55 @@
 import os
 from pathlib import Path
 from typing import List
+from urllib.parse import quote_plus
 from pydantic import AnyHttpUrl
 from pydantic_settings import BaseSettings
+
+
+def _build_mysql_url(
+    user: str | None = None,
+    password: str | None = None,
+    host: str | None = None,
+    port: int | str | None = None,
+    db: str | None = None,
+) -> str:
+    """Assemble the ``mysql+pymysql`` DSN from parts, env vars as the fallback.
+
+    Shared by ``mysql_url`` and by the ``database_url`` default so the ORM and
+    the report stores cannot drift onto different servers. utf8mb4 is not
+    optional — the data is Vietnamese.
+    """
+    user = user if user is not None else os.getenv("MYSQL_USER", "root")
+    password = password if password is not None else os.getenv("MYSQL_PASSWORD", "kyostyle1")
+    host = host if host is not None else os.getenv("MYSQL_HOST", "192.168.1.3")
+    port = port if port is not None else os.getenv("MYSQL_PORT", "3306")
+    db = db if db is not None else os.getenv("MYSQL_DB", "my_portfolio")
+    return (
+        f"mysql+pymysql://{quote_plus(str(user))}:{quote_plus(str(password))}"
+        f"@{host}:{port}/{db}?charset=utf8mb4"
+    )
+
+
+def _default_database_url() -> str:
+    """The ORM's DSN: an explicit override, else the MySQL server.
+
+    The app used to run on a local ``portfolio.db`` SQLite file. It now lives on
+    MySQL (``my_portfolio``) alongside the report stores. Setting
+    ``APP_DATABASE_URL``/``DATABASE_URL`` still points the ORM anywhere else —
+    including back at ``sqlite:///app/portfolio.db`` — which is how the tests
+    keep using a throwaway file.
+    """
+    override = os.getenv("APP_DATABASE_URL") or os.getenv("DATABASE_URL")
+    return override or _build_mysql_url()
 
 
 class Settings(BaseSettings):
     project_name: str = "Investment Tracker API"
     api_v1_prefix: str = "/api/v1"
     environment: str = "development"
-    
-    # Database
-    database_url: str = os.getenv(
-        "APP_DATABASE_URL",
-        os.getenv("DATABASE_URL", "sqlite:///app/portfolio.db")
-    )
+
+    # Database — MySQL (``my_portfolio``); see ``_default_database_url``.
+    database_url: str = _default_database_url()
 
     # ClickHouse
     clickhouse_host: str = os.getenv("CLICKHOUSE_HOST", "localhost")
@@ -23,10 +58,11 @@ class Settings(BaseSettings):
     clickhouse_password: str = os.getenv("CLICKHOUSE_PASSWORD", "mypassword")
     clickhouse_db: str = os.getenv("CLICKHOUSE_DB", "default")
 
-    # MySQL — the wichart report store: both the crawled feed
-    # (``raw_wichart_report``) and the enriched detail rows we write back
-    # (``wichart_reports``: report_title, llm_summary, clean_content, status …).
-    mysql_host: str = os.getenv("MYSQL_HOST", "localhost")
+    # MySQL — now the app's primary store. Holds the portfolio/market/financial
+    # tables migrated off ``portfolio.db`` as well as the wichart report store:
+    # the crawled feed (``raw_wichart_report``) and the enriched detail rows we
+    # write back (``wichart_reports``: report_title, llm_summary, status …).
+    mysql_host: str = os.getenv("MYSQL_HOST", "192.168.1.3")
     mysql_port: int = int(os.getenv("MYSQL_PORT", "3306"))
     mysql_user: str = os.getenv("MYSQL_USER", "root")
     mysql_password: str = os.getenv("MYSQL_PASSWORD", "kyostyle1")
@@ -69,21 +105,20 @@ class Settings(BaseSettings):
 
     @property
     def mysql_url(self) -> str:
-        """SQLAlchemy URL for the report detail store.
+        """SQLAlchemy URL for the MySQL store.
 
         ``MYSQL_URL`` overrides it wholesale (e.g. to point at a managed
-        instance); otherwise it is built from the parts above. utf8mb4 is not
-        optional — the reports are Vietnamese.
+        instance); otherwise it is built from the parts above.
         """
         override = os.getenv("MYSQL_URL")
         if override:
             return override
-        from urllib.parse import quote_plus
-
-        return (
-            f"mysql+pymysql://{quote_plus(self.mysql_user)}:"
-            f"{quote_plus(self.mysql_password)}@{self.mysql_host}:{self.mysql_port}"
-            f"/{self.mysql_db}?charset=utf8mb4"
+        return _build_mysql_url(
+            user=self.mysql_user,
+            password=self.mysql_password,
+            host=self.mysql_host,
+            port=self.mysql_port,
+            db=self.mysql_db,
         )
 
     @property

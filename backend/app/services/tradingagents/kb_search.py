@@ -81,8 +81,14 @@ def _symbol_filter(symbols: Optional[list[str]]):
     """Build a Qdrant filter matching any of ``symbols`` on the ``symbol`` payload.
 
     Returns None when no symbols are given (unfiltered semantic search).
+    ``""`` is a real value: it matches market-wide / untagged chunks (the RAG
+    pipeline stores a missing ``mack`` as ``""``).
     """
-    syms = [s.strip().upper() for s in (symbols or []) if s and s.strip()]
+    if not symbols:
+        return None
+    # Keep empty strings. ``if s and s.strip()`` would drop them and turn a
+    # "macro only" query into an unfiltered search.
+    syms = [str(s).strip().upper() for s in symbols if s is not None]
     if not syms:
         return None
     from qdrant_client import models
@@ -101,10 +107,11 @@ def search(
     """Semantic search over the knowledge base.
 
     ``symbols`` (optional) restricts hits to those report chunks tagged with one of
-    the given tickers. Returns a list of ``{score, symbol, title, page, pdf_url,
-    text}`` dicts (highest score first), filtered to ``score >= min_score``. Any
-    failure (KB disabled, embed error, Qdrant unreachable) yields ``[]`` so callers
-    fall back to web search.
+    the given tickers. Pass ``[""]`` for market-wide chunks (empty ``symbol``).
+    Returns a list of ``{score, symbol, title, page, pdf_url, text}`` dicts
+    (highest score first), filtered to ``score >= min_score``. Any failure (KB
+    disabled, embed error, Qdrant unreachable) yields ``[]`` so callers fall back
+    to web search.
     """
     if not kb_enabled() or not query.strip():
         return []
@@ -144,6 +151,10 @@ def search(
                 "text": _clean_text(str(payload.get("text") or "")),
             }
         )
+    if symbols is not None:
+        allowed = {str(s).strip().upper() for s in symbols if s is not None}
+        if allowed:
+            out = [h for h in out if h["symbol"] in allowed]
     return out
 
 

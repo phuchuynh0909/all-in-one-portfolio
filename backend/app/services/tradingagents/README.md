@@ -24,9 +24,19 @@ Every analyst data tool in TradingAgents routes through
 `tradingagents.dataflows.interface.route_to_vendor(method, *args)`. We register a
 `portfolio` vendor for each method (`vn_data.VN_VENDOR_METHODS`) and set every
 `data_vendors` category to `portfolio`, so **no US data source (yfinance,
-Finnhub, FRED, Reddit) is ever contacted.** The one tool that bypasses the
-router — `get_verified_market_snapshot` — is handled by repointing
-`market_data_validator.load_ohlcv` at `vn_data.load_ohlcv`.
+Finnhub, FRED, Reddit) is ever contacted.** Two tools bypass the router and are
+wired by repointing a module global instead: `get_verified_market_snapshot`
+(`market_data_validator.load_ohlcv` → `vn_data.load_ohlcv`) and
+`search_knowledge_base` (`dataflows.knowledge_base.search_kb` →
+`vn_data.search_knowledge_base`). The knowledge base has no competing vendor to
+choose between, so it does not belong in the dispatch table.
+
+`search_knowledge_base` is the news analyst's own query into the Qdrant research
+corpus: the analyst writes the Vietnamese question rather than inheriting the one
+canned query that tier 1 of `get_news`/`get_global_news` fires. Those tiers are
+untouched and still run, so a model that never calls the tool gets the previous
+behaviour. A miss returns `NO_KB_MATCH` — deliberately no web fallback, so the
+model can tell "we hold no research on this" from "the open web says …".
 
 Only the `market` and `news` analysts run by default (the two with real VN data).
 Fundamentals/insider/macro/prediction categories return explicit

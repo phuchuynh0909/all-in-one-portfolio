@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 from typing import List, Optional
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from enum import Enum
 
 
@@ -28,13 +28,31 @@ class Position(PositionBase):
 
 class TransactionBase(BaseModel):
     ticker: str = Field(..., min_length=1, max_length=10)
-    transaction_type: str = Field(..., pattern="^(buy|sell)$")
+    # dividend rows share this ledger; the ENUM migration is inert without them
+    transaction_type: str = Field(..., pattern="^(buy|sell|dividend_cash|dividend_stock)$")
     quantity: Decimal = Field(..., gt=0)
-    price: Decimal = Field(..., gt=0)
+    # ge=0 only because a stock-dividend row books shares at zero cost. Buys and
+    # sells keep their old ``gt=0`` guarantee via the validator below.
+    price: Decimal = Field(..., ge=0)
     close_price: Optional[Decimal] = None
     transaction_date: date
     fees: Optional[Decimal] = Field(default=0, ge=0)
     notes: Optional[str] = None
+
+    # Types that must still have a real price. Relaxing the field to ge=0 for
+    # dividend_stock's sake dropped this guarantee for every type at once; a
+    # zero-price buy or sell is a data-entry error that would compute a 100%
+    # gain on the whole position.
+    _PRICED_TYPES = ("buy", "sell")
+
+    @model_validator(mode="after")
+    def _require_a_price_on_trades(self):
+        if self.transaction_type in self._PRICED_TYPES and self.price <= 0:
+            raise ValueError(
+                f"price must be greater than 0 for a {self.transaction_type} "
+                "transaction"
+            )
+        return self
 
 
 class TransactionCreate(TransactionBase):
@@ -73,6 +91,9 @@ class PortfolioSummary(BaseModel):
     total_profit_loss: Decimal
     total_profit_loss_pct: Decimal
     total_realized_pl: Decimal
+    # Gross is the factual record; the headline figure is net of withholding.
+    total_dividend_income_gross: Decimal = Decimal(0)
+    total_dividend_income: Decimal = Decimal(0)
     positions: List[Position]
 
     class Config:

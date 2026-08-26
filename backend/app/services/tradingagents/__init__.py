@@ -48,6 +48,22 @@ for _candidate in _CANDIDATES:
             # Prepend so the vendored copy wins over any stale global install.
             sys.path.insert(0, vendor_path)
         break
+else:
+    # Nothing found. Complain here, once, naming the paths tried: otherwise the
+    # first module to need the framework fails with a bare
+    # "ModuleNotFoundError: No module named 'tradingagents'" that says nothing
+    # about which directory was expected to hold it.
+    import importlib.util
+    import logging
+
+    if importlib.util.find_spec("tradingagents") is None:
+        logging.getLogger(__name__).warning(
+            "TradingAgents is unavailable: no vendored source tree at any of "
+            "[%s] and no pip install on sys.path. The multi-agent graph cannot "
+            "run; set TRADINGAGENTS_VENDOR_PATH to the directory that contains "
+            "the 'tradingagents' package.",
+            ", ".join(str(c) for c in _CANDIDATES),
+        )
 
 
 def _install_yfinance_stub(force: bool = False) -> None:
