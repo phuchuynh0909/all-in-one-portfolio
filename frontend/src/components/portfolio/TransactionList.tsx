@@ -12,7 +12,8 @@ import TransactionForm from './TransactionForm';
 interface Transaction {
   id: number;
   ticker: string;
-  transaction_type: 'buy' | 'sell';
+  // Dividend rows share the transactions ledger; buy|sell alone was false.
+  transaction_type: 'buy' | 'sell' | 'dividend_cash' | 'dividend_stock';
   quantity: number;
   price: number;
   close_price?: number;

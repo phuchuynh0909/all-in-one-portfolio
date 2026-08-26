@@ -92,7 +92,9 @@ export interface Position {
 export interface Transaction {
   id: number;
   ticker: string;
-  transaction_type: 'buy' | 'sell';
+  // Dividend rows share the transactions ledger. Narrowing this to buy|sell was
+  // false and made every dividend read as a sell.
+  transaction_type: 'buy' | 'sell' | 'dividend_cash' | 'dividend_stock';
   quantity: number;
   price: number;
   close_price?: number | null;
