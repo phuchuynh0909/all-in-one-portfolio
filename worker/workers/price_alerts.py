@@ -7,7 +7,7 @@ Sends notifications via Telegram when alerts are triggered.
 Following the pattern from isp.py for Bytewax dataflow processing.
 """
 import os
-import sqlite3
+import pymysql
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 from typing import Optional
@@ -53,9 +53,25 @@ class AlertState:
 
 # ---------- Database helpers ----------
 def get_db_connection():
-    """Get SQLite database connection."""
-    db_path = config.price_alert.db_path
-    return sqlite3.connect(db_path)
+    """Get a MySQL connection to the alert store.
+
+    The alerts moved from the SQLite ``portfolio.db`` to MySQL along with the
+    rest of the backend's tables.
+    """
+    cfg = config.price_alert
+    return pymysql.connect(
+        host=cfg.mysql_host,
+        port=cfg.mysql_port,
+        user=cfg.mysql_user,
+        password=cfg.mysql_password,
+        database=cfg.mysql_db,
+        charset="utf8mb4",
+        # Short timeouts: this runs per tick, and a hung connection must not
+        # stall the dataflow. A failure here degrades to "no alerts", handled
+        # by the caller's except.
+        connect_timeout=5,
+        read_timeout=5,
+    )
 
 
 def fetch_active_alerts(symbol: str) -> list[PriceAlert]:
@@ -63,15 +79,17 @@ def fetch_active_alerts(symbol: str) -> list[PriceAlert]:
     try:
         conn = get_db_connection()
         cursor = conn.cursor()
+        # ``condition`` is a MySQL reserved word — it has to be backticked.
+        # Placeholders are ``%s`` here, not SQLite's ``?``.
         cursor.execute("""
-            SELECT id, symbol, condition, target_price, is_active, is_triggered, notes
+            SELECT id, symbol, `condition`, target_price, is_active, is_triggered, notes
             FROM price_alerts
-            WHERE symbol = ? AND is_active = 1 AND is_triggered = 0
+            WHERE symbol = %s AND is_active = 1 AND is_triggered = 0
         """, (symbol.upper(),))
-        
+
         rows = cursor.fetchall()
         conn.close()
-        
+
         alerts = [
             PriceAlert(
                 id=row[0],
@@ -276,7 +294,7 @@ op.inspect("log_alerts", notified)
 if __name__ == "__main__":
     from bytewax.execution import run_main
     print("[PriceAlerts] Starting price alerts worker...")
-    print(f"[PriceAlerts] Database: {config.price_alert.db_path}")
+    print(f"[PriceAlerts] Database: mysql://{config.price_alert.endpoint}")
     print(f"[PriceAlerts] Telegram enabled: {config.telegram.enabled}")
     run_main(flow)
 

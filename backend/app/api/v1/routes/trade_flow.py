@@ -24,10 +24,10 @@ def get_trade_flow_service(
     """
     return TradeFlowService(
         clickhouse_client,
-        window_seconds=int(os.getenv("BLOCK_EP_WINDOW_SECONDS", "30")),
+        window_seconds=int(os.getenv("BLOCK_EP_WINDOW_SECONDS", "60")),
         tod_bucket_minutes=int(os.getenv("BLOCK_EP_TOD_BUCKET_MINUTES", "30")),
-        min_windows_to_fit=int(os.getenv("BLOCK_EP_MIN_WINDOWS_TO_FIT", "200")),
-        contamination=float(os.getenv("BLOCK_EP_CONTAMINATION", "0.01")),
+        min_windows_to_fit=int(os.getenv("BLOCK_EP_MIN_WINDOWS_TO_FIT", "400")),
+        contamination=float(os.getenv("BLOCK_EP_CONTAMINATION", "0.03")),
     )
 
 

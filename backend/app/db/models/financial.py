@@ -20,8 +20,8 @@ class Company(Base):
     __tablename__ = "company"
     
     company_id = Column(Integer, primary_key=True, autoincrement=True)
-    ticker = Column(String, unique=True, nullable=True, index=True)
-    name = Column(String, nullable=False)
+    ticker = Column(String(20), unique=True, nullable=True, index=True)
+    name = Column(String(255), nullable=False)
     
     # Relationships
     item_values = relationship("ItemValue", back_populates="company")
@@ -36,8 +36,8 @@ class Period(Base):
     __tablename__ = "period"
     
     period_id = Column(Integer, primary_key=True, autoincrement=True)
-    label = Column(String, unique=True, nullable=False, index=True)  # e.g., 'Q2-2025'
-    period_type = Column(String, nullable=False, index=True)
+    label = Column(String(32), unique=True, nullable=False, index=True)  # e.g., 'Q2-2025'
+    period_type = Column(String(16), nullable=False, index=True)
     start_date = Column(Date, nullable=True)
     end_date = Column(Date, nullable=True, index=True)
     
@@ -59,8 +59,8 @@ class Statement(Base):
     __tablename__ = "statement"
     
     statement_id = Column(Integer, primary_key=True, autoincrement=True)
-    statement_type = Column(String, nullable=False, index=True, unique=True)
-    title = Column(String, nullable=True)  # optional display title
+    statement_type = Column(String(32), nullable=False, index=True, unique=True)
+    title = Column(String(255), nullable=True)  # optional display title
     
     # Constraints
     __table_args__ = (
@@ -84,8 +84,10 @@ class StatementItem(Base):
     
     item_id = Column(Integer, primary_key=True, autoincrement=True)
     statement_id = Column(Integer, ForeignKey("statement.statement_id", ondelete="CASCADE"), nullable=False, index=True)
-    item_key = Column(String, nullable=False, index=True)  # stable idempotent key
-    title_vi = Column(String, nullable=False)  # Vietnamese title
+    # 255 keeps the (statement_id, item_key) unique index inside InnoDB's
+    # 3072-byte key limit at utf8mb4's 4 bytes per character.
+    item_key = Column(String(255), nullable=False, index=True)  # stable idempotent key
+    title_vi = Column(String(500), nullable=False)  # Vietnamese title
     level = Column(Integer, nullable=False, index=True)  # hierarchy level
     parent_item_id = Column(Integer, ForeignKey("statement_item.item_id"), nullable=True, index=True)
     display_order = Column(Integer, nullable=True)  # optional: keep original order

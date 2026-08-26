@@ -25,7 +25,45 @@ class FinancialDataImporter:
     def __init__(self, db: Session):
         """Initialize with database session"""
         self.db = db
-        
+
+    def _upsert_returning_id(
+        self,
+        table: str,
+        pk: str,
+        values: Dict[str, Any],
+        update_columns: List[str],
+    ) -> int:
+        """Upsert one row and return its primary key.
+
+        MySQL has neither ``ON CONFLICT`` nor ``RETURNING`` — the two things the
+        importer's original SQLite/Postgres statements relied on. The equivalent
+        is ``ON DUPLICATE KEY UPDATE`` plus ``LAST_INSERT_ID()``.
+
+        The ``pk = LAST_INSERT_ID(pk)`` assignment is the load-bearing part: on
+        the insert path ``LAST_INSERT_ID()`` already returns the new autoincrement
+        id, but on the duplicate path it would otherwise be stale. Assigning the
+        existing row's key through ``LAST_INSERT_ID(expr)`` sets the session
+        value to it, so the following ``SELECT`` returns the right id either way.
+
+        ``update_columns`` is what an existing row gets refreshed to; the unique
+        key that caused the conflict is never in it.
+        """
+        columns = list(values)
+        col_list = ", ".join(f"`{c}`" for c in columns)
+        placeholders = ", ".join(f":{c}" for c in columns)
+        assignments = [f"`{c}` = VALUES(`{c}`)" for c in update_columns]
+        assignments.append(f"`{pk}` = LAST_INSERT_ID(`{pk}`)")
+
+        self.db.execute(
+            text(
+                f"INSERT INTO `{table}` ({col_list}) VALUES ({placeholders}) "
+                f"ON DUPLICATE KEY UPDATE {', '.join(assignments)}"
+            ),
+            values,
+        )
+        return int(self.db.execute(text("SELECT LAST_INSERT_ID()")).scalar())
+
+
     def parse_period_label(self, period_label: str) -> Dict[str, Any]:
         """
         Parse period label like 'Q2-2025' into period details
@@ -87,13 +125,12 @@ class FinancialDataImporter:
             return self.get_company_by_ticker(ticker)
         except ValueError:
             # If company doesn't exist, create it
-            result = self.db.execute(text("""
-                INSERT INTO company (ticker, name) 
-                VALUES (:ticker, :name) 
-                RETURNING company_id
-            """), {"ticker": ticker, "name": name})
-            
-            company_id = result.fetchone()[0]
+            company_id = self._upsert_returning_id(
+                "company",
+                "company_id",
+                {"ticker": ticker, "name": name},
+                ["name"],
+            )
             logger.info(f"Created new company {ticker} with ID {company_id}")
             return company_id
     
@@ -104,22 +141,17 @@ class FinancialDataImporter:
         for label in time_labels:
             period_info = self.parse_period_label(label)
             
-            result = self.db.execute(text("""
-                INSERT INTO period (label, period_type, start_date, end_date)
-                VALUES (:label, :period_type, :start_date, :end_date)
-                ON CONFLICT (label) DO UPDATE SET 
-                    period_type = EXCLUDED.period_type,
-                    start_date = EXCLUDED.start_date,
-                    end_date = EXCLUDED.end_date
-                RETURNING period_id
-            """), {
-                "label": label, 
-                "period_type": period_info['period_type'],
-                "start_date": period_info['start_date'], 
-                "end_date": period_info['end_date']
-            })
-            
-            period_id = result.fetchone()[0]
+            period_id = self._upsert_returning_id(
+                "period",
+                "period_id",
+                {
+                    "label": label,
+                    "period_type": period_info['period_type'],
+                    "start_date": period_info['start_date'],
+                    "end_date": period_info['end_date'],
+                },
+                ["period_type", "start_date", "end_date"],
+            )
             period_mapping[label] = period_id
             
         logger.info(f"Inserted/updated {len(period_mapping)} periods")
@@ -144,18 +176,15 @@ class FinancialDataImporter:
                 continue
                 
             # Insert or get existing statement (master data)
-            result = self.db.execute(text("""
-                INSERT INTO statement (statement_type, title)
-                VALUES (:statement_type, :title)
-                ON CONFLICT (statement_type) DO UPDATE SET
-                    title = EXCLUDED.title
-                RETURNING statement_id
-            """), {
-                "statement_type": statement_type, 
-                "title": statement_titles.get(statement_type)
-            })
-            
-            statement_id = result.fetchone()[0]
+            statement_id = self._upsert_returning_id(
+                "statement",
+                "statement_id",
+                {
+                    "statement_type": statement_type,
+                    "title": statement_titles.get(statement_type),
+                },
+                ["title"],
+            )
             statement_mapping[statement_type] = statement_id
             
         logger.info(f"Inserted/updated {len(statement_mapping)} statements")
@@ -207,18 +236,15 @@ class FinancialDataImporter:
             }
             
             for statement_type in missing_statements:
-                result = self.db.execute(text("""
-                    INSERT INTO statement (statement_type, title)
-                    VALUES (:statement_type, :title)
-                    ON CONFLICT (statement_type) DO UPDATE SET
-                        title = EXCLUDED.title
-                    RETURNING statement_id
-                """), {
-                    "statement_type": statement_type, 
-                    "title": statement_titles.get(statement_type)
-                })
-                
-                statement_id = result.fetchone()[0]
+                statement_id = self._upsert_returning_id(
+                    "statement",
+                    "statement_id",
+                    {
+                        "statement_type": statement_type,
+                        "title": statement_titles.get(statement_type),
+                    },
+                    ["title"],
+                )
                 self._statement_cache[statement_type] = statement_id
                 logger.info(f"Created statement {statement_type} with ID {statement_id}")
         
@@ -246,23 +272,18 @@ class FinancialDataImporter:
         
         # First pass: insert all items without parent relationships
         for idx, item in enumerate(items):
-            result = self.db.execute(text("""
-                INSERT INTO statement_item (statement_id, item_key, title_vi, level, display_order)
-                VALUES (:statement_id, :item_key, :title_vi, :level, :display_order)
-                ON CONFLICT (statement_id, item_key) DO UPDATE SET
-                    title_vi = EXCLUDED.title_vi,
-                    level = EXCLUDED.level,
-                    display_order = EXCLUDED.display_order
-                RETURNING item_id
-            """), {
-                "statement_id": statement_id, 
-                "item_key": item['key'], 
-                "title_vi": item['title'], 
-                "level": item['level'], 
-                "display_order": idx
-            })
-            
-            item_id = result.fetchone()[0]
+            item_id = self._upsert_returning_id(
+                "statement_item",
+                "item_id",
+                {
+                    "statement_id": statement_id,
+                    "item_key": item['key'],
+                    "title_vi": item['title'],
+                    "level": item['level'],
+                    "display_order": idx,
+                },
+                ["title_vi", "level", "display_order"],
+            )
             item_mapping[item['key']] = item_id
         
         # Second pass: establish parent relationships
@@ -318,10 +339,13 @@ class FinancialDataImporter:
                             value = float(value_str)
                             period_id = period_mapping[period_label]
                             
+                            # MySQL's upsert; no id needed back here, so the
+                            # LAST_INSERT_ID dance in ``_upsert_returning_id``
+                            # would be wasted round trips.
                             self.db.execute(text("""
-                                INSERT INTO item_value (item_id, period_id, company_id, value) 
+                                INSERT INTO item_value (item_id, period_id, company_id, value)
                                 VALUES (:item_id, :period_id, :company_id, :value)
-                                ON CONFLICT (item_id, period_id, company_id) DO UPDATE SET value = EXCLUDED.value
+                                ON DUPLICATE KEY UPDATE value = VALUES(value)
                             """), {
                                 "item_id": item_id,
                                 "period_id": period_id,

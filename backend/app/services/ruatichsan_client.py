@@ -23,7 +23,10 @@ Two things make this API awkward enough to want a dedicated client:
     new value has to be persisted or the next refresh fails; the token cache
     handles that and falls back to login if the chain is ever broken.
 
-Access tokens live 15 minutes, refresh tokens 30 days.
+Access tokens live 15 minutes, refresh tokens 30 days. None of that applies to
+:func:`fetch_financial_statements`, which goes through the public route and so
+needs no credentials at all; the login machinery below is for callers that pass
+a token of their own, and as a fallback if that route ever closes.
 
 Configuration (all optional except credentials, when logging in):
 
@@ -61,6 +64,14 @@ _TAG_LEN = 16
 
 # Path segments the API accepts for the reporting period.
 PERIODS = ("quarter", "annual")
+
+# Two routes serve the same statements. The public one needs no Authorization
+# header at all and returns the identical encrypted payload (same AES key, same
+# `fiscalDates`/`cdkt`/`kqkd`/`lctt` shape, 34 quarters / 8-20 years observed),
+# so the default path costs no token, no login and no device slot. The private
+# one is kept for callers who hand us a token of their own.
+PUBLIC_STATEMENTS_PATH = "data/public/financial-statements"
+PRIVATE_STATEMENTS_PATH = "data/financial-statements"
 
 # The server derives the device from this string, so it must not vary between
 # runs — see the module docstring. Point it at your browser's exact UA to share
@@ -329,8 +340,12 @@ def fetch_financial_statements(
 ) -> Any:
     """Fetch and decrypt a ticker's financial statements.
 
-    ``period`` is the API's path segment — ``quarter`` or ``annual``. Retries once
-    with a fresh login if a cached token has expired.
+    ``period`` is the API's path segment — ``quarter`` or ``annual``.
+
+    Goes through :data:`PUBLIC_STATEMENTS_PATH` with no credentials at all, which
+    is why the common case never touches :func:`get_token`. Authentication is
+    used only when the caller supplies ``token``, or if the public route ever
+    starts answering 401/403 — and then a stale cached token is renewed once.
     """
     import requests
 
@@ -338,7 +353,26 @@ def fetch_financial_statements(
     if period not in PERIODS:
         raise RuatichsanError(f"period must be one of {PERIODS}, got {period!r}")
 
-    url = f"{BASE_URL}/data/financial-statements/{period}/{sym}"
+    # Unauthenticated by default: the public route carries the same data, so
+    # there is no reason to spend a token — or a device slot — on it.
+    if token is None:
+        resp = requests.get(
+            f"{BASE_URL}/{PUBLIC_STATEMENTS_PATH}/{period}/{sym}",
+            headers=_headers(),
+            timeout=TIMEOUT,
+        )
+        # Only an auth-shaped refusal means "the public route is gone"; a 404 is
+        # the API saying this symbol has no statements (futures, say), and
+        # logging in would not conjure any.
+        if resp.status_code not in (401, 403):
+            if not resp.ok:
+                raise RuatichsanError(
+                    f"fetch failed for {sym}: HTTP {resp.status_code} — {resp.text[:300]}"
+                )
+            return _read_response(resp)
+        logger.info("public statements route refused (HTTP %s); authenticating", resp.status_code)
+
+    url = f"{BASE_URL}/{PRIVATE_STATEMENTS_PATH}/{period}/{sym}"
     auth_token = token or get_token()
 
     for attempt in (1, 2):

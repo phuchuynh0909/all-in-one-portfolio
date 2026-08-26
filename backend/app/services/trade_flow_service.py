@@ -310,6 +310,12 @@ class TradeFlowService:
         for i in range(n):
             if only_flagged and not is_anomaly[i]:
                 continue
+            burst = df.at[i, "burstiness"]
+            burst = float(burst) if burst is not None and not pd.isna(burst) else 0.0
+            # 1 = peak second equals the window's own mean rate; only clustered
+            # windows (max_trades_per_second / mean) are worth returning.
+            if burst <= 1:
+                continue
             imb = df.at[i, "trade_imbalance"]
             imb = float(imb) if imb is not None and not pd.isna(imb) else 0.0
             rows.append(
@@ -326,7 +332,7 @@ class TradeFlowService:
                     max_trade_size=int(df.at[i, "max_trade_size"] or 0),
                     size_hhi=_f(df.at[i, "size_hhi"]),
                     top_trade_share=_f(df.at[i, "top_trade_share"]),
-                    burstiness=_f(df.at[i, "burstiness"]),
+                    burstiness=burst,
                     median_interarrival_ms=_f(df.at[i, "median_interarrival_ms"]),
                     same_ms_share=_f(df.at[i, "same_ms_share"]),
                     impact=_f(df.at[i, "impact"]),
