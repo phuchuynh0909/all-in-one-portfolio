@@ -331,6 +331,17 @@ def test_stock_events_contribute_no_income(db):
 
 
 async def test_summary_adds_net_dividend_income_to_realized_pl(db, monkeypatch):
+    """``total_realized_pl`` must be trading gains *plus* net dividend income.
+
+    Both terms are non-zero and unequal, so the assertion fails if either is
+    dropped — the earlier version deleted every transaction, leaving
+    ``trading_pl == 0``, and so passed whether or not the trading term was
+    there at all.
+
+    Magnitudes are the ones this portfolio actually uses: prices in the 10-30
+    range (thousands of VND) and quantities in the thousands. That is what makes
+    a raw-VND ``cash_amount`` visible here rather than plausible.
+    """
     from app.db.models.corporate_action import (
         CorporateAction, CorporateActionApplication,
     )
@@ -344,10 +355,20 @@ async def test_summary_adds_net_dividend_income_to_realized_pl(db, monkeypatch):
     db.execute(text("DELETE FROM transactions"))
     db.execute(text("DELETE FROM positions"))
 
-    svc.create_position(db, _position(ticker="SUM", qty="10", price="20"))
+    svc.create_position(db, _position(ticker="SUM", qty="10000", price="20"))
+
+    # A realistic sell: (21.35 - 18.40) * 3,500 - 12.75 = 10,312.25.
+    # Deliberately not a round number, so it cannot coincide with anything else.
+    svc.create_transaction(db, TransactionCreate(
+        ticker="SUM", transaction_type="sell", quantity=Decimal("3500"),
+        price=Decimal("18.40"), close_price=Decimal("21.35"),
+        transaction_date=date(2026, 2, 10), fees=Decimal("12.75"),
+    ))
+
     ca = CorporateAction(
         symbol="SUM", event_id=999300003, name="Trả cổ tức bằng tiền mặt",
         action_type="cash", ex_date=date(2026, 1, 1),
+        # Raw VND, exactly as the title reads — the audit record.
         amount_per_share=Decimal("800"), tax_withheld_pct=Decimal("0.05"),
         title="Trả cổ tức năm 2025 bằng tiền 800 đồng/CP",
         source="dnse_history", status="applied",
@@ -356,16 +377,28 @@ async def test_summary_adds_net_dividend_income_to_realized_pl(db, monkeypatch):
     db.flush()
     db.add(CorporateActionApplication(
         corporate_action_id=ca.id, position_id=None, transaction_id=None,
-        qty_before=Decimal("10"), qty_after=Decimal("10"),
+        qty_before=Decimal("10000"), qty_after=Decimal("10000"),
         price_before=Decimal("20"), price_after=Decimal("20"),
+        # 800 VND x 10,000 shares = 8,000,000 VND = 8,000 thousands of VND,
+        # the same unit as the prices above.
         cash_amount=Decimal("8000"),
     ))
     db.flush()
 
+    trading_pl = svc._calculate_realized_pl(db)
+    dividend_gross, dividend_net = svc._calculate_dividend_income(db)
+
+    # Both terms present, distinguishable, and neither zero.
+    assert trading_pl == Decimal("10312.25")
+    assert dividend_gross == Decimal("8000")
+    assert dividend_net == Decimal("7600")
+    assert trading_pl != dividend_net
+
     summary = await svc.get_portfolio_summary(db)
 
-    assert summary.total_dividend_income_gross == Decimal("8000")
-    assert summary.total_dividend_income == Decimal("7600")
-    # no sells, so realized P/L is the dividend income alone
-    assert summary.total_realized_pl == Decimal("7600")
-    assert summary.total_value == Decimal("300")
+    assert summary.total_dividend_income_gross == dividend_gross
+    assert summary.total_dividend_income == dividend_net
+    # Dropping either term changes this: 10,312.25 or 7,600 alone both fail.
+    assert summary.total_realized_pl == trading_pl + dividend_net
+    assert summary.total_realized_pl == Decimal("17912.25")
+    assert summary.total_value == Decimal("300000")
