@@ -111,9 +111,38 @@ def test_transaction_schema_allows_dividend_rows():
 
     cash = TransactionCreate(
         ticker="TST", transaction_type="dividend_cash", quantity=Decimal("1000"),
-        price=Decimal("800"), transaction_date=date(2026, 1, 1),
+        price=Decimal("0.8"), transaction_date=date(2026, 1, 1),
     )
     assert cash.transaction_type == "dividend_cash"
+
+
+@pytest.mark.parametrize("kind", ["buy", "sell"])
+def test_a_zero_price_buy_or_sell_is_still_rejected(kind):
+    """Relaxing ``price`` to ``ge=0`` for dividend_stock must not cover trades.
+
+    A zero-price buy or sell is a data-entry error that would report a 100%
+    gain on the whole position.
+    """
+    from pydantic import ValidationError
+
+    from app.schemas.portfolio import TransactionCreate
+
+    with pytest.raises(ValidationError, match="greater than 0"):
+        TransactionCreate(
+            ticker="TST", transaction_type=kind, quantity=Decimal("10"),
+            price=Decimal("0"), transaction_date=date(2026, 1, 1),
+        )
+
+
+def test_a_zero_price_stock_dividend_is_still_allowed():
+    """The reason ``ge=0`` exists: bonus shares genuinely cost nothing."""
+    from app.schemas.portfolio import TransactionCreate
+
+    row = TransactionCreate(
+        ticker="TST", transaction_type="dividend_stock", quantity=Decimal("1090"),
+        price=Decimal("0"), transaction_date=date(2026, 1, 1),
+    )
+    assert row.price == Decimal("0")
 
 
 from unittest.mock import Mock

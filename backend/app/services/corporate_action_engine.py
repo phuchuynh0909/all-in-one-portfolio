@@ -92,7 +92,7 @@ def settle(lot: Lot, events: list[Event]) -> list[Settlement]:
                 if event.amount_per_share is None:
                     continue
                 staged.append((event, Decimal(0), event.amount_per_share * opening_qty))
-            else:
+            elif event.action_type == "stock":
                 if event.ratio is None:
                     continue
                 added = shares_added(opening_qty, event.ratio)
@@ -100,6 +100,16 @@ def settle(lot: Lot, events: list[Event]) -> list[Settlement]:
                     continue
                 added_total += added
                 staged.append((event, added, None))
+            else:
+                # An unrecognised type must not fall through to the stock
+                # branch. Rights issues are a named future type: treated as a
+                # bonus issue they would add shares for free that the holder
+                # actually has to pay for, quietly halving the cost basis.
+                raise ValueError(
+                    f"Unsupported corporate action type {event.action_type!r} "
+                    f"on event {event.corporate_action_id}; expected "
+                    "'cash' or 'stock'"
+                )
 
         if not staged:
             continue

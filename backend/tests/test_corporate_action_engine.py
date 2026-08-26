@@ -158,3 +158,17 @@ def test_events_are_applied_in_ex_date_order_regardless_of_input_order():
 def test_stock_event_adding_zero_shares_is_skipped():
     """A tiny lot with a tiny ratio floors to zero: nothing to record."""
     assert settle(lot(qty="5", price="20"), [stock("2026-01-01", "0.08")]) == []
+
+
+def test_an_unknown_action_type_is_rejected_not_treated_as_stock():
+    """Rights issues are a named future type; a silent fallthrough is a bug.
+
+    The stock branch adds shares for free. A rights issue the holder actually
+    pays for would land there and quietly halve the cost basis, so the engine
+    must refuse rather than guess.
+    """
+    import pytest
+
+    rights = Event(7, "rights", date(2026, 6, 1), Decimal("10000"), Decimal("0.5"))
+    with pytest.raises(ValueError, match="rights"):
+        settle(lot(qty="1000", price="20"), [rights])

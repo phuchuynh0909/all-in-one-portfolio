@@ -139,6 +139,10 @@ def test_fetch_history_follows_pages_until_total_reached():
 
     assert [e.event_id for e in events] == [1, 2, 3]
     assert session.get.call_count == 2
+    # The page number must actually advance. Requesting page 1 twice would still
+    # collect three events here — the mock returns whatever is next in the
+    # side_effect list — while silently re-reading the first page in production.
+    assert [c.kwargs["params"]["page"] for c in session.get.call_args_list] == [1, 2]
 
 
 def test_fetch_history_sorts_oldest_first():

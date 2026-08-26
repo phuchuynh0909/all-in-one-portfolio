@@ -197,6 +197,10 @@ def create_manual(db: Session, payload: ManualDividendCreate) -> CorporateAction
 def _load(db: Session, corporate_action_id: int) -> CorporateAction:
     action = db.get(CorporateAction, corporate_action_id)
     if action is None:
+        # "not found" is load-bearing: the route layer matches this exact
+        # substring to return HTTP 404, and every other ValueError becomes a
+        # 409. Rewording this message silently turns a missing id into a
+        # conflict; conversely, no other message here may contain the phrase.
         raise ValueError(f"Corporate action {corporate_action_id} not found")
     return action
 

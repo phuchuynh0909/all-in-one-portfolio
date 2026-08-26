@@ -2,22 +2,37 @@
 from __future__ import annotations
 
 import pytest
-from sqlalchemy import text
-from sqlalchemy.exc import OperationalError
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.pool import NullPool
 
 from app.core.settings import settings
 from app.db.base import SessionLocal, engine
+
+# This probe runs at import time, so collection blocks on it. Without a timeout
+# an unreachable host hangs until the OS gives up on the TCP connect — two
+# transient blips have already been observed. Probed on a throwaway engine so
+# the application's own pool settings are left alone.
+_PROBE_CONNECT_TIMEOUT = 3
 
 
 def mysql_available() -> bool:
     if not settings.database_url.startswith("mysql"):
         return False
+    probe = create_engine(
+        settings.database_url,
+        poolclass=NullPool,
+        connect_args={"connect_timeout": _PROBE_CONNECT_TIMEOUT},
+    )
     try:
-        with engine.connect() as conn:
+        with probe.connect() as conn:
             conn.execute(text("SELECT 1"))
         return True
-    except OperationalError:
+    except (SQLAlchemyError, OSError):
+        # Any failure to reach the server means "skip", not "crash collection".
         return False
+    finally:
+        probe.dispose()
 
 
 requires_mysql = pytest.mark.skipif(
