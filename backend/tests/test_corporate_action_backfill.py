@@ -26,7 +26,9 @@ EXPECTED = {
     9:  (Decimal("107000.000000"), Decimal("13.233645")),
     1:  (Decimal("36594.000000"), Decimal("12.626168")),
 }
-EXPECTED_GROSS_CASH = Decimal("307044000")
+# Thousands of VND, the unit every money column in positions/transactions uses.
+# 307,044 price units == 307,044,000 VND of gross cash dividends.
+EXPECTED_GROSS_CASH = Decimal("307044")
 EXPECTED_SHARES_ADDED = Decimal("35523")
 
 

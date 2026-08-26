@@ -26,6 +26,16 @@ from app.services.dnse_corporate_actions import (
 # figure can change without a migration; gross stays the factual record.
 DEFAULT_CASH_TAX_PCT = Decimal("0.05")
 
+# DNSE reports cash dividends in VND per share ("800 đồng/CP") while every
+# money column in positions/transactions is in thousands of VND
+# (purchase_price 24.10 == 24,100 VND). Convert once, here, so the ledger,
+# the transaction rows and the portfolio summary all speak the same units.
+#
+# ``corporate_action.amount_per_share`` deliberately stays in raw VND: it is the
+# audit record of what the title literally said. This constant is the single
+# boundary where that figure enters the domain's own units.
+VND_PER_PRICE_UNIT = Decimal(1000)
+
 
 def held_symbols(db: Session) -> List[str]:
     """Distinct tickers with an open lot, upper-cased and sorted."""
@@ -264,6 +274,13 @@ def apply_action(db: Session, corporate_action_id: int) -> ApplyResult:
                 events,
             ):
                 source = by_id[s.corporate_action_id]
+                # The engine is unit-agnostic and settles in whatever units the
+                # event carried, i.e. raw VND. Everything written below is in
+                # price units, so the conversion happens exactly here.
+                cash_amount = (
+                    s.cash_amount / VND_PER_PRICE_UNIT
+                    if s.cash_amount is not None else None
+                )
                 transaction = Transaction(
                     ticker=action.symbol,
                     transaction_type=(
@@ -273,7 +290,7 @@ def apply_action(db: Session, corporate_action_id: int) -> ApplyResult:
                         s.qty_before if s.action_type == "cash" else s.shares_added
                     ),
                     price=(
-                        source.amount_per_share
+                        source.amount_per_share / VND_PER_PRICE_UNIT
                         if s.action_type == "cash" else Decimal(0)
                     ),
                     transaction_date=source.ex_date,
@@ -301,13 +318,13 @@ def apply_action(db: Session, corporate_action_id: int) -> ApplyResult:
                     qty_after=s.qty_after,
                     price_before=s.price_before,
                     price_after=s.price_after,
-                    cash_amount=s.cash_amount,
+                    cash_amount=cash_amount,
                 ))
                 applied.append(AppliedLot(
                     position_id=position.id,
                     qty_before=s.qty_before, qty_after=s.qty_after,
                     price_before=s.price_before, price_after=s.price_after,
-                    shares_added=s.shares_added, cash_amount=s.cash_amount,
+                    shares_added=s.shares_added, cash_amount=cash_amount,
                     transaction_id=transaction.id,
                 ))
 

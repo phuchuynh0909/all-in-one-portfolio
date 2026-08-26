@@ -304,11 +304,42 @@ def test_apply_cash_dividend_leaves_the_lot_alone(db):
 
     result = cas.apply_action(db, ca.id)
 
-    assert result.total_cash_gross == Decimal("800000")
+    # 800 VND/share x 1,000 shares = 800,000 VND = 800 thousands of VND.
+    assert result.total_cash_gross == Decimal("800")
     assert result.total_shares_added == Decimal("0")
     refreshed = portfolio_service.get_position(db, lot.id)
     assert refreshed.quantity == Decimal("1000.000000")
     assert refreshed.purchase_price == Decimal("20.000000")
+
+
+def test_cash_dividend_transaction_price_is_in_price_units(db):
+    """The booked ``price`` must be in thousands of VND, like every other row.
+
+    Regression guard for the unit bug: DNSE says "800 đồng/CP", but a
+    ``transactions.price`` of 800 would sit alongside purchase prices around 20
+    and inflate the portfolio's realized P/L by three orders of magnitude.
+    """
+    db.execute(text("DELETE FROM positions"))
+    lot = _lot(db, qty="1000", price="20")
+    ca = _pending(db, name="Trả cổ tức bằng tiền mặt", action_type="cash",
+                  ratio=None, amount_per_share=Decimal("800"),
+                  tax_withheld_pct=Decimal("0.05"),
+                  title="Trả cổ tức năm 2025 bằng tiền 800 đồng/CP")
+
+    result = cas.apply_action(db, ca.id)
+
+    tx = db.execute(text(
+        "SELECT transaction_type, quantity, price FROM transactions WHERE id = :i"
+    ), {"i": result.lots[0].transaction_id}).one()
+    assert tx.transaction_type == "dividend_cash"
+    assert tx.quantity == Decimal("1000.000000")
+    # 800 VND == 0.8 thousands of VND, not 800.
+    assert tx.price == Decimal("0.800000")
+    # The audit record stays faithful to the title's raw VND figure.
+    assert db.get(CorporateAction, ca.id).amount_per_share == Decimal("800.000000")
+    # A dividend per share is a fraction of the share price, never a multiple.
+    lot_price = portfolio_service.get_position(db, lot.id).purchase_price
+    assert tx.price < lot_price
 
 
 def test_apply_skips_lots_bought_after_the_ex_date(db):
@@ -434,7 +465,9 @@ def test_applying_one_event_settles_its_whole_ex_date_group(db):
     result = cas.apply_action(db, bonus.id)
 
     assert sorted(result.applied_action_ids) == sorted([bonus.id, cash_ca.id])
-    assert result.total_cash_gross == Decimal("198720000")
+    # 3000 VND x 66,240 pre-bonus shares = 198,720,000 VND = 198,720 price units.
+    # The post-bonus 79,488 shares would give 238,464 — the bug this guards.
+    assert result.total_cash_gross == Decimal("198720")
     assert result.total_shares_added == Decimal("13248")
     refreshed = portfolio_service.get_position(db, lot.id)
     assert refreshed.quantity == Decimal("79488.000000")
@@ -448,7 +481,8 @@ def test_applying_the_cash_half_first_gives_the_same_result(db):
 
     result = cas.apply_action(db, cash_ca.id)
 
-    assert result.total_cash_gross == Decimal("198720000")
+    # Still the pre-bonus 66,240 shares: 198,720 price units, not 238,464.
+    assert result.total_cash_gross == Decimal("198720")
     assert portfolio_service.get_position(db, lot.id).quantity == Decimal("79488.000000")
     assert db.get(CorporateAction, bonus.id).status == "applied"
 
