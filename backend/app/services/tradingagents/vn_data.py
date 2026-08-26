@@ -26,6 +26,7 @@ written against those shapes.
 """
 from __future__ import annotations
 
+import functools
 import logging
 import os
 from datetime import datetime
@@ -36,6 +37,144 @@ import pandas as pd
 from .utils import fmt_billion, fmt_count, fmt_ratio, iso_day, lookback_days
 
 logger = logging.getLogger(__name__)
+
+
+# ===========================================================================
+# Tool fail-safety
+#
+# Every function in VN_VENDOR_METHODS is reached through
+# ``interface.route_to_vendor``, which re-raises whatever a vendor throws once
+# no other vendor can serve the call — and only ``macro_data`` and
+# ``prediction_markets`` are in its OPTIONAL_CATEGORIES. "portfolio" is the sole
+# vendor registered for these methods, so an exception anywhere in a price,
+# indicator, news or fundamentals tool ends the whole run. The agents, though,
+# can work around a missing input: they are prompted to report data as
+# unavailable rather than invent it. So a tool degrades to a sentinel instead of
+# raising, and the run continues with one analyst short of an input.
+#
+# The guard is deliberately two-layered. :func:`failsafe` at the tool boundary
+# is the backstop that must never let anything through; :func:`_best_effort`
+# sits around each individual source *inside* a tool, so a broken tier degrades
+# to the next one instead of discarding the tiers that did work.
+# ===========================================================================
+
+_PASSTHROUGH: tuple[type[BaseException], ...] | None = None
+
+
+class _NoMarketData(RuntimeError):
+    """Local stand-in for the framework's ``NoMarketDataError``.
+
+    Raised when the vendored TradingAgents tree is not importable — a tool still
+    has to distinguish "this symbol has no rows" from "this tool broke", and
+    without the framework there is no router to render the distinction, so
+    :func:`failsafe` renders it instead. Same constructor as the real class so
+    the raise sites do not care which one they got.
+    """
+
+    def __init__(self, symbol: str, canonical: str, detail: str = ""):
+        super().__init__(f"{symbol}: {detail}" if detail else symbol)
+        self.symbol = symbol
+        self.canonical = canonical
+        self.detail = detail
+
+
+def _no_market_data_cls() -> type[BaseException]:
+    """The exception class meaning "no usable rows for this symbol".
+
+    The framework's own class when it is installed — the router turns that into
+    its NO_DATA_AVAILABLE sentinel, which is richer than anything written here —
+    and :class:`_NoMarketData` otherwise.
+    """
+    types_ = _passthrough_types()
+    return types_[0] if types_ else _NoMarketData
+
+
+def _passthrough_types() -> tuple[type[BaseException], ...]:
+    """Exception types the router renders better than a sentinel here would.
+
+    ``NoMarketDataError`` is a verdict, not a failure: ``route_to_vendor`` turns
+    it into NO_DATA_AVAILABLE naming the symbol, whether it resolved, and why
+    (invalid, uncovered, delisted, stale). Catching it here would trade that for
+    something vaguer. Resolved once and cached — the framework is an optional
+    dependency, so the import can legitimately fail.
+    """
+    global _PASSTHROUGH
+    if _PASSTHROUGH is None:
+        try:
+            from tradingagents.dataflows.symbol_utils import NoMarketDataError
+
+            _PASSTHROUGH = (NoMarketDataError,)
+        except Exception:  # noqa: BLE001 — stub install; nothing to pass through
+            _PASSTHROUGH = ()
+    return _PASSTHROUGH
+
+
+def failsafe(sentinel: str, what: str):
+    """Make a vendor tool return a sentinel string for *any* failure.
+
+    Also covers the quieter failure of returning nothing usable: a tool that
+    answers ``None`` or an empty string sends an analyst into its report with a
+    blank where evidence should be, which reads to the model as "no constraint"
+    rather than "no data".
+
+    :arg sentinel: the all-caps token the tool's own messages already use, so
+        the model sees one vocabulary for "this input is missing".
+    :arg what: the missing thing, phrased to follow "could not retrieve".
+    """
+
+    def decorate(fn):
+        @functools.wraps(fn)
+        def wrapper(*args, **kwargs):
+            try:
+                result = fn(*args, **kwargs)
+            except _passthrough_types():
+                raise
+            except _NoMarketData as exc:
+                # Reached only without the framework, so there is no router to
+                # render this; mirror the sentinel it would have produced.
+                logger.info("Tool %s: no market data (%s)", fn.__name__, exc.detail)
+                return (
+                    f"NO_DATA_AVAILABLE: No usable market data for "
+                    f"'{exc.symbol}' ({exc.detail}). The symbol may be invalid, "
+                    f"delisted or not covered. Do not estimate or fabricate "
+                    f"values — report that data is unavailable for this symbol."
+                )
+            except Exception as exc:  # noqa: BLE001 — a data gap must not kill the graph
+                # exception(), not warning(): this is the only place a genuine
+                # bug in a tool surfaces now that it no longer propagates.
+                logger.exception("Tool %s failed", fn.__name__)
+                return (
+                    f"{sentinel}: could not retrieve {what} "
+                    f"({type(exc).__name__}: {exc}). Proceed without it; do not "
+                    f"fabricate figures, headlines or dates."
+                )
+            if isinstance(result, str) and result.strip():
+                return result
+            logger.warning(
+                "Tool %s returned no usable text (%s)", fn.__name__, type(result).__name__
+            )
+            return (
+                f"{sentinel}: no {what} was returned. Proceed without it; do not "
+                f"fabricate figures, headlines or dates."
+            )
+
+        return wrapper
+
+    return decorate
+
+
+def _best_effort(label: str, fn, *args: Any, **kwargs: Any) -> Any:
+    """Call one source inside a tool; return None instead of raising.
+
+    Lets a multi-tier tool keep degrading — a knowledge-base error should reach
+    the web-search tier, not abort the tool that would have called it.
+    """
+    try:
+        return fn(*args, **kwargs)
+    except Exception as exc:  # noqa: BLE001 — the next tier is the recovery
+        logger.warning("%s failed: %s", label, exc)
+        return None
+
 
 # ===========================================================================
 # Configuration & constants
@@ -220,10 +359,9 @@ _WICHART_NEWS_SUMMARY_CHARS = 700
 # TRADINGAGENTS_NEWS_QUERIES (comma-separated) — defaults blend Vietnam-market
 # and global-macro angles.
 _DEFAULT_NEWS_QUERIES = (
-    "Vietnam stock market VN-Index news",
-    "State Bank of Vietnam interest rate inflation",
-    "Vietnam economy GDP export FDI outlook",
-    "global markets Fed interest rates macro outlook",
+    "Báo cáo và triển vọng vĩ mô",
+    "Báo cáo kinh tế",
+    "Cập nhật diễn biến dòng tiền",
 )
 
 # KB chunks pulled per macro query. Deliberately below the company-level default:
@@ -387,15 +525,13 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
     ``NoMarketDataError`` when nothing is available so the router emits its
     standard sentinel.
     """
-    from tradingagents.dataflows.symbol_utils import NoMarketDataError
-
     curr = pd.to_datetime(curr_date)
     start = (curr - pd.DateOffset(years=2)).to_pydatetime()
     df = _load_ohlcv_frame(symbol, start=start, end=curr.to_pydatetime())
     if not df.empty:
         df = df[df["Date"] <= curr].reset_index(drop=True)
     if df.empty:
-        raise NoMarketDataError(
+        raise _no_market_data_cls()(
             symbol, symbol.upper(), f"no OHLCV rows on or before {curr_date}"
         )
     return df
@@ -406,15 +542,14 @@ def load_ohlcv(symbol: str, curr_date: str) -> pd.DataFrame:
 # ---------------------------------------------------------------------------
 
 
+@failsafe("PRICE_DATA_UNAVAILABLE", "the OHLCV price history")
 def get_stock_data(symbol: str, start_date: str, end_date: str) -> str:
     """OHLCV price history for a ticker over a date range (CSV, like yfinance)."""
-    from tradingagents.dataflows.symbol_utils import NoMarketDataError
-
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
     df = _load_ohlcv_frame(symbol, start=start, end=end)
     if df.empty:
-        raise NoMarketDataError(
+        raise _no_market_data_cls()(
             symbol, symbol.upper(), f"no rows between {start_date} and {end_date}"
         )
 
@@ -591,6 +726,7 @@ _CUSTOM_INDICATORS: dict[str, Any] = {
 }
 
 
+@failsafe("INDICATOR_UNAVAILABLE", "this technical indicator")
 def get_indicators(
     symbol: str,
     indicator: str,
@@ -923,6 +1059,7 @@ def _sector_enabled() -> bool:
     )
 
 
+@failsafe("NEWS_UNAVAILABLE", "company and sector news")
 def get_news(ticker: str, start_date: str, end_date: str) -> str:
     """Company news **plus sector context** for the News & Sentiment analysts.
 
@@ -933,14 +1070,68 @@ def get_news(ticker: str, start_date: str, end_date: str) -> str:
     Set ``TRADINGAGENTS_SECTOR_ANALYST=0`` to serve company news only.
     """
     sym = ticker.upper()
-    company = _company_news(sym, start_date, end_date)
+    # The two halves are guarded apart: a company-news failure should still
+    # leave the analyst the sector view, and vice versa. Losing both is what the
+    # tool-level sentinel is for.
+    company = _best_effort(f"company_news[{sym}]", _company_news, sym, start_date, end_date)
+    if not company:
+        company = (
+            f"NEWS_UNAVAILABLE: could not build company news for {sym}. "
+            f"Do not fabricate headlines."
+        )
     if not _sector_enabled():
         return company
 
     from . import sector_analyst
 
-    sector = sector_analyst.build_sector_section(sym, end_date)
+    sector = _best_effort(
+        f"sector_section[{sym}]", sector_analyst.build_sector_section, sym, end_date
+    )
     return f"{company}\n\n---\n\n{sector}" if sector else company
+
+
+@failsafe("KB_UNAVAILABLE", "knowledge base research")
+def search_knowledge_base(query: str, ticker: str | None = None) -> str:
+    """Semantic search over our embedded research, on the analyst's own question.
+
+    ``get_news`` and ``get_global_news`` also read the knowledge base, but as
+    tier 1 of a tiered tool firing one fixed query. This exposes it directly, so
+    the analyst asks the question its report actually needs and can rephrase, or
+    come at the material from another angle, instead of being handed whatever one
+    canned query happened to retrieve.
+
+    ``ticker`` restricts hits to that symbol's research; omit it for macro,
+    strategy and sector questions, which are tagged market-wide or to other
+    symbols.
+
+    Deliberately knowledge-base-only: a miss says so rather than substituting a
+    web result. That is what lets the model tell "we hold no research on this"
+    apart from "the open web says …", and makes rephrasing worth its while.
+    """
+    from . import kb_search
+
+    sym = ticker.strip().upper() if ticker and ticker.strip() else None
+    hits = kb_search.search(query, symbols=[sym] if sym else None)
+
+    if not hits:
+        logger.info("search_knowledge_base: MISS q=%r ticker=%s", query, sym or "-")
+        scope = f" tagged {sym}" if sym else ""
+        return (
+            f"NO_KB_MATCH: no research chunk{scope} scored above the relevance "
+            f"threshold for {query!r}. Rephrase in Vietnamese or ask something "
+            f"broader; for dated headlines and macro releases use get_news, "
+            f"get_global_news or get_macro_indicators instead. Do not fabricate "
+            f"research findings."
+        )
+
+    logger.info(
+        "search_knowledge_base: HIT %d chunk(s) q=%r ticker=%s",
+        len(hits),
+        query,
+        sym or "-",
+    )
+    header = f"Knowledge-base research for {sym}" if sym else "Knowledge-base research"
+    return kb_search.format_hits(header, hits)
 
 
 # ---------------------------------------------------------------------------
@@ -1015,6 +1206,7 @@ def _vn_macro_stream_section(curr_date: str | None, look_back_days: int) -> str 
     return "\n\n".join(parts)
 
 
+@failsafe("GLOBAL_NEWS_UNAVAILABLE", "macro and market news")
 def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
     """Macro/market news, internal sources first.
 
@@ -1047,23 +1239,33 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
     used_web = False
 
     for query in _news_queries():
-        # Tier 1: knowledge base. Unfiltered by symbol — macro topics are not
-        # tied to one ticker. Returns [] when disabled/unreachable.
-        hits = kb_search.search(query, top_k=_GLOBAL_KB_TOP_K)
+        # Tier 1: knowledge base. Market-wide chunks only (payload symbol="");
+        # company reports are retrieved via get_news. Returns [] when
+        # disabled/unreachable.
+        hits = kb_search.search(query, symbols=[""], top_k=_GLOBAL_KB_TOP_K)
         if hits:
             fresh = [h for h in hits if _kb_hit_key(h) not in seen]
             seen.update(_kb_hit_key(h) for h in fresh)
-            if fresh:
+            block = (
+                _best_effort("global_news kb rendering", kb_search.format_hits, query, fresh)
+                if fresh
+                else None
+            )
+            if block:
                 logger.info(
                     "global_news: tier 1 knowledge base HIT for %r (%d fresh chunk(s))",
                     query, len(fresh),
                 )
-                sections.append(kb_search.format_hits(query, fresh))
+                sections.append(block)
                 sections.append("")
                 used_kb = True
-            # Hits that were all shown under an earlier query still count as
-            # covered: don't spend a lower tier re-answering the same topic.
-            continue
+                continue
+            if not fresh:
+                # Hits that were all shown under an earlier query still count as
+                # covered: don't spend a lower tier re-answering the same topic.
+                continue
+            # Fresh hits that would not render: the topic is unanswered after
+            # all, so leave it to a lower tier rather than silently dropping it.
         uncovered.append(query)
     if uncovered:
         logger.info("global_news: tier 1 knowledge base left uncovered: %s", uncovered)
@@ -1085,7 +1287,13 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
             if used_feed and _is_vn_query(query):
                 continue
             logger.info("global_news: tier 3 live web search for %r", query)
-            sections.append(ws.search_and_format(query, max_results=per_query, days=days))
+            block = _best_effort(
+                "global_news web search", ws.search_and_format, query,
+                max_results=per_query, days=days,
+            )
+            if not block:
+                continue
+            sections.append(block)
             sections.append("")
             used_web = True
     elif uncovered:
@@ -1125,6 +1333,7 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
     return "\n".join([header, "", *sections, footer])
 
 
+@failsafe("INSIDER_DATA_UNAVAILABLE", "insider transactions")
 def get_insider_transactions(ticker: str) -> str:
     return (
         f"INSIDER_DATA_UNAVAILABLE: No insider-transaction feed is configured for "
@@ -1211,6 +1420,7 @@ def _macro_item_block(item: dict[str, Any], older: list[dict[str, Any]]) -> str:
     return "\n\n".join(lines)
 
 
+@failsafe("MACRO_DATA_UNAVAILABLE", "Vietnamese macro releases")
 def get_macro_indicators(
     indicator: str | None = None,
     curr_date: str | None = None,
@@ -1292,7 +1502,19 @@ def get_macro_indicators(
     shown = list(series.values())[:_MACRO_MAX_ITEMS]
 
     heading = f"# Vietnam macro — {scope} ({start} → {end})"
-    blocks = [_macro_item_block(group[0], group[1:]) for group in shown]
+    # Per release: the feed mixes item types, and one with an unexpected shape
+    # should cost its own block, not the digest.
+    blocks = []
+    for group in shown:
+        block = _best_effort("macro item block", _macro_item_block, group[0], group[1:])
+        if block:
+            blocks.append(block)
+    if not blocks:
+        return (
+            f"MACRO_DATA_UNAVAILABLE: the Vietnamese macro feed returned "
+            f"{len(items)} release(s) between {start} and {end} but none could be "
+            f"read. Do not fabricate macro figures."
+        )
 
     # The substitution warning leads, so the model reads it before the data it
     # qualifies; provenance and truncation trail.
@@ -1318,10 +1540,12 @@ def get_macro_indicators(
     return "\n\n".join([heading, *lead, *blocks, *trailer])
 
 
+@failsafe("PREDICTION_MARKETS_UNAVAILABLE", "event probabilities")
 def get_prediction_markets(*args, **kwargs) -> str:
     return (
         "PREDICTION_MARKETS_UNAVAILABLE: No prediction-market vendor is configured "
-        "for this deployment. Proceed without event probabilities."
+        "for this deployment. Proceed without event probabilities; do not "
+        "fabricate them."
     )
 
 
@@ -1371,10 +1595,20 @@ def _statement_table(
 
     kept = 0
     for row in rows:
-        values = row[-len(dates):][-periods:]
-        if all(v in (0, None) for v in values):
+        # Per row: the chart of accounts is wide and not uniformly shaped, and a
+        # single odd line item should not cost the statement. Note the handler
+        # touches only ``repr`` — anything that indexes ``row`` would raise again
+        # for exactly the rows that land here.
+        try:
+            label = row[0]
+            values = row[-len(dates):][-periods:]
+            if all(v in (0, None) for v in values):
+                continue
+            rendered = " | ".join(fmt_billion(v) for v in values)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Skipping unreadable %s row %s: %s", key, repr(row)[:60], exc)
             continue
-        lines.append(f"| {row[0]} | " + " | ".join(fmt_billion(v) for v in values) + " |")
+        lines.append(f"| {label} | " + rendered + " |")
         kept += 1
         if max_rows and kept >= max_rows:
             lines.append(f"| … ({len(rows) - kept}+ further line items omitted) | " + " | " * len(shown_dates))
@@ -1402,14 +1636,17 @@ def _statement_tool(ticker: str, freq: str | None, key: str) -> str:
     )
 
 
+@failsafe("FUNDAMENTALS_UNAVAILABLE", "the balance sheet")
 def get_balance_sheet(ticker: str, freq: str = "quarterly", curr_date: str | None = None) -> str:
     return _statement_tool(ticker, freq, "cdkt")
 
 
+@failsafe("FUNDAMENTALS_UNAVAILABLE", "the income statement")
 def get_income_statement(ticker: str, freq: str = "quarterly", curr_date: str | None = None) -> str:
     return _statement_tool(ticker, freq, "kqkd")
 
 
+@failsafe("FUNDAMENTALS_UNAVAILABLE", "the cash flow statement")
 def get_cashflow(ticker: str, freq: str = "quarterly", curr_date: str | None = None) -> str:
     return _statement_tool(ticker, freq, "lctt")
 
@@ -1420,6 +1657,7 @@ def get_cashflow(ticker: str, freq: str = "quarterly", curr_date: str | None = N
 # and the ownership structure come from 24hmoney's company-index endpoint.
 
 
+@failsafe("FUNDAMENTALS_UNAVAILABLE", "the fundamentals snapshot")
 def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
     """Valuation, profitability and ownership snapshot — the analyst's overview.
 
