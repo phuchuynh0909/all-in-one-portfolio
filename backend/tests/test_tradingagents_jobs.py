@@ -144,3 +144,66 @@ def test_a_job_runs_with_nobody_watching():
 
     assert job.done
     assert ("done", {}) in job.events
+
+
+# --- subscribing ------------------------------------------------------------
+
+
+def test_a_subscriber_receives_the_whole_run():
+    job = jobs.start(
+        "VCG", "2026-08-27", make_stream([("started", {}), ("node", {}), ("done", {})])
+    )
+
+    assert list(jobs.subscribe(job)) == [("started", {}), ("node", {}), ("done", {})]
+
+
+def test_a_late_subscriber_replays_from_the_first_event():
+    # The second tab on a run already in progress must see the reports that have
+    # already been produced, not just whatever happens next.
+    job = jobs.start("VCG", "2026-08-27", make_stream([("started", {}), ("done", {})]))
+    wait_for_done(job)
+
+    assert list(jobs.subscribe(job)) == [("started", {}), ("done", {})]
+
+
+def test_closing_a_subscriber_leaves_the_job_running():
+    # The regression this whole change exists to prevent. Before it, closing the
+    # consumer closed the runner's generator and killed the analysis.
+    gate = threading.Event()
+    events = [("started", {}), ("node", {}), ("done", {})]
+    job = jobs.start("VCG", "2026-08-27", make_stream(events, gate))
+
+    stream = jobs.subscribe(job)
+    gate.set()
+    assert next(stream) == ("started", {})
+    stream.close()  # the client hung up
+
+    wait_for_done(job)
+    assert job.events == events, "the run must finish regardless of who is watching"
+
+
+def test_two_subscribers_both_see_everything():
+    gate = threading.Event()
+    job = jobs.start("VCG", "2026-08-27", make_stream([("started", {}), ("done", {})], gate))
+    gate.set()
+
+    first = list(jobs.subscribe(job))
+    second = list(jobs.subscribe(job))
+
+    assert first == second == [("started", {}), ("done", {})]
+
+
+def test_a_subscriber_of_a_failing_run_sees_the_error_and_stops():
+    def factory():
+        def generator():
+            yield ("started", {})
+            raise RuntimeError("boom")
+
+        return generator()
+
+    job = jobs.start("VCG", "2026-08-27", factory)
+
+    received = list(jobs.subscribe(job))
+
+    assert received[0] == ("started", {})
+    assert received[-1][0] == "error"

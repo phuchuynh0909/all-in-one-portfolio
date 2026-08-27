@@ -138,3 +138,35 @@ def _unregister(job: Job) -> None:
         # its predecessor's teardown.
         if _running.get(job.key) is job:
             del _running[job.key]
+
+
+def subscribe(job: Job) -> EventStream:
+    """Yield everything the job has emitted, then follow it live until done.
+
+    Always starts from event zero, so attaching to a run already in progress
+    replays the reports it has already produced rather than dropping the viewer
+    into the middle.
+
+    Closing this generator ends the subscription and nothing else — that is the
+    whole point of the module. The job keeps running.
+
+    The wait is given a timeout so a subscriber cannot be stranded forever by a
+    worker that died without notifying; every state change notifies, so the
+    timeout is a backstop rather than a poll interval.
+    """
+    index = 0
+    while True:
+        with job.cond:
+            while len(job.events) == index and not job.done:
+                job.cond.wait(timeout=1.0)
+            pending = job.events[index:]
+            index += len(pending)
+            exhausted = job.done and index == len(job.events)
+
+        # Yielded outside the lock: a slow consumer must not block the worker
+        # from appending, nor other subscribers from reading.
+        for event in pending:
+            yield event
+
+        if exhausted:
+            return
