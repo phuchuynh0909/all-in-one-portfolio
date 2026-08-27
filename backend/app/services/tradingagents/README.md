@@ -233,7 +233,20 @@ Two things this depends on:
   a uniform wrapper would sever config propagation for the tool nodes and with it
   their tracing. Hence a callback handler.
 
-**Cancelled runs.** Closing the graph on a client disconnect raises
+**Background runs.** `analyze/stream` starts a job (`jobs.py`) and subscribes to
+it; the job drains the runner on its own thread. Closing the connection detaches
+the viewer — the analysis finishes and saves to ClickHouse regardless, and is
+found afterwards in the history list. There is no cancel endpoint: a started run
+always completes, so `TRADINGAGENTS_MAX_CONCURRENT_RUNS` (default 3) is what
+bounds the cost of a mistyped ticker. Over the cap is a 429; an unreachable LLM
+backend is a 503. Asking for a ticker+date already in flight attaches to that run
+and replays it from its first event rather than starting a second.
+
+Jobs are in-process and die with it — including on every `--reload` in dev. The
+checkpointer makes that recoverable: a re-run resumes from the last completed
+node.
+
+**Cancelled runs.** Closing the graph on shutdown raises
 `GeneratorExit`, and LangGraph reports any `BaseException` out of `Pregel.stream`
 to the callback manager as a chain error — so an abandoned analysis would
 otherwise land in LangSmith as a failure whose error is three chained

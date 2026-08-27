@@ -1425,10 +1425,11 @@ def run_analysis_stream(
         # ``{node name: what it wrote}``.
         #
         # The generator is bound to a name rather than iterated inline so that it
-        # can be shut down deliberately. An SSE client that goes away — the Stop
-        # button, a navigation, a dropped connection — closes *this* generator
-        # while it is parked on one of the yields below, and Python raises
-        # GeneratorExit there. Whatever is left of the graph run then has to be
+        # can be shut down deliberately. An SSE client that goes away no longer
+        # reaches here — the job in ``jobs.py`` owns the run — so the one thing
+        # that closes *this* generator now is application shutdown, performed by
+        # the job's own worker thread. Python raises GeneratorExit at whichever
+        # yield below is parked. Whatever is left of the graph run then has to be
         # unwound here, in this thread and before the ``finally`` releases the
         # checkpointer, or the graph's own cleanup writes its last checkpoint
         # through a closed SQLite connection from whichever thread the garbage
