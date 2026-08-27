@@ -211,6 +211,38 @@ than failing an export on every batch. `LANGCHAIN_*` spellings of these vars are
 accepted and mirrored. See `langsmith_enabled()` and `_apply_langsmith_config()`
 in `runner.py`.
 
+**Per-node progress and failures.** `NodeProgressLogger`
+(`vendor/TradingAgents/tradingagents/graph/instrumentation.py`) rides in on the
+invocation config and logs each node's start, duration and failure, keyed off the
+`langgraph_node` metadata LangGraph stamps on every node run. The runner streams
+`["values", "updates"]` rather than just `"values"`, so the `node` SSE event now
+carries the agent's real name (`Bull Researcher`) instead of a bare step counter,
+and the `error` event names the node that raised.
+
+Two things this depends on:
+
+* **The logging bridge** (`app/core/logging_bridge.py`, installed in `main.py`).
+  This service and the whole vendored package log through stdlib `logging`, and
+  uvicorn leaves the root logger at WARNING with no handlers — so before the
+  bridge existed, none of it reached the container logs at all. Set
+  `TRADINGAGENTS_LOG_LEVEL=WARNING` to drop the per-node commentary and keep only
+  failures; it defaults to `INFO`.
+* **Not wrapping the nodes.** Nodes come in three shapes — a plain function, a
+  `functools.partial` and a `ToolNode` (a Runnable) — and LangGraph decides
+  whether to pass a node its `config` by inspecting the callable's signature, so
+  a uniform wrapper would sever config propagation for the tool nodes and with it
+  their tracing. Hence a callback handler.
+
+**Cancelled runs.** Closing the graph on a client disconnect raises
+`GeneratorExit`, and LangGraph reports any `BaseException` out of `Pregel.stream`
+to the callback manager as a chain error — so an abandoned analysis would
+otherwise land in LangSmith as a failure whose error is three chained
+`GeneratorExit` tracebacks. The runner patches the run once the export has
+flushed, replacing that with a one-line reason and adding a `cancelled` tag;
+exclude `cancelled` to get a true error rate. The run still shows as errored —
+LangSmith's patch endpoint cannot clear an error, only replace it. See
+`_mark_langsmith_cancelled()`.
+
 > The default endpoint is `http://host.docker.internal:11434/v1` so the
 > containerized backend reaches host-run Ollama out of the box. Running the
 > backend outside Docker? Override with

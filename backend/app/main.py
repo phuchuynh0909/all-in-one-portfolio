@@ -7,6 +7,7 @@ from fastapi_cache.decorator import cache
 from loguru import logger
 from functools import wraps
 
+from app.core.logging_bridge import install_logging_bridge
 from app.core.settings import settings
 from app.api.v1.routes.health import router as health_router
 from app.api.v1.routes.portfolio import router as portfolio_router
@@ -34,6 +35,11 @@ from app.api.v1.routes.corporate_actions import router as corporate_actions_rout
 
 
 def get_app() -> FastAPI:
+    # Before anything else builds a logger: the tradingagents runner and the
+    # vendored package log through stdlib logging, which reaches nothing until
+    # this points it at loguru. See app/core/logging_bridge.py.
+    install_logging_bridge()
+
     app = FastAPI(title=settings.project_name, version="0.1.0")
 
     app.add_middleware(

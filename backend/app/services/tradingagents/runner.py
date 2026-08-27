@@ -1121,7 +1121,7 @@ def _apply_langsmith_config(
     trade_date: str,
     analysts: tuple[str, ...],
     run_id: uuid.UUID,
-) -> None:
+) -> list[str]:
     """Name, tag and stamp the graph run so its trace is findable.
 
     LangGraph reads ``run_name``/``run_id``/``tags``/``metadata`` off the
@@ -1132,6 +1132,10 @@ def _apply_langsmith_config(
 
     Without it the trace still exists — it is just called "LangGraph" and carries
     nothing to search on, which is useless once more than one ticker has run.
+
+    Returns the tag list, because patching the run later (see
+    ``_mark_langsmith_cancelled``) replaces the tags wholesale rather than
+    appending to them, so the caller has to keep the originals to send back.
     """
     config = args.setdefault("config", {})
     config["run_id"] = run_id
@@ -1145,6 +1149,7 @@ def _apply_langsmith_config(
     config.setdefault("metadata", {}).update(
         _langsmith_run_metadata(cfg, symbol, str(trade_date), analysts)
     )
+    return config["tags"]
 
 
 def _flush_langsmith() -> None:
@@ -1161,6 +1166,77 @@ def _flush_langsmith() -> None:
         wait_for_all_tracers()
     except Exception as exc:  # noqa: BLE001 — never fail a finished run
         logger.warning("Failed to flush LangSmith traces: %s", exc)
+
+
+def _mark_langsmith_cancelled(
+    run_id: uuid.UUID, symbol: str, steps: int, tags: list[str]
+) -> None:
+    """Rewrite an abandoned run's trace so it reads as a cancellation.
+
+    LangGraph reports *any* ``BaseException`` leaving ``Pregel.stream`` to the
+    callback manager as a chain error, and unwinding the graph when the client
+    disconnects raises ``GeneratorExit`` — which is a BaseException. LangChain's
+    tracer therefore stamps the root run with ``_get_stacktrace``'s rendering of
+    the three chained ``GeneratorExit`` frames (route → runner → Pregel loop),
+    and a run the user simply walked away from is indistinguishable in LangSmith
+    from one that actually failed.
+
+    So the run is patched here instead: a one-line reason in place of the stack
+    trace, and a ``cancelled`` tag, which is what makes these excludable from an
+    error-rate query. Two things are worth knowing about the shape of this:
+
+    * It must run *after* ``_flush_langsmith``. The tracer exports on a
+      background thread, and whichever write lands last wins — patch first and
+      the stack trace comes back over the top of it.
+    * The run still shows as errored. LangSmith's patch endpoint only sets
+      ``error`` when it is non-null (``Client.update_run`` skips the field
+      otherwise), so the error can be replaced from here but not cleared.
+      Turning the run green would mean intercepting ``on_chain_error`` in a
+      tracer subclass, which is a much larger change than this is worth.
+
+    Best-effort throughout: this is called from a ``finally`` while the client's
+    ``GeneratorExit`` is in flight, and an exception raised here would displace
+    the cancellation being carried out.
+    """
+    _patch_langsmith_run(
+        run_id,
+        tags=[*tags, "cancelled"],
+        error=(
+            f"Cancelled: the client disconnected during the analysis of "
+            f"{symbol}, after {steps} step(s)."
+        ),
+    )
+
+
+def _mark_langsmith_failed(run_id: uuid.UUID, node: str, tags: list[str]) -> None:
+    """Tag a failed run with the node that raised, so it can be grouped by cause.
+
+    The error is deliberately left as LangGraph wrote it: the real exception and
+    its traceback are already on the run and say more than anything set here.
+    Only the tags are added — ``failed:Bull Researcher`` next to the ticker and
+    the analysts — which turns "what is breaking lately" into one query.
+    """
+    _patch_langsmith_run(run_id, tags=[*tags, "failed", f"failed:{node}"])
+
+
+def _patch_langsmith_run(
+    run_id: uuid.UUID, tags: list[str], error: str | None = None
+) -> None:
+    """PATCH a finished run. Best-effort, and strictly after ``_flush_langsmith``.
+
+    Tags replace rather than merge, so callers pass the run's original tags plus
+    whatever they are adding. ``error=None`` leaves the run's existing error
+    untouched — ``update_run`` omits the field rather than clearing it, which is
+    also why an error already recorded can be replaced but never removed.
+    """
+    try:
+        from langsmith import Client
+
+        # Its own short-timeout client, for the same reason the trace URL uses
+        # one: a slow LangSmith must not hold up a run that is already over.
+        Client(timeout_ms=(3_000, 3_000)).update_run(run_id, error=error, tags=tags)
+    except Exception as exc:  # noqa: BLE001 — teardown must not raise
+        logger.warning("Could not patch the LangSmith run: %s", exc)
 
 
 def run_analysis_stream(
@@ -1183,11 +1259,14 @@ def run_analysis_stream(
     Event types:
       started  {symbol, date, analysts, provider, deep_think_llm,
                 quick_think_llm, analyst_llms, llm_roles, trace_url}
-      node     {node}                       — a graph step advanced
+      node     {node, step, duration_ms}   — an agent finished; ``node`` is
+                                             its name ("Bull Researcher")
       report   {section, content}           — a section report became available
       decision {signal, full}               — final BUY/HOLD/SELL + rationale
       saved    {id}                          — persisted to ClickHouse
-      error    {error}
+      error    {error, node, step}        — ``node`` names the agent that
+                                             raised, or None if the run died
+                                             outside a node
       done     {}
     """
     symbol = symbol.strip().upper()
@@ -1204,7 +1283,12 @@ def run_analysis_stream(
     t0 = time.perf_counter()
 
     from tradingagents.agents.utils.agent_utils import build_instrument_context
+    from tradingagents.graph.instrumentation import NodeProgressLogger
     from tradingagents.graph.trading_graph import TradingAgentsGraph
+
+    # Logs every node's start, duration and failure, and — the part this run
+    # reads back — remembers which node raised. Attached to the graph below.
+    tracker = NodeProgressLogger()
 
     # LangSmith: minting the run id here (rather than letting LangGraph mint one)
     # is what lets the trace link go out with the first event, so the run can be
@@ -1212,6 +1296,16 @@ def run_analysis_stream(
     # on it beyond attaching the config and flushing at the end.
     trace_id = uuid.uuid4() if langsmith_enabled() else None
     trace_url = _langsmith_trace_url(trace_id) if trace_id else ""
+    # Both are bound up here so the ``finally`` can read them however the run
+    # ends: the tags to send back with the cancellation patch, and the step the
+    # client hung up on (None while the run is still going somewhere).
+    trace_tags: list[str] = []
+    cancelled_after: int | None = None
+    failed_node: str | None = None
+    # Bound before the try: the handlers below report how far the run got, and
+    # the graph can fail while being built — long before the streaming loop that
+    # would otherwise be the first thing to set this.
+    step = 0
     if trace_url:
         logger.info("LangSmith trace for %s: %s", symbol, trace_url)
 
@@ -1267,13 +1361,22 @@ def run_analysis_stream(
             past_context=past_context,
             instrument_context=instrument_context,
         )
-        args = ta.propagator.get_graph_args()
+        # The tracker rides in on the invocation config, which is the seam the
+        # propagator already exposes for exactly this. Streaming "updates"
+        # alongside "values" is the other half: a values chunk is the accumulated
+        # state and says nothing about who produced it, while an updates chunk is
+        # keyed by the node that just ran — which is the only way this loop can
+        # name a step rather than count it.
+        args = ta.propagator.get_graph_args(callbacks=[tracker])
+        args["stream_mode"] = ["values", "updates"]
 
         # LangSmith: LangChain exports the prompts, tool calls and replies by
         # itself once tracing is on; this names the run and stamps it with what
         # is being analysed so the trace is filterable by symbol/date/model.
         if trace_id is not None:
-            _apply_langsmith_config(args, cfg, symbol, trade_date, analysts, trace_id)
+            trace_tags = _apply_langsmith_config(
+                args, cfg, symbol, trade_date, analysts, trace_id
+            )
 
         # Resumable checkpointing: this streaming path bypasses
         # TradingAgentsGraph.propagate(), so replicate its checkpoint wiring here.
@@ -1315,10 +1418,11 @@ def run_analysis_stream(
                 )
 
         seen_sections: set[str] = set()
-        step = 0
         final_state: dict = {}
 
-        # stream_mode="values": each chunk is the full accumulated state.
+        # Two stream modes, so each chunk arrives as ``(mode, payload)``: a
+        # "values" payload is the full accumulated state, a "updates" payload is
+        # ``{node name: what it wrote}``.
         #
         # The generator is bound to a name rather than iterated inline so that it
         # can be shut down deliberately. An SSE client that goes away — the Stop
@@ -1331,12 +1435,26 @@ def run_analysis_stream(
         # collector happened to run in.
         stream = graph.stream(init_state, **args)
         try:
-            for state in stream:
+            for mode, payload in stream:
+                if mode == "updates":
+                    # One entry per node that just finished. Progress is reported
+                    # from here rather than from the state chunks so the UI can
+                    # say "Working… (Bull Researcher)" instead of "step 7".
+                    for node_name in payload or {}:
+                        step += 1
+                        event = {"node": str(node_name), "step": step}
+                        # Only the tracker sees a node start, so it is the only
+                        # thing that can say how long the node took.
+                        elapsed = tracker.duration_ms(str(node_name))
+                        if elapsed is not None:
+                            event["duration_ms"] = round(elapsed)
+                        yield "node", event
+                    continue
+
+                state = payload
                 if not isinstance(state, dict):
                     continue
                 final_state = state
-                step += 1
-                yield "node", {"node": f"step {step}"}
 
                 for key, section in _SECTION_KEYS:
                     value = state.get(key)
@@ -1378,6 +1496,11 @@ def run_analysis_stream(
             # be, since no one is listening. The checkpoint rows are deliberately
             # left in place (the ``clear_checkpoint`` below is never reached), so
             # re-running the same ticker and date resumes from here.
+            #
+            # Recording the step rather than acting on it: the trace cannot be
+            # repaired until the tracer has finished exporting, which is what the
+            # ``finally`` below waits for.
+            cancelled_after = step
             logger.info(
                 "Analysis of %s abandoned by the client after %d step(s)",
                 symbol,
@@ -1444,8 +1567,17 @@ def run_analysis_stream(
 
         yield "done", {}
     except Exception as exc:  # noqa: BLE001
-        logger.exception("TradingAgents run failed for %s", symbol)
-        yield "error", {"error": str(exc)}
+        # Which agent was holding the ball. None when the graph failed outside a
+        # node — it could not be built, or it never started — which is itself
+        # worth being able to tell apart from a node that broke.
+        failed_node = tracker.failed_node
+        logger.exception(
+            "TradingAgents run failed for %s at %s after %d step(s)",
+            symbol,
+            failed_node or "no node (the graph never got that far)",
+            step,
+        )
+        yield "error", {"error": str(exc), "node": failed_node, "step": step}
     finally:
         # Release the SQLite connection. On a crash the checkpoint rows survive
         # (not cleared), so a later run with the same ticker+date can resume.
@@ -1455,3 +1587,12 @@ def run_analysis_stream(
         # so flush on the way out of a failed run as well as a successful one.
         if trace_id is not None:
             _flush_langsmith()
+            # Strictly after the flush — see _mark_langsmith_cancelled. Only a
+            # client disconnect gets here: a run that finished, or failed on its
+            # own, has an on_chain_end/on_chain_error that means what it says.
+            if cancelled_after is not None:
+                _mark_langsmith_cancelled(
+                    trace_id, symbol, cancelled_after, trace_tags
+                )
+            elif failed_node is not None:
+                _mark_langsmith_failed(trace_id, failed_node, trace_tags)
