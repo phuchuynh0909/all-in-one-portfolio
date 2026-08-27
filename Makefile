@@ -3,9 +3,24 @@
         prod-rebuild-frontend prod-rebuild-backend prod-rebuild-workers \
         prune-build-cache lock-backend
 
+PROD := docker-compose -f docker-compose.prod.yml --env-file prod.env
+
 # COMPOSE_BAKE lets buildx dedupe the three worker services, which share one
 # build definition and one image tag, into a single build.
-PROD := COMPOSE_BAKE=true docker-compose -f docker-compose.prod.yml --env-file prod.env
+#
+# Exported by make rather than prefixed onto the command, because `VAR=value cmd`
+# is POSIX shell syntax: on Windows, where make hands recipes to cmd.exe, it
+# fails with "'COMPOSE_BAKE' is not recognized as an internal or external
+# command". `export` has make itself put it in the recipe's environment, so the
+# same line works under cmd.exe, PowerShell, Git Bash and a POSIX shell alike.
+#
+# Scoped to the build targets: up/down/logs/ps have nothing to bake, and a
+# global export would also reach the dev `docker-compose build` targets, which
+# is not what this comment is claiming to do.
+PROD_BUILD_TARGETS := prod-build prod-build-frontend prod-build-backend \
+                      prod-build-workers prod-rebuild-frontend \
+                      prod-rebuild-backend prod-rebuild-workers
+$(PROD_BUILD_TARGETS): export COMPOSE_BAKE := true
 
 # Default target
 help:
