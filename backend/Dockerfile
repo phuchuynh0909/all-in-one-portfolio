@@ -41,12 +41,27 @@ RUN uv venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
     VIRTUAL_ENV="/opt/venv"
 
-# Install dependencies with uv (much faster than pip)
-COPY requirements.txt ./
-COPY libs/backtesting.py/ ./libs/backtesting.py/
+# Install the fully pinned dependency set (346 packages, all ==).
+# requirements.lock.txt is generated from requirements.txt by `make lock-backend`,
+# resolved inside this very image so the environment markers match linux/py3.11.
+# Editing requirements.txt alone does NOT change this layer — regenerate the lock.
+#
+# The `-e ./libs/backtesting.py` line is stripped here on purpose: copying that
+# 5 MB source tree in before this layer would make every edit to it reinstall the
+# whole dependency set (torch, catboost, xgboost, ...).
+COPY requirements.lock.txt ./
 RUN --mount=type=cache,id=all-in-one-uv-cache,target=/root/.cache/uv \
     --mount=type=cache,id=all-in-one-pip-cache,target=/root/.cache/pip \
-    uv pip install -r requirements.txt
+    grep -v '^-e \./libs/' requirements.lock.txt > /tmp/third-party.txt \
+ && uv pip install -r /tmp/third-party.txt --index-strategy unsafe-best-match
+
+# Editable local package last: its source changes far more often than the
+# dependency set above, and only this cheap layer is invalidated when it does.
+# --no-deps is safe *because* of the lock: backtesting.py wants numpy/pandas/bokeh
+# and the lock pins all three, so nothing here can silently upgrade them.
+COPY libs/backtesting.py/ ./libs/backtesting.py/
+RUN --mount=type=cache,id=all-in-one-uv-cache,target=/root/.cache/uv \
+    uv pip install --no-deps -e ./libs/backtesting.py
 
 
 # Stage 2: Production image
@@ -79,9 +94,11 @@ RUN groupadd --gid 1000 appuser && \
 COPY --from=builder /opt/venv /opt/venv
 
 # Copy application code
+# models/ is deliberately not copied: both compose files bind-mount it over
+# /app/models at runtime, so baking it in only added ~77 MB and made every
+# retrained model invalidate this layer and everything after it.
 COPY --chown=appuser:appuser app ./app
 COPY --chown=appuser:appuser tasks ./tasks
-COPY --chown=appuser:appuser models ./models
 COPY --chown=appuser:appuser alembic ./alembic
 COPY --chown=appuser:appuser alembic.ini ./
 COPY --chown=appuser:appuser libs/backtesting.py/ ./libs/backtesting.py/

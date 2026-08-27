@@ -8,12 +8,22 @@ version: "3.9"
 #
 # Service-level env_file: loads KEY=VALUE into the container from disk. Do not duplicate those keys
 # in `environment:` as KEY=${KEY:-default} — empty host env overrides env_file with the default.
+#
+# The three workers share one build definition and one image tag (portfolio-worker:latest) via the
+# YAML anchors below. They ran identical Dockerfiles before but under three separate image names,
+# which cost 3x the disk and meant rebuilding one left the other two on a stale image.
+# `make prod-build` sets COMPOSE_BAKE=true so the shared target is built once, not three times.
 
 services:
   backend:
-    build: 
+    build:
       context: ./backend
       dockerfile: Dockerfile
+      # Building on a host with no warm BuildKit cache (fresh machine, or after
+      # `make prune-build-cache`) is a full cold build. If you ever push these
+      # images to a registry, uncomment to carry the cache between hosts:
+      # cache_from: [type=registry,ref=<registry>/portfolio-backend:buildcache]
+      # cache_to:   [type=registry,ref=<registry>/portfolio-backend:buildcache,mode=max]
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "8000:8000"  # Expose backend API on port 8000
@@ -57,9 +67,10 @@ services:
     restart: unless-stopped
 
   worker-tick-ingest:
-    build:
+    build: &worker-build
       context: ./worker
       dockerfile: Dockerfile
+    image: &worker-image portfolio-worker:latest
     command: ["python", "-m", "bytewax.run", "workers.tick_ingest:flow"]
     volumes:
       - worker_state:/app/state_dir
@@ -72,9 +83,8 @@ services:
     restart: unless-stopped
 
   worker-price-alerts:
-    build:
-      context: ./worker
-      dockerfile: Dockerfile
+    build: *worker-build
+    image: *worker-image
     command: ["python", "-m", "bytewax.run", "workers.price_alerts:flow"]
     volumes:
       # No portfolio.db mount: the alerts this worker reads live in MySQL now.
@@ -94,9 +104,8 @@ services:
     restart: unless-stopped
 
   worker-hawkes:
-    build:
-      context: ./worker
-      dockerfile: Dockerfile
+    build: *worker-build
+    image: *worker-image
     command: ["python", "-m", "workers.hawkes_signal_worker"]
     volumes:
       - worker_state:/app/state_dir

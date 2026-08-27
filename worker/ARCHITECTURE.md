@@ -189,13 +189,23 @@ the sink lives in `infra/clickhouse_sink.py` instead:
   key, giving **one block of 5,000**. Limits come from
   `INGEST_BATCH_MAX_SIZE` (100,000) and `INGEST_BATCH_TIMEOUT_SECONDS` (2.0),
   whichever is hit first.
+- **Batch latency.** The re-key above is why the sink batches with its own
+  `collect_bounded` rather than `op.collect`: `op.collect` re-arms its timer on
+  *every* item, so the timeout measures the gap between items. Per symbol that
+  worked (a symbol goes quiet for two seconds often enough); on one coalesced
+  key, a live tape never opens a two-second gap, so the timer never fired and
+  blocks were only cut at `max_size` — observed **1,000 rows held for 51
+  seconds** at `INGEST_BATCH_MAX_SIZE=1000`, and over an hour at the default
+  100,000. `collect_bounded` arms the deadline once, at the first row of a
+  block, so `INGEST_BATCH_TIMEOUT_SECONDS` bounds how long any row waits.
 - **Async inserts.** The upstream sink hardcodes `settings={"buffer_size": 0}`,
   so `async_insert` could not be passed — and this deployment's ClickHouse user
   lacks `ALTER USER`, ruling out a user-level default. `INGEST_ASYNC_INSERT=1`
   (default) lets the server coalesce our per-flush blocks into larger parts,
   which is the documented remedy for clients that cannot reach ~100k rows per
   insert. At this tape's rate the 2-second timeout fires long before the size
-  cap, so this is the lever that actually does the work.
+  cap (per **Batch latency** above), so this is the lever that actually does
+  the work.
 
 `INGEST_WAIT_FOR_ASYNC_INSERT=0` (default) is fire-and-forget: the server acks
 before the data is durably written, so a crash can lose the in-flight buffer and

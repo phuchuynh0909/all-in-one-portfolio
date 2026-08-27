@@ -579,9 +579,13 @@ class IngestTuningConfig:
     Two levers, per ClickHouse's ingestion guidance:
 
     * **Client-side batching** — ``batch_max_size`` / ``batch_timeout_seconds``
-      feed ``op.collect``. Whichever limit is hit first flushes the block. The
-      size cap is deliberately large so bursts build big blocks; in practice
-      this tape flushes on the timeout, which is why async inserts matter.
+      feed ``infra.clickhouse_sink.collect_bounded``. Whichever limit is hit
+      first flushes the block: the size cap is deliberately large so bursts
+      build big blocks, and the timeout caps how long any single row waits, so
+      in practice this tape flushes on the timeout — which is why async inserts
+      matter. (The timeout is the sink's own batching logic rather than
+      ``op.collect``, whose timer re-arms on every item and therefore never
+      expires on a stream that never goes idle; see that module's docstring.)
     * **Server-side buffering** — ``async_insert`` lets ClickHouse coalesce our
       per-flush blocks into larger parts itself, the documented remedy for
       clients that cannot reach ~100k rows per insert.

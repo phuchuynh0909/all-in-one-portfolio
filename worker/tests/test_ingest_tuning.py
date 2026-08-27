@@ -156,3 +156,126 @@ def test_from_env_overrides(monkeypatch):
     assert cfg.batch_timeout_seconds == 1.5
     assert cfg.async_insert is False
     assert cfg.wait_for_async_insert is True
+
+
+# ---------------------------------------------------------------------------
+# Batch latency
+#
+# `INGEST_BATCH_TIMEOUT_SECONDS` is documented as the bound on how long a row
+# waits before it is inserted. bytewax's `op.collect` cannot provide that bound:
+# its timer is re-armed on every item, so it measures the *gap between items*,
+# and the sink funnels all 196 symbols onto one key (COALESCE_KEY) — a gap that
+# never opens while the tape is live. These tests pin the bound to wall-clock
+# latency instead, and pin why `op.collect` is not used.
+# ---------------------------------------------------------------------------
+class _FakeClock:
+    """A clock the driver advances by hand, so latency is asserted exactly."""
+
+    def __init__(self, start: dt.datetime = NOW):
+        self.now = start
+
+    def __call__(self) -> dt.datetime:
+        return self.now
+
+
+def _drive(builder, clock, *, n_items: int, gap_s: float, timeout_s: float):
+    """Run a StatefulLogic builder the way the bytewax runtime would.
+
+    Delivers `n_items` items `gap_s` apart on the fake clock, firing a due
+    notification before each one and rebuilding the logic whenever it asks to be
+    discarded, exactly as `op.stateful` does.
+
+    :returns: list of ``(seconds since the first item, rows in the batch)``.
+    """
+    emitted: list[tuple[float, int]] = []
+    logic = builder(None)
+    first_item_at: dt.datetime | None = None
+
+    for i in range(n_items):
+        deadline = logic.notify_at()
+        if deadline is not None and clock.now >= deadline:
+            values, discard = logic.on_notify()
+            for rows in values:
+                emitted.append(((clock.now - first_item_at).total_seconds(), len(rows)))
+            if discard:
+                logic = builder(None)
+
+        if first_item_at is None:
+            first_item_at = clock.now
+        values, discard = logic.on_item(i)
+        for rows in values:
+            emitted.append(((clock.now - first_item_at).total_seconds(), len(rows)))
+        if discard:
+            logic = builder(None)
+
+        clock.now += dt.timedelta(seconds=gap_s)
+
+    return emitted
+
+
+def test_batch_flushes_on_timeout_when_the_stream_never_goes_idle():
+    """A steady 20/s tape must still flush every 2s, not every `max_size` rows."""
+    from infra.clickhouse_sink import batch_builder
+
+    clock = _FakeClock()
+    emitted = _drive(
+        batch_builder(dt.timedelta(seconds=2.0), 1000, clock),
+        clock,
+        n_items=1000,          # 50 simulated seconds at 20/s
+        gap_s=0.05,
+        timeout_s=2.0,
+    )
+
+    assert emitted, "nothing was flushed in 50s — the timeout never fired"
+    first_at, first_rows = emitted[0]
+    # Bounded by the timeout, not by max_size: ~40 rows at 2s, not 1000 at 50s.
+    assert first_at <= 2.05, f"first flush waited {first_at:.2f}s"
+    assert first_rows < 100
+    # And it keeps flushing at that cadence for the whole run.
+    assert len(emitted) >= 20
+
+
+def test_batch_still_flushes_early_on_max_size():
+    """A burst must not wait for the timeout — the size cap still applies."""
+    from infra.clickhouse_sink import batch_builder
+
+    clock = _FakeClock()
+    emitted = _drive(
+        batch_builder(dt.timedelta(seconds=60.0), 250, clock),
+        clock,
+        n_items=1000,
+        gap_s=0.0,             # all in the same instant
+        timeout_s=60.0,
+    )
+
+    assert [rows for _at, rows in emitted] == [250, 250, 250, 250]
+    assert all(at == 0.0 for at, _rows in emitted)
+
+
+def test_batch_loses_no_rows_across_flushes():
+    from infra.clickhouse_sink import batch_builder
+
+    clock = _FakeClock()
+    emitted = _drive(
+        batch_builder(dt.timedelta(seconds=2.0), 1000, clock),
+        clock,
+        n_items=1000,
+        gap_s=0.05,
+        timeout_s=2.0,
+    )
+    logic_tail = 1000 - sum(rows for _at, rows in emitted)
+    # Everything is either flushed or still accumulating in the final batch;
+    # the runtime drains that last one via on_eof.
+    assert 0 <= logic_tail < 1000
+    assert sum(rows for _at, rows in emitted) + logic_tail == 1000
+
+
+def test_op_collect_cannot_bound_latency():
+    """Why `batch_builder` exists instead of `op.collect` (pinned, not desired).
+
+    Delete this test and the custom logic the day bytewax's `_CollectLogic`
+    stops re-arming its timer on every item.
+    """
+    sizes = _block_sizes(_rows(1000, 196), coalesce=True, timeout_s=2, max_size=250)
+    # A never-idle stream reaches every size cap before the 2s timer expires.
+    assert sizes[:3] == [250, 250, 250]

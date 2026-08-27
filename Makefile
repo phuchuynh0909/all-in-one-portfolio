@@ -1,9 +1,17 @@
-.PHONY: help build up down restart logs clean prod-build prod-up prod-down
+.PHONY: help build up down restart logs clean prod-build prod-up prod-down \
+        prod-build-frontend prod-build-backend prod-build-workers \
+        prod-rebuild-frontend prod-rebuild-backend prod-rebuild-workers \
+        prune-build-cache lock-backend
+
+# COMPOSE_BAKE lets buildx dedupe the three worker services, which share one
+# build definition and one image tag, into a single build.
+PROD := COMPOSE_BAKE=true docker-compose -f docker-compose.prod.yml --env-file prod.env
 
 # Default target
 help:
 	@echo "Available commands:"
 	@echo "  Development:"
+	@echo "    make lock-backend - Regenerate backend/requirements.lock.txt"
 	@echo "    make build       - Build all containers (dev)"
 	@echo "    make up          - Start all containers (dev)"
 	@echo "    make down        - Stop all containers"
@@ -38,11 +46,44 @@ restart:
 logs:
 	docker-compose logs -f
 
-# Clean up containers, volumes, networks, and build cache
+# Clean up containers, volumes and networks.
+# Deliberately not `docker system prune`: that also drops the BuildKit cache,
+# including the multi-GB uv/npm cache mounts, turning the next build cold.
+# Use `make prune-build-cache` when you actually want that.
 clean:
 	docker-compose down -v
 	docker network prune -f
-	docker system prune -f
+	docker container prune -f
+	docker image prune -f
+
+# Drop the BuildKit layer cache and cache mounts. Next build is a cold one.
+prune-build-cache:
+	docker builder prune -af
+
+# Regenerate backend/requirements.lock.txt from backend/requirements.txt.
+# Resolved inside the builder image on purpose: the environment markers then
+# match the target (linux, py3.11) and the TA-Lib C library is present for any
+# package that needs to build to report its metadata. Resolving on the host
+# would produce a lock for macOS/arm64 that does not describe the image.
+#
+# torch is resolved from the PyTorch CPU index. Left to PyPI, torch 2.13 on
+# aarch64 resolves to the +cu130 build and drags in ~3.5 GB of CUDA (cuda-toolkit,
+# cudnn, cusparselt, nccl, nvshmem) plus 652 MB of triton — all of it SBSA-tagged
+# wheels for ARM *GPU servers*, which cannot run here (torch.cuda.is_available()
+# is False). --emit-index-url writes the index into the lock so `uv pip install`
+# can find the +cpu build; --index-strategy is a CLI flag and must be repeated
+# there (see backend/Dockerfile).
+#
+# NOTE: this pins the image to CPU torch. Deploying to a real GPU host needs its
+# own lock generated without these flags, not this one.
+lock-backend:
+	docker build --target builder -t portfolio-backend-builder:lock backend/
+	docker run --rm -v "$(PWD)/backend:/out" portfolio-backend-builder:lock \
+	  sh -c "cd /out && uv pip compile requirements.txt -o requirements.lock.txt \
+	         --extra-index-url https://download.pytorch.org/whl/cpu \
+	         --index-strategy unsafe-best-match --emit-index-url \
+	         --custom-compile-command 'make lock-backend'"
+	-docker rmi portfolio-backend-builder:lock
 
 # Force clean everything including networks
 clean-all:
@@ -75,25 +116,41 @@ frontend-logs:
 
 # Production commands
 prod-build:
-	docker-compose -f docker-compose.prod.yml --env-file prod.env build
+	$(PROD) build
 
 prod-up:
-	docker-compose -f docker-compose.prod.yml --env-file prod.env up -d
+	$(PROD) up -d
 
 prod-down:
-	docker-compose -f docker-compose.prod.yml --env-file prod.env down
+	$(PROD) down
 
 prod-logs:
-	docker-compose -f docker-compose.prod.yml --env-file prod.env logs -f
+	$(PROD) logs -f
 
+# Normal per-service builds reuse the layer cache. A backend build with no cache
+# recompiles TA-Lib from source and reinstalls torch/catboost/xgboost from
+# scratch, so --no-cache lives on the prod-rebuild-* targets below instead.
 prod-build-frontend:
-	docker-compose -f docker-compose.prod.yml --env-file prod.env build frontend --no-cache
+	$(PROD) build frontend
 
 prod-build-backend:
-	docker-compose -f docker-compose.prod.yml --env-file prod.env build backend --no-cache
+	$(PROD) build backend
 
+# One build for all three workers: they share portfolio-worker:latest, so
+# building only one of them no longer leaves the other two on a stale image.
 prod-build-workers:
-	docker-compose -f docker-compose.prod.yml --env-file prod.env build worker-hawkes --no-cache
+	$(PROD) build worker-tick-ingest
+
+# Escape hatches for when the cache is genuinely suspect (base image moved,
+# floating tag shifted). Slow by design.
+prod-rebuild-frontend:
+	$(PROD) build --no-cache frontend
+
+prod-rebuild-backend:
+	$(PROD) build --no-cache backend
+
+prod-rebuild-workers:
+	$(PROD) build --no-cache worker-tick-ingest
 
 prod-npm:
 	@echo "Access Nginx Proxy Manager at: http://localhost:81"

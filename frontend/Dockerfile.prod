@@ -1,3 +1,4 @@
+# syntax=docker/dockerfile:1
 # Multi-stage build for production
 # Stage 1: Build the application
 FROM node:20-alpine AS builder
@@ -7,9 +8,12 @@ WORKDIR /app
 # Copy package files
 COPY package.json package-lock.json* ./
 
-# Install all dependencies (including devDependencies for build)
-# Use npm install to handle lock file sync issues
-RUN npm install && npm cache clean --force
+# Install all dependencies (including devDependencies for build).
+# npm ci for a reproducible tree from the lock file; the download cache lives in
+# a BuildKit cache mount so it survives --no-cache and never lands in a layer
+# (which is what the old `npm cache clean --force` was compensating for).
+RUN --mount=type=cache,id=all-in-one-npm-cache,target=/root/.npm \
+    npm ci
 
 # Copy source code (excluding node_modules to avoid platform conflicts)
 COPY src/ ./src/

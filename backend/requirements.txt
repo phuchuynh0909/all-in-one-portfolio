@@ -1,3 +1,7 @@
+# Source spec (loose bounds). The image does NOT install this file directly —
+# it installs requirements.lock.txt, which is pinned. After editing anything
+# here, run `make lock-backend` to regenerate the lock, or the build will
+# silently keep using the old resolution.
 fastapi>=0.111.0
 uvicorn[standard]>=0.29.0
 pydantic>=2.7.0
@@ -44,6 +48,11 @@ gymnasium>=0.29.1
 python-dateutil>=2.9.0
 pykalman>=0.9.5
 vectorbt>=0.26.2
+# Ceiling is ours, not vectorbt's: it declares plotly>=4.12.0 with no upper bound
+# yet still calls the scattermapbox trace, which plotly 7 removed. Unconstrained,
+# the resolver picks plotly 7 and `import vectorbt` dies with "Bad property path:
+# scattermapbox". Revisit when vectorbt supports plotly 7.
+plotly>=5.0,<7
 fastapi-cache2>=0.2.1
 
 # Portfolio optimization

@@ -40,8 +40,9 @@ scripts/
 notebooks/
 *.ipynb
 
-# Assets that should be mounted
+# Assets and models that should be mounted (see docker-compose.prod.yml)
 assets/
+models/
 
 # Documentation
 *.md
