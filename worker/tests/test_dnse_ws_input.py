@@ -9,7 +9,7 @@ ping/pong, and the credential guard.
 
 Transport, HMAC auth and encoding now belong to the vendored SDK
 (``worker/dnse_sdk``), so the tests here pin the *contracts this module depends
-on* from that SDK — and, just as importantly, the four SDK behaviours
+on* from that SDK — and, just as importantly, the SDK behaviours
 ``_TradeExtraClient`` deliberately overrides.
 """
 
@@ -23,8 +23,6 @@ import logging
 import socket
 import time
 from datetime import datetime, timezone
-from datetime import time as dtime
-from zoneinfo import ZoneInfo
 
 import orjson
 import pytest
@@ -32,12 +30,8 @@ import pytest
 from infra.dnse_ws_input import (
     ALL_BOARDS,
     DEFAULT_BOARDS,
-    DEFAULT_SESSION_TZ,
     DnseTradePartition,
     normalize_side,
-    parse_hhmm,
-    seconds_until_session,
-    trade_extra_channel,
     trade_extra_to_tick_payload,
     is_trade_frame,
     unwrap_frame,
@@ -79,11 +73,6 @@ def test_sdk_auth_message_is_self_consistent():
 # ---------------------------------------------------------------------------
 # Channel / subscribe framing
 # ---------------------------------------------------------------------------
-def test_trade_extra_channel():
-    assert trade_extra_channel("G1") == "tick_extra.G1.json"
-    assert trade_extra_channel("T2", "msgpack") == "tick_extra.T2.msgpack"
-
-
 def test_upstream_sends_exactly_one_channel_per_subscribe_frame():
     """Why the subscribe frames are not batched.
 
@@ -447,87 +436,13 @@ def test_enveloped_trade_frame_is_enqueued():
 
 
 # ---------------------------------------------------------------------------
-# Session gate
+# Reconnect loop
 #
-# DNSE serves the WebSocket endpoint only while the exchange is open; out of
-# hours ws-openapi.dnse.com.vn does not resolve, so an ungated reconnect loop
-# logged "[Errno -2] Name or service not known" every 5s all night. These pin
-# the window the socket is attempted in.
+# There is no session gate: DNSE serves the endpoint only while the exchange is
+# open, and out of hours ws-openapi.dnse.com.vn does not resolve. That failure
+# has to read as "endpoint absent" and land in a backoff that settles at one
+# attempt a minute, which is what these pin.
 # ---------------------------------------------------------------------------
-TZ = ZoneInfo(DEFAULT_SESSION_TZ)
-OPEN_AT = dtime(8, 0)
-CLOSE_AT = dtime(16, 0)
-
-
-def _ict(year, month, day, hour, minute=0):
-    return datetime(year, month, day, hour, minute, tzinfo=TZ)
-
-
-def _wait(now):
-    return seconds_until_session(now, OPEN_AT, CLOSE_AT)
-
-
-def test_inside_session_does_not_wait():
-    # 2026-08-25 is a Tuesday.
-    assert _wait(_ict(2026, 8, 25, 8, 0)) == 0.0  # at the bell
-    assert _wait(_ict(2026, 8, 25, 11, 30)) == 0.0
-    assert _wait(_ict(2026, 8, 25, 15, 59)) == 0.0
-
-
-def test_before_the_open_waits_until_todays_open():
-    assert _wait(_ict(2026, 8, 25, 6, 0)) == 2 * 3600.0
-    assert _wait(_ict(2026, 8, 25, 0, 0)) == 8 * 3600.0
-
-
-def test_after_the_close_waits_until_tomorrow():
-    # The close is exclusive: 16:00 sharp is already out of session.
-    assert _wait(_ict(2026, 8, 25, 16, 0)) == 16 * 3600.0
-    assert _wait(_ict(2026, 8, 25, 22, 0)) == 10 * 3600.0
-
-
-def test_weekend_waits_until_monday():
-    # 2026-08-29 is a Saturday, 2026-08-30 a Sunday.
-    saturday = _wait(_ict(2026, 8, 29, 10, 0))
-    assert saturday == (2 * 24 - 10 + 8) * 3600.0  # Monday 08:00
-    sunday = _wait(_ict(2026, 8, 30, 10, 0))
-    assert sunday == (24 - 10 + 8) * 3600.0
-    # Friday evening rolls over the weekend too (2026-08-28 is a Friday).
-    assert _wait(_ict(2026, 8, 28, 17, 0)) == (3 * 24 - 17 + 8) * 3600.0
-
-
-def test_partition_gate_reports_open_and_closed(monkeypatch):
-    part = _partition(session_start="08:00", session_end="16:00")
-
-    class _FrozenDatetime(datetime):
-        frozen = _ict(2026, 8, 25, 21, 0)
-
-        @classmethod
-        def now(cls, tz=None):
-            return cls.frozen.astimezone(tz) if tz else cls.frozen
-
-    monkeypatch.setattr("infra.dnse_ws_input.datetime", _FrozenDatetime)
-    assert part.seconds_until_open() == 11 * 3600.0  # closed until 08:00
-    _FrozenDatetime.frozen = _ict(2026, 8, 25, 9, 0)
-    assert part.seconds_until_open() == 0.0  # open
-
-
-def test_session_gate_can_be_disabled():
-    part = _partition(session_gate=False)
-    assert part.seconds_until_open() == 0.0  # any hour is fair game
-
-
-def test_parse_hhmm_falls_back_instead_of_raising():
-    assert parse_hhmm("09:15", "08:00") == dtime(9, 15)
-    assert parse_hhmm("9", "08:00") == dtime(9, 0)
-    assert parse_hhmm("garbage", "08:00") == dtime(8, 0)
-    assert parse_hhmm(None, "16:30") == dtime(16, 30)
-
-
-def test_bad_session_timezone_degrades_to_the_default():
-    part = _partition(session_tz="Mars/Olympus_Mons")
-    assert part._session_tz.key == DEFAULT_SESSION_TZ
-
-
 def test_dns_failure_is_classified_as_unreachable():
     """The reported error must read as "endpoint absent", not a protocol fault."""
     gai = socket.gaierror(-2, "Name or service not known")
@@ -618,7 +533,10 @@ def test_msgpack_is_accepted_now_that_the_sdk_codec_decodes_it():
     """Was a hard refusal while frames went through json.loads."""
     part = DnseTradePartition("k", "s", ["FPT"], encoding="msgpack", start=False)
     assert part._encoding == "msgpack"
-    assert trade_extra_channel("G1", part._encoding) == "tick_extra.G1.msgpack"
+    part, client = _client(part)
+    asyncio.run(client.subscribe_trade_extra_boards(["G1"], part._symbols))
+    # The channel the gateway is actually asked for, not a local restatement.
+    assert list(client._subscriptions) == ["tick_extra.G1.msgpack"]
 
 
 def test_an_unknown_encoding_is_refused_rather_than_silently_empty():
@@ -652,24 +570,24 @@ def _drive_run(part, stop_after):
     return delays
 
 
-def test_run_does_not_connect_outside_the_session(monkeypatch):
-    """The whole point: no socket is attempted while the endpoint is unserved."""
+def test_run_dials_around_the_clock(monkeypatch):
+    """No clock check: a closed exchange is just an unreachable endpoint."""
     part = _partition()
     attempts = []
-    monkeypatch.setattr(
-        part, "_consume", lambda: attempts.append(1), raising=False
-    )
-    monkeypatch.setattr(part, "seconds_until_open", lambda: 11 * 3600.0)
 
-    delays = _drive_run(part, stop_after=2)
-    assert attempts == []  # never dialled
-    # Sleeps are capped so the loop keeps a heartbeat rather than parking 11h.
-    assert delays == [900.0, 900.0]
+    def boom():
+        attempts.append(1)
+        raise socket.gaierror(-2, "Name or service not known")
+
+    monkeypatch.setattr(part, "_consume", boom, raising=False)
+    monkeypatch.setattr("asyncio.run", lambda coro: coro)
+
+    _drive_run(part, stop_after=3)
+    assert attempts == [1, 1, 1]  # dialled every pass, whatever the hour
 
 
-def test_run_backs_off_exponentially_on_in_session_failures(monkeypatch):
+def test_run_backs_off_exponentially_on_connect_failures(monkeypatch):
     part = _partition()
-    monkeypatch.setattr(part, "seconds_until_open", lambda: 0.0)
 
     def boom():
         raise socket.gaierror(-2, "Name or service not known")
@@ -685,7 +603,6 @@ def test_run_backs_off_exponentially_on_in_session_failures(monkeypatch):
 def test_run_paces_a_server_side_close_instead_of_spinning(monkeypatch):
     """A clean disconnect used to reconnect with no delay at all."""
     part = _partition()
-    monkeypatch.setattr(part, "seconds_until_open", lambda: 0.0)
     monkeypatch.setattr(part, "_consume", lambda: None, raising=False)
     monkeypatch.setattr("asyncio.run", lambda coro: coro)
 
@@ -706,8 +623,8 @@ def test_unreachable_classification_survives_a_cyclic_cause():
 # SDK overrides
 #
 # Transport, auth, encoding and the heartbeat come from TradingClient. These
-# pin the four behaviours _TradeExtraClient deliberately does NOT inherit —
-# each of which is a silent failure if it ever regresses to the SDK default.
+# pin the behaviours _TradeExtraClient deliberately does NOT inherit — each of
+# which is a silent failure if it ever regresses to the SDK default.
 # ---------------------------------------------------------------------------
 class _FakeConnection:
     """Stands in for the SDK's WebSocketConnection; records what was sent."""
@@ -733,12 +650,12 @@ def _sent_frames(client):
     return [json.loads(raw) for raw in client._connection.sent]
 
 
-def test_sdk_reconnect_machinery_is_disabled_in_favour_of_the_session_gate():
-    """TradingClient would dial straight through a closed exchange.
+def test_sdk_reconnect_machinery_is_disabled_in_favour_of_our_backoff():
+    """_run owns every reconnect delay; the SDK must not race it.
 
-    Its WebSocketConnection also retries a failed connect ten times with its
-    own 1..60s backoff — about eight minutes on a hostname that, out of
-    session, does not resolve — before _run's clock check gets a look in.
+    TradingClient's WebSocketConnection otherwise retries a failed connect ten
+    times with its own 1..60s backoff — about eight minutes on a hostname that,
+    out of hours, does not resolve — inside a single _run pass.
     """
     _, client = _client()
     assert client.auto_reconnect is False
@@ -873,12 +790,11 @@ def test_dispatch_answers_ping_through_the_negotiated_encoder():
     assert _sent_frames(client) == [{"action": "pong"}]
 
 
-def test_dispatch_records_pong_without_logging_it(caplog):
+def test_dispatch_drops_pong_without_logging_it(caplog):
+    """A pong is neither a trade nor a control frame worth a line."""
     part, client = _client()
-    client._last_pong_time = 0.0
     with caplog.at_level(logging.INFO, logger="infra.dnse_ws_input"):
         asyncio.run(client._dispatch_message({"action": "pong"}))
-    assert client._last_pong_time > 0.0  # keeps is_healthy meaningful
     assert "DNSE control frame" not in caplog.text
     assert part.next_batch() == []
 
@@ -926,47 +842,13 @@ def test_msgpack_client_encodes_its_replies_as_msgpack():
     assert msgpack.unpackb(client._connection.sent[0], raw=False) == {"action": "pong"}
 
 
-def test_a_gateway_that_never_pongs_is_not_treated_as_stalled():
-    """The reconnect-storm guard, and the reason is_healthy isn't used raw.
+def test_consume_returns_when_the_receive_loop_ends(monkeypatch):
+    """A server-side close must end _consume so _run can rebuild the session.
 
-    DNSE documents the *server* pinging us every three minutes; nothing says it
-    answers our heartbeat. If it never does, is_healthy reads false 50s into
-    every connection and the reconnect loop never lets a session live.
+    Replaces a stall check that could never fire: is_stalled only trusted the
+    pong clock once a pong had arrived, and DNSE never answers our heartbeat.
     """
-    _, client = _client()
-    client._connection.is_connected = True
-    client._last_pong_time = time.time() - 10_000  # far past 2x the heartbeat
-    assert client.is_healthy is False  # what the SDK would tell us
-    assert client.is_stalled() is False  # ...and why we don't ask it that way
-
-
-def test_a_gateway_that_stops_ponging_is_treated_as_stalled():
-    part, client = _client()
-    client._connection.is_connected = True
-    asyncio.run(client._dispatch_message({"action": "pong"}))
-    assert client._pong_seen and client.is_stalled() is False
-
-    # Now it goes quiet while the socket stays open.
-    client._last_pong_time = time.time() - 10_000
-    assert client.is_stalled() is True
-
-
-def test_a_dropped_or_unauthenticated_connection_is_stalled():
-    _, client = _client()
-    client._connection.is_connected = False
-    assert client.is_stalled() is True
-
-    _, client = _client()
-    client._connection.is_connected = True
-    client._is_authenticated = False
-    assert client.is_stalled() is True
-
-
-def test_consume_returns_when_the_connection_stalls(caplog, monkeypatch):
-    """An open socket delivering nothing reads as a quiet market otherwise."""
-    monkeypatch.setattr("infra.dnse_ws_input._HEALTH_CHECK_SECS", 0.05)
     part = _partition()
-    stalled = {"yet": False}
 
     async def _drive():
         import websockets
@@ -985,25 +867,23 @@ def test_consume_returns_when_the_connection_stalls(caplog, monkeypatch):
             real_build = part._build_client
 
             def _capture():
-                client = real_build()
-                client.is_stalled = lambda: stalled["yet"]
-                client_box["c"] = client
-                return client
+                client_box["c"] = real_build()
+                return client_box["c"]
 
             part._build_client = _capture
             task = asyncio.create_task(part._consume())
-            # Healthy first: the loop must not exit on its own.
+            # A live receive loop: the wait loop must not exit on its own.
             await asyncio.sleep(0.1)
             assert not task.done()
-            stalled["yet"] = True
+
+            # What a 1006 close looks like from here — the handler task ends.
+            client_box["c"]._message_handler_task.cancel()
             await asyncio.wait_for(task, timeout=30)
             return sock
         finally:
             websockets.connect = original
 
-    with caplog.at_level(logging.WARNING, logger="infra.dnse_ws_input"):
-        sock = asyncio.run(_drive())
-    assert "up but stalled" in caplog.text
+    sock = asyncio.run(_drive())
     assert sock.closed  # disconnect() ran, so _run rebuilds a clean session
 
 

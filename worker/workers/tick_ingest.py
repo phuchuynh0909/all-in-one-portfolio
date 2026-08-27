@@ -23,6 +23,7 @@ from bytewax.dataflow import Dataflow
 import bytewax.operators as op
 from infra.logging_setup import setup_logging
 from infra import clickhouse_sink
+from infra.drop_tally import DropTally
 from infra.dnse_ws_input import DnseTradeSource
 from infra.mock_clickhouse import MockClickHouseSource
 from infra.clickhouse_client import ClickHouseClient
@@ -39,8 +40,8 @@ from model import (
 
 # At import, because `python -m bytewax.run` owns __main__: without a root
 # handler the infra modules' log.info() calls (the sink's insert counters, the
-# DNSE session gate) are dropped by logging.lastResort, which passes WARNING and
-# above only.
+# DNSE reconnect loop) are dropped by logging.lastResort, which passes WARNING
+# and above only.
 setup_logging()
 
 
@@ -73,12 +74,23 @@ ALLOWED_SYMBOLS = (
 # what decides what gets written. Empty value = store every board.
 ALLOWED_BOARDS = config.tick_sync.allowed_boards
 
+# Why the filters below account for what they throw away: the symbol and board
+# drops are ordinary traffic, so they cannot be logged per row — but dropped
+# silently they are also the one thing that makes "ticks are missing from
+# ClickHouse" indistinguishable from "the feed never sent them". The tally names
+# each distinct symbol/board/parse failure once and then reports totals every
+# 1,000 drops. `normalize` drops are counted here too; `normalize_tick` logs the
+# specific field that was wrong at the point it finds it.
+DROPS = DropTally(name="tick_ingest")
+
 
 def key_by_symbol_ingest(item):
     """Parse a source message and normalize tick data.
 
     Maps (topic, payload) → (symbol, normalized_dict).
-    Returns (symbol, None) for malformed or filtered ticks.
+    Returns (symbol, None) for malformed or filtered ticks — step 3 of the
+    dataflow is what removes them, since an ``op.map`` must emit one item per
+    input. Each of the four rejections is recorded in ``DROPS``.
 
     Source-agnostic: ``DnseTradeSource`` reshapes Trade-Extra frames into the
     same API-style payload the MQTT feed emitted, so ``normalize_tick`` parses
@@ -90,14 +102,17 @@ def key_by_symbol_ingest(item):
     try:
         raw = orjson.loads(payload)
     except Exception:
+        DROPS.note("unparseable", payload)
         return ("", None)
 
     raw_symbol = raw.get("symbol", "")
     if ALLOWED_SYMBOLS and raw_symbol not in ALLOWED_SYMBOLS:
+        DROPS.note("symbol", raw_symbol)
         return (raw_symbol, None)
 
     normalized = normalize_tick(raw)
     if normalized is None:
+        DROPS.note("normalize", raw_symbol)
         return (raw_symbol, None)
 
     # Board filter after normalization, so both spellings of boardId
@@ -106,6 +121,7 @@ def key_by_symbol_ingest(item):
     # dropping it would silently discard any feed that omits the field.
     board = normalized["board_id"]
     if ALLOWED_BOARDS and board and board not in ALLOWED_BOARDS:
+        DROPS.note("board", board)
         return (raw_symbol, None)
 
     return (normalized["symbol"], normalized)
@@ -196,17 +212,13 @@ else:
             boards=config.dnse_ws.boards,
             base_url=config.dnse_ws.base_url,
             encoding=config.dnse_ws.encoding,
-            session_tz=config.dnse_ws.session_tz,
-            session_start=config.dnse_ws.session_start,
-            session_end=config.dnse_ws.session_end,
-            session_gate=config.dnse_ws.session_gate,
         ),
     )
 
 # 2) Parse, normalize, and key by symbol
 keyed = op.map("key_by_symbol_ingest", stream, key_by_symbol_ingest)
 
-# 3) Drop malformed / non-matching ticks
+# 3) Drop malformed / non-matching ticks — reasons are logged by step 2 (DROPS)
 filtered = op.filter("filter_valid", keyed, lambda item: item[1] is not None)
 
 # 4) Transform for ClickHouse insertion

@@ -123,15 +123,16 @@ Encoding: `DNSE_WS_ENCODING` accepts `json` (default) or `msgpack`, both decoded
 by the SDK codec; anything else is refused at construction. A frame the codec
 cannot read is counted and skipped rather than ending the session.
 
-Stall detection: `_consume` polls `is_stalled()` every 10s and drops the session
-when it trips, so `_run` rebuilds it. This wraps rather than uses the SDK's
-`is_healthy` because that fails any connection with no `pong` inside twice the
-heartbeat, and DNSE only documents the *server* pinging us — if the gateway
-never answers our heartbeat, raw `is_healthy` would read false 50s into every
-connection and turn the reconnect loop into a storm. The pong clock is therefore
-only trusted once a pong has actually been seen; before that the check falls
-back to socket and auth state. It is polled on a slow cadence because
-`is_healthy` logs a warning every time it finds a stale clock.
+Stall detection: none of ours. There was an `is_stalled()` check polled every
+10s, but it could not fire — it wrapped the SDK's `is_healthy` (which fails any
+connection with no `pong` inside twice the heartbeat) and only trusted that
+clock once a pong had actually arrived, because DNSE documents the *server*
+pinging us and never answers our heartbeat. So it stayed permanently in its
+fallback, checking socket and auth state — which `_message_handler_task.done()`
+already covers. A genuinely dead socket is torn down by the `websockets`
+protocol ping (30s interval, 30s timeout, set in the SDK's
+`WebSocketConnection`), and the gateway's half-hourly recycle bounds any
+hypothetical silent session to 30 minutes.
 
 Boards: each trade carries the order book it matched on, stored in the
 `board_id` column (`G1` main continuous, `G4`/`G7` odd lot, `T1`..`T6`
@@ -155,14 +156,21 @@ before this column exists read back as `''` (board unknown, not `G1`), so
 `WHERE board_id = 'G1'` excludes history: use `board_id IN ('', 'G1')` to span
 the migration.
 
-Session gate: DNSE serves this endpoint only while the exchange is open — out of
-hours `ws-openapi.dnse.com.vn` does not resolve, so a connect attempt fails in
-`getaddrinfo` (`[Errno -2] Name or service not known`). The reconnect loop checks
-the clock first and sleeps until the next open, defaulting to a 08:00–16:00 ICT
-window on weekdays (`DNSE_WS_SESSION_START` / `_END` / `_TZ`, or
-`DNSE_WS_SESSION_GATE=0` to dial around the clock). In-session failures retry
-with exponential backoff, 5s doubling to 60s. Public holidays are not modelled:
-the socket is attempted and falls back to that backoff.
+Reconnect loop: the socket is dialled around the clock, with no view on exchange
+hours. DNSE serves this endpoint only while the exchange is open — out of hours
+`ws-openapi.dnse.com.vn` does not resolve, so a connect attempt fails in
+`getaddrinfo` (`[Errno -2] Name or service not known`) — and that lands in the
+same exponential backoff as any other failure, 5s doubling to 60s, logged at
+INFO by `_is_endpoint_unreachable`. So a closed market costs a line a minute
+overnight. There used to be an 08:00–16:00 ICT session gate
+(`DNSE_WS_SESSION_*`); it was removed because a window that is wrong — a
+holiday, a schedule change, a mis-set `TZ` — fails as a feed that stays silent
+through a live session, and stream ticks missed that way are not recoverable
+except through the reconciler.
+
+DNSE's gateway also drops every session on the wall-clock half hour (observed at
+`HH:00:48` and `HH:30:48` ±1s, independent of connection age or traffic), so
+expect a reconnect twice an hour costing ~5s of ticks each.
 
 Steps inside the dataflow:
 
@@ -520,10 +528,6 @@ All workers read from environment variables (or `.env`). Key variables:
 | `DNSE_TRADE_BOARDS` | `G1` | tick_ingest (subscribed; `ALL_BOARDS` is the full set) |
 | `TICK_ALLOWED_BOARDS` | `G1` | tick_ingest (stored; empty = all) |
 | `DNSE_WS_ENCODING` | `json` | tick_ingest (`json` or `msgpack`) |
-| `DNSE_WS_SESSION_START` | `08:00` | tick_ingest |
-| `DNSE_WS_SESSION_END` | `16:00` | tick_ingest |
-| `DNSE_WS_SESSION_TZ` | `EXCHANGE_TZ` / `Asia/Ho_Chi_Minh` | tick_ingest |
-| `DNSE_WS_SESSION_GATE` | `1` | tick_ingest |
 | `INGEST_BATCH_MAX_SIZE` | `100000` | tick_ingest |
 | `INGEST_BATCH_TIMEOUT_SECONDS` | `2.0` | tick_ingest |
 | `INGEST_ASYNC_INSERT` | `1` | tick_ingest |

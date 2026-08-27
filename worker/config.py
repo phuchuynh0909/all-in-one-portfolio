@@ -159,12 +159,14 @@ class DnseWsConfig:
     ``msgpack`` frames per ``DNSE_WS_ENCODING``). Credentials come from
     ``DNSE_API_KEY`` / ``DNSE_API_SECRET``.
 
-    The session window bounds the hours the socket is attempted in. DNSE serves
-    the endpoint only while the exchange is open — out of hours the hostname
-    stops resolving — so the window is what keeps an overnight worker from
-    retrying a dead DNS name every few seconds. Widen it with
-    ``DNSE_WS_SESSION_START`` / ``DNSE_WS_SESSION_END``, or set
-    ``DNSE_WS_SESSION_GATE=0`` to connect around the clock regardless.
+    The socket is dialled around the clock. DNSE serves the endpoint only while
+    the exchange is open — out of hours the hostname stops resolving — so an
+    overnight worker retries a dead DNS name at the backoff cap, one attempt a
+    minute, logged at INFO. There used to be a session window
+    (``DNSE_WS_SESSION_*``) to suppress that; it was removed because a window
+    that is wrong (a holiday, a schedule change, a mis-set ``TZ``) fails as a
+    feed that stays silent through a live session, which costs ticks that no
+    amount of quiet logging is worth.
     """
 
     base_url: str
@@ -172,10 +174,6 @@ class DnseWsConfig:
     api_secret: str
     boards: list[str]
     encoding: str
-    session_tz: str
-    session_start: str
-    session_end: str
-    session_gate: bool
 
     @classmethod
     def from_env(cls) -> "DnseWsConfig":
@@ -195,16 +193,6 @@ class DnseWsConfig:
             api_secret=os.getenv("DNSE_API_SECRET", ""),
             boards=boards,
             encoding=os.getenv("DNSE_WS_ENCODING", "json"),
-            # Wider than TICK_SESSION_START/END (09:00-15:00): those bound
-            # continuous trading, while this only has to cover the hours the feed
-            # is actually served — pre-open auction through post-close run-off.
-            session_tz=os.getenv(
-                "DNSE_WS_SESSION_TZ", os.getenv("EXCHANGE_TZ", "Asia/Ho_Chi_Minh")
-            ),
-            session_start=os.getenv("DNSE_WS_SESSION_START", "08:00"),
-            session_end=os.getenv("DNSE_WS_SESSION_END", "16:00"),
-            session_gate=os.getenv("DNSE_WS_SESSION_GATE", "1")
-            not in ("0", "false", "False"),
         )
 
 

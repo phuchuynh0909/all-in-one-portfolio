@@ -2,92 +2,56 @@
 
 Transport, authentication, encoding and heartbeat are delegated to the official
 DNSE SDK vendored at ``worker/dnse_sdk`` (``dnse.websocket.TradingClient``) —
-inside the worker tree, so it is an ordinary top-level import that needs no
-sys.path shim and travels with the image. This module supplies only the parts
-the SDK gets wrong or does not cover for this feed, and adapts the result to
-Bytewax.
+the connect/TLS/welcome handshake, HMAC-SHA256 auth, JSON *and* MessagePack
+framing, the heartbeat, and the receive/dispatch task fan-out. This module
+supplies only what that SDK does not cover for this feed, and adapts the result
+to Bytewax.
 
-What the SDK now owns
----------------------
-* the ``wss://ws-openapi.dnse.com.vn/v1/stream?encoding=…`` connect, TLS and
-  welcome-frame handshake (``WebSocketConnection``)
-* HMAC-SHA256 auth over ``{api_key}:{ts}:{nonce}`` (``AuthManager``)
-* JSON **and MessagePack** framing (``MessageEncoder`` / ``MessageDecoder``) —
-  which is why ``DNSE_WS_ENCODING=msgpack`` is now a supported setting rather
-  than a construction-time error
-* the application-level heartbeat and the receive/dispatch task fan-out
+Two upstream defects are repaired in the vendored SDK itself rather than worked
+around here, because both governed every channel: ``parse_timestamp`` dropped
+the UTC offset, and market data was routed solely on ``data["T"]`` — which
+Trade-Extra does not carry, so the channel delivered nothing while every health
+signal passed. Both are marked ``LOCAL PATCH`` in the source; re-vendoring the
+SDK reverts them, and the tests under "Vendored-SDK patch" in
+``tests/test_dnse_ws_input.py`` are what will say so.
 
-Fixed in the SDK, not worked around here
------------------------------------------
-Two upstream defects are repaired in ``worker/dnse_sdk`` itself, both marked
-``LOCAL PATCH`` in the source, because both governed every channel rather than
-just this one. Re-vendoring the SDK reverts them; the tests under
-"Vendored-SDK patch" in ``tests/test_dnse_ws_input.py`` are what will say so.
+What this module owns, and why
+------------------------------
+**Reconnect pacing.** The SDK's own reconnect loop is disabled
+(``auto_reconnect=False``, ``max_retries=1``) so ``_run`` is the only backoff in
+play; the SDK would otherwise retry a failed connect ten times on its own
+schedule inside a single attempt of ours.
 
-**Timestamps.** ``models.parse_timestamp`` built every datetime with a bare
-``fromtimestamp()`` and formatted with ``strftime``, dropping any offset — so
-the protobuf and unix branches came out in the *host's* zone and a string came
-out in whichever zone it arrived in, all three indistinguishable once returned.
-It now resolves to UTC and keeps the offset, and refuses to guess a naive
-timestamp. ``_time_to_iso`` below delegates to it and adds only a visible,
-throttled rejection.
+**One subscribe frame per board**, through the SDK's ``subscribe_trade_extra``
+and driven from the configured board list (its ``board_id=None`` default means
+*its* nine boards, not ours). Batching every board into one frame relies on
+``channels`` accepting a list, which no upstream path exercises — and a gateway
+that read only ``channels[0]`` would look exactly like quiet boards.
 
-**Message routing.**
-DNSE's Trade-Extra payload is a *bare* market-data object — ``marketId``,
-``boardId``, ``isin``, ``symbol``, ``matchPrice``, ``matchQtty``, ``side``,
-``avgPrice``, …, ``time {Seconds, Nanos}`` — with no message-type field at all,
-and upstream routed market data solely on ``data["T"]`` with no ``else`` on the
-chain. Subscribing to tick_extra therefore produced a connection that passed
-every health signal and delivered nothing.
+**Raw dicts, not the SDK's ``TradeExtra`` model.** The partition reshapes each
+frame into the API-style payload ``core.tick_contract.normalize_tick`` already
+parses and emits ``(topic, payload_bytes)`` — the exact contract the MQTT tick
+source used, so ``workers.tick_ingest`` and ``workers.block_episode_ingest``
+need no per-source handling. The model would rename those fields
+(``matchPrice`` -> ``price``) only to have them undone.
 
-That is repaired in ``dnse_sdk/dnse/websocket/client.py`` (``_infer_msg_type``
-plus the missing ``else``) rather than worked around here, so it holds for every
-channel — ``top_price``, ``ohlc`` and the rest were equally affected. The local
-``is_trade_frame`` applies the same rule to the raw dict, which is what this
-partition sees.
-
-What this module still owns, and why
-------------------------------------
-``_TradeExtraClient`` subclasses ``TradingClient`` for one behaviour that is a
-choice for this ingester rather than an SDK defect:
-
-* **Reconnection is session-gated.** The SDK's own reconnect loop knows nothing
-  about exchange hours, so it is disabled (``auto_reconnect=False``,
-  ``max_retries=1``) and ``_run`` below owns the pacing.
-
-Subscription uses the SDK's ``subscribe_trade_extra``, one frame per board, only
-driven from the configured board list (its own ``board_id=None`` default means
-*its* nine boards, not ours). An earlier version batched every board into a
-single frame; that relied on ``channels`` being a list, which no upstream code
-path exercises — every subscribe in the SDK sends exactly one channel, and
-``subscribe_trade_extra`` fans its nine-board default out as nine separate
-frames. Batching was an untested inference whose failure mode, a gateway reading
-only ``channels[0]``, is silent and looks exactly like quiet boards.
-
-Frames are still consumed as raw dicts rather than through ``TradeExtra``: the
-partition reshapes them for ``normalize_tick`` and logs unrecognised control
-frames, and the model's renames (``matchPrice`` -> ``price``) would only have to
-be undone. That is a fit question now, not a correctness one — the model's
-``time`` is trustworthy since the patch above.
-
-Each matched trade is reshaped into the API-style payload that
-``core.tick_contract.normalize_tick`` already parses and emitted as
-``(topic, payload_bytes)`` — the exact contract the MQTT tick source used, so
-``workers.tick_ingest`` and ``workers.block_episode_ingest`` need no per-source
-handling.
+**A decoder and a control-frame log** that make silence diagnosable: an
+undecodable frame is counted rather than fatal, and an unrecognised control
+frame is surfaced once per shape. A partly-rejected subscription used to look
+identical to a market with no trades.
 
 Boards ``G1`` (even lot) and ``G4`` (odd lot) carry both stocks and derivatives,
 so a single subscription covers equities and the VN30F futures contract.
 
-The endpoint is **only served during the exchange session**. Out of hours
-``ws-openapi.dnse.com.vn`` stops resolving altogether, so a connect attempt fails
-in ``getaddrinfo`` with ``[Errno -2] Name or service not known`` rather than
-anything protocol-shaped. The reconnect loop therefore consults the clock first
-and sleeps until the next open (see ``seconds_until_session``), which is what
-keeps an overnight worker from logging a DNS failure every few seconds.
+The endpoint is only served during the exchange session — out of hours
+``ws-openapi.dnse.com.vn`` stops resolving, so a connect fails in
+``getaddrinfo`` rather than anything protocol-shaped. Nothing here gates on the
+clock: that failure lands in the ordinary backoff, which
+``_is_endpoint_unreachable`` keeps at INFO. DNSE also drops every live session
+on the wall-clock half hour, so a reconnect twice an hour is normal.
 
-The gateway SDK is fully async; Bytewax pulls synchronously via ``next_batch``.
-The partition therefore runs the asyncio client in a background thread and hands
+The SDK is fully async; Bytewax pulls synchronously via ``next_batch``. The
+partition therefore runs the asyncio client in a background thread and hands
 messages to the runtime through a thread-safe queue.
 
 Credentials come from ``DNSE_API_KEY`` / ``DNSE_API_SECRET`` and are never logged.
@@ -101,10 +65,9 @@ import queue
 import socket
 import threading
 import time
-from datetime import datetime, timedelta
-from datetime import time as dtime
+from dataclasses import dataclass
+from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
-from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import orjson
 from bytewax.inputs import DynamicSource, StatelessSourcePartition
@@ -161,23 +124,10 @@ TRADE_EXTRA_MSG_TYPE = "te"
 
 SUPPORTED_ENCODINGS = ("json", "msgpack")
 
-# The window the socket is attempted in, wide enough to cover the pre-open
-# auction through the post-close run-off rather than only continuous trading —
-# the point is to skip the hours when the host is simply gone, not to police the
-# session. Vietnam observes no DST, so a wall-clock window needs no offset care.
-DEFAULT_SESSION_TZ = "Asia/Ho_Chi_Minh"
-DEFAULT_SESSION_START = "08:00"
-DEFAULT_SESSION_END = "16:00"
-
-# Longest single sleep while waiting for the next open. ``Event.wait`` returns as
-# soon as ``close()`` sets the flag, so this is not about shutdown latency: it
-# keeps a wrong clock, a stale tz database, or a host resumed from suspend from
-# parking the thread for hours, and leaves a heartbeat in the log.
-_SESSION_WAIT_CAP = 900.0
-
-# In-session reconnect backoff. Starts where the old fixed delay was and doubles
-# up to the cap, so a mid-session blip still recovers in seconds while a broken
-# endpoint is retried once a minute instead of twelve times.
+# Reconnect backoff. Starts where the old fixed delay was and doubles up to the
+# cap, so a mid-session blip still recovers in seconds while an endpoint that is
+# simply not there — out of hours, or down — is retried once a minute instead of
+# twelve times.
 _BACKOFF_START = 5.0
 _BACKOFF_CAP = 60.0
 
@@ -199,12 +149,6 @@ _CONTROL_FRAME_CHARS = 600
 # receive loop, so this is the only place the partition can notice a shutdown
 # request; a quarter-second keeps close() well inside its 2s join timeout.
 _SHUTDOWN_POLL_SECS = 0.25
-
-# How often the connection is asked whether it has gone stale. Far slower than
-# the shutdown poll on purpose: ``TradingClient.is_healthy`` emits a warning
-# every time it finds a stale pong clock, so evaluating it at 4Hz would fill the
-# log with the same line before the reconnect it triggers even happened.
-_HEALTH_CHECK_SECS = 10.0
 
 # Synthetic action stood in for a frame the codec could not read, so one bad
 # frame is counted and skipped instead of tearing down the connection.
@@ -229,59 +173,6 @@ def normalize_side(value) -> int:
 # ---------------------------------------------------------------------------
 # Protocol helpers (pure — unit-testable without any network)
 # ---------------------------------------------------------------------------
-def parse_hhmm(text: str, fallback: str) -> dtime:
-    """Parse an ``"HH:MM"`` session bound, falling back rather than crashing.
-
-    A typo in ``DNSE_WS_SESSION_START`` should not stop the ingester from
-    starting — losing the gate costs some log noise out of hours, while raising
-    here would cost the whole feed.
-    """
-    try:
-        hour, _, minute = str(text).strip().partition(":")
-        return dtime(int(hour), int(minute or 0))
-    except (TypeError, ValueError):
-        log.warning("Unparseable session time %r; using %s", text, fallback)
-        hour, _, minute = fallback.partition(":")
-        return dtime(int(hour), int(minute))
-
-
-def seconds_until_session(
-    now: datetime,
-    start: dtime,
-    end: dtime,
-    weekdays_only: bool = True,
-) -> float:
-    """Seconds until the exchange session opens; ``0.0`` when it is open now.
-
-    ``now`` must be timezone-aware **in the exchange's own zone**, so that the
-    comparison is against Ho Chi Minh wall-clock time however the container is
-    configured. Weekends count as closed.
-
-    Public holidays are deliberately not modelled — the exchange publishes no
-    machine-readable calendar this worker can follow — so a holiday still opens
-    the socket and lands in the ordinary in-session backoff. That is the safe
-    direction to be wrong in: a missed session costs ticks that cannot be
-    recovered from a stream, while an extra connect attempt costs one log line.
-    """
-    open_at = now.replace(
-        hour=start.hour, minute=start.minute, second=0, microsecond=0
-    )
-    close_at = now.replace(hour=end.hour, minute=end.minute, second=0, microsecond=0)
-    trading_day = not weekdays_only or now.weekday() < 5
-
-    if trading_day and open_at <= now < close_at:
-        return 0.0
-
-    # Either side of today's window: before it, today's open still counts;
-    # after it (or on a weekend), scan forward for the next trading day.
-    candidate = open_at if trading_day and now < open_at else open_at + timedelta(days=1)
-    for _ in range(8):
-        if not weekdays_only or candidate.weekday() < 5:
-            return max(0.0, (candidate - now).total_seconds())
-        candidate += timedelta(days=1)
-    return _SESSION_WAIT_CAP  # unreachable: a week always contains a weekday
-
-
 def _is_endpoint_unreachable(exc: BaseException) -> bool:
     """True when the failure is "the endpoint isn't there", not a protocol error.
 
@@ -304,16 +195,6 @@ def _is_endpoint_unreachable(exc: BaseException) -> bool:
     return False
 
 
-def trade_extra_channel(board: str, encoding: str = "json") -> str:
-    """Trade-Extra channel name for a board, e.g. ``tick_extra.G1.json``.
-
-    Mirrors what ``TradingClient.subscribe_trade_extra`` builds. The SDK sends
-    the subscribe frames; this is here so tests and logs can name a channel
-    without reaching into it.
-    """
-    return f"tick_extra.{board}.{'msgpack' if encoding == 'msgpack' else 'json'}"
-
-
 def _time_to_iso(value) -> Optional[str]:
     """DNSE ``time`` (ISO str, protobuf {Seconds,Nanos}, or unix s/ms) -> UTC ISO.
 
@@ -325,56 +206,54 @@ def _time_to_iso(value) -> Optional[str]:
     ``ticks`` under the wrong zone, and nothing downstream can tell a wrong
     timestamp from a right one.
 
-    This wrapper adds only what a library cannot: a *visible* rejection.
-    ``parse_timestamp`` returns None for anything it will not place on the
-    timeline — including a naive string, whose zone it refuses to guess — and a
-    tick dropped in silence at several thousand a second is precisely the
-    failure mode that is hardest to notice.
+    This wrapper adds only what a library cannot: a *visible* rejection. A tick
+    dropped in silence at several thousand a second is precisely the failure
+    mode that is hardest to notice.
     """
     if value is None:
         return None
     iso = parse_timestamp(value)
-    if iso is not None:
-        return iso
-    _warn_rejected_time(*_classify_rejected_time(value))
-    return None
-
-
-def _classify_rejected_time(value) -> tuple:
-    """``(reason, message, value)`` for a time ``parse_timestamp`` refused.
-
-    Only the log line differs; both cases drop the tick. A naive string is
-    called out separately because it is the one that looks fine — it parses,
-    it just does not say *when*, and ``normalize_tick`` would read the missing
-    offset as UTC and land an ICT wall-clock time seven hours early.
-    """
-    if isinstance(value, str):
-        try:
-            parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-        except ValueError:
-            parsed = None
-        if parsed is not None and parsed.tzinfo is None:
-            return (
-                "naive",
-                "DNSE time %r carries no UTC offset, so the instant it names is "
-                "ambiguous; dropping the tick rather than guessing a zone",
-                value,
-            )
-    return ("unparseable", "Unparseable DNSE time %r; dropping the tick", value)
+    if iso is None:
+        _warn_rejected_time(value)
+    return iso
 
 
 # Rejected-timestamp tallies, keyed by reason. If the feed ever does change
-# shape, every tick in the session hits the same branch — so this reports at a
-# widening interval (like the undecodable-frame counter) instead of emitting one
-# warning per trade at several thousand a second.
+# shape, every tick in the session hits the same branch — so reporting widens
+# (like the undecodable-frame counter) instead of emitting one warning per trade
+# at several thousand a second.
 _TIME_REJECTS: Dict[str, int] = {}
-_REJECT_REPORT_AT = (1, 100, 10_000)
 
 
-def _warn_rejected_time(reason: str, message: str, value) -> None:
+def _warn_rejected_time(value) -> None:
+    """Report a time ``parse_timestamp`` refused, throttled per reason.
+
+    A naive string is counted separately because it is the one that looks fine:
+    it parses, it just does not say *when*, and ``normalize_tick`` would read the
+    missing offset as UTC and land an ICT wall-clock time seven hours early.
+    Either way the tick is dropped — only the line differs.
+    """
+    naive = False
+    if isinstance(value, str):
+        try:
+            naive = (
+                datetime.fromisoformat(value.strip().replace("Z", "+00:00")).tzinfo
+                is None
+            )
+        except ValueError:
+            pass
+
+    if naive:
+        reason, message = "naive", (
+            "DNSE time %r carries no UTC offset, so the instant it names is "
+            "ambiguous; dropping the tick rather than guessing a zone"
+        )
+    else:
+        reason, message = "unparseable", "Unparseable DNSE time %r; dropping the tick"
+
     count = _TIME_REJECTS.get(reason, 0) + 1
     _TIME_REJECTS[reason] = count
-    if count in _REJECT_REPORT_AT or count % 100_000 == 0:
+    if count in (1, 100, 10_000) or count % 100_000 == 0:
         log.warning(message + " (%d so far)", value, count)
 
 
@@ -473,33 +352,6 @@ class _TradeExtraClient(TradingClient):
     def __init__(self, *args, on_frame: Callable[[dict], Optional[dict]], **kwargs):
         super().__init__(*args, **kwargs)
         self._on_frame = on_frame
-        # Whether this gateway has ever answered one of our heartbeat pings.
-        # See is_stalled for why the health check hinges on it.
-        self._pong_seen = False
-
-    def is_stalled(self) -> bool:
-        """True when the session should be torn down and rebuilt.
-
-        ``TradingClient.is_healthy`` fails a connection that has not seen a
-        ``pong`` within twice the heartbeat interval, which only means anything
-        if the server answers client pings at all. The protocol DNSE documents
-        runs the other way — the *server* pings every three minutes and drops
-        the socket if we do not pong within one — and says nothing about it
-        replying to ours. If it never does, an unguarded ``is_healthy`` reads
-        false 50s into every connection and turns the reconnect loop into a
-        storm, which is far worse than the stall it is meant to catch.
-
-        So the pong clock is trusted only once a pong has actually arrived;
-        until then this falls back to what can be checked without it.
-        """
-        connection = self._connection
-        if connection is None or not connection.is_connected:
-            return True
-        if not self._is_authenticated:
-            return True
-        if not self._pong_seen:
-            return False  # no evidence this gateway pongs; clock is meaningless
-        return not self.is_healthy
 
     async def subscribe_trade_extra_boards(
         self, boards: List[str], symbols: List[str]
@@ -531,9 +383,8 @@ class _TradeExtraClient(TradingClient):
         if action == _UNDECODABLE_ACTION:
             return  # already counted by the decoder
         if action == "pong":
-            # Keeps ``is_healthy`` meaningful; not interesting to log.
-            self._last_pong_time = time.time()
-            self._pong_seen = True
+            # An answer to the SDK's heartbeat. DNSE does not appear to send
+            # these at all; either way there is nothing to do with one.
             return
 
         reply = self._on_frame(data)
@@ -562,10 +413,6 @@ class DnseTradePartition(StatelessSourcePartition):
         encoding: str = "json",
         batch_size: int = 1024,
         connect_timeout: float = 60.0,
-        session_tz: str = DEFAULT_SESSION_TZ,
-        session_start: str = DEFAULT_SESSION_START,
-        session_end: str = DEFAULT_SESSION_END,
-        session_gate: bool = True,
         start: bool = True,
     ):
         if not api_key or not api_secret:
@@ -599,22 +446,6 @@ class DnseTradePartition(StatelessSourcePartition):
         self._trades = 0
         self._seen_controls: set[str] = set()
         self._undecodable = 0
-
-        # An unknown zone name would otherwise take the whole worker down at
-        # build time; the gate is a convenience, so it degrades to the exchange
-        # default instead.
-        self._session_gate = session_gate
-        try:
-            self._session_tz = ZoneInfo(session_tz)
-        except (ZoneInfoNotFoundError, ValueError):
-            log.warning(
-                "Unknown session timezone %r; using %s",
-                session_tz,
-                DEFAULT_SESSION_TZ,
-            )
-            self._session_tz = ZoneInfo(DEFAULT_SESSION_TZ)
-        self._session_start = parse_hhmm(session_start, DEFAULT_SESSION_START)
-        self._session_end = parse_hhmm(session_end, DEFAULT_SESSION_END)
 
         self._q: "queue.Queue[tuple]" = queue.Queue()
         self._stop = threading.Event()
@@ -707,58 +538,34 @@ class DnseTradePartition(StatelessSourcePartition):
                 self._encoding,
             )
 
-    # -- session gate --------------------------------------------------------
-    def seconds_until_open(self) -> float:
-        """Seconds until the feed is expected to be served; 0.0 when it is now."""
-        if not self._session_gate:
-            return 0.0
-        return seconds_until_session(
-            datetime.now(self._session_tz), self._session_start, self._session_end
-        )
-
     # -- async client (background thread) ------------------------------------
     def _run(self) -> None:
-        """Reconnect loop: wait for the session, connect, back off on failure.
+        """Reconnect loop: connect, back off on failure, forever.
 
-        The clock is consulted before every attempt because DNSE only serves the
-        endpoint during the session — out of hours its hostname does not resolve,
-        and a loop that reconnected regardless spent each night emitting
-        ``[Errno -2] Name or service not known`` every five seconds. Waiting for
-        the next open turns that into one line per evening. This is also why the
-        SDK client's own reconnect machinery is switched off in ``_consume``:
-        it would dial straight through a closed exchange.
+        There is no clock check. Out of hours DNSE's hostname does not resolve,
+        which arrives here as a ``getaddrinfo`` failure like any other outage:
+        ``_is_endpoint_unreachable`` keeps it at INFO and the backoff below
+        settles at one attempt a minute. That costs a line a minute overnight,
+        and buys a loop with no opinion about when the exchange is open — a
+        session window is one more thing that can be wrong (a holiday, a
+        schedule change, a mis-set ``TZ``) and whose failure mode is a feed that
+        stays silent all day.
+
+        The SDK client's own reconnect machinery is switched off in ``_consume``
+        so that this is the only backoff in play.
         """
         import asyncio
 
         backoff = _BACKOFF_START
-        announced_closed = False
 
         while not self._stop.is_set():
-            wait = self.seconds_until_open()
-            if wait > 0.0:
-                # Logged once per closure, not once per sleep: the cap below can
-                # wake this loop many times before the market opens.
-                if not announced_closed:
-                    log.info(
-                        "Outside the %s-%s %s session; DNSE serves the feed only "
-                        "during it, so waiting %.1fh for the next open",
-                        self._session_start.strftime("%H:%M"),
-                        self._session_end.strftime("%H:%M"),
-                        self._session_tz.key,
-                        wait / 3600.0,
-                    )
-                    announced_closed = True
-                self._stop.wait(min(wait, _SESSION_WAIT_CAP))
-                continue
-
-            announced_closed = False
             started = time.monotonic()
             try:
                 asyncio.run(self._consume())
             except Exception as exc:  # noqa: BLE001 - keep the thread alive
                 if _is_endpoint_unreachable(exc):
-                    # In-session and unreachable: a blip, or the session ended
-                    # early / a holiday the gate cannot know about. Expected
+                    # Unreachable rather than misbehaving: a blip, or the hours
+                    # when DNSE simply does not serve the endpoint. Expected
                     # enough not to warrant a warning.
                     log.info(
                         "DNSE WS endpoint unreachable (%s); retrying in %.0fs",
@@ -845,28 +652,18 @@ class DnseTradePartition(StatelessSourcePartition):
             )
 
             # The SDK owns the receive loop, so returning here means either
-            # close() was called, its message handler stopped (a server-side
-            # close, or an unrecoverable error it already emitted), or the
-            # connection went quiet while still nominally open. All three are
+            # close() was called or its message handler stopped — a server-side
+            # close, or an unrecoverable error it already emitted. Both are
             # handled by the reconnect loop in _run.
+            #
+            # A socket that is open but silent is not checked for: the pong
+            # clock that would answer it is meaningless on a gateway that never
+            # pongs (see _dispatch_message), and the ``websockets`` protocol
+            # ping — 30s interval, 30s timeout, set in the SDK's
+            # WebSocketConnection — already tears down a dead connection.
             handler = client._message_handler_task
-            next_health_check = time.monotonic() + _HEALTH_CHECK_SECS
             while not self._stop.is_set() and not handler.done():
                 await asyncio.sleep(_SHUTDOWN_POLL_SECS)
-                now = time.monotonic()
-                if now < next_health_check:
-                    continue
-                next_health_check = now + _HEALTH_CHECK_SECS
-                if client.is_stalled():
-                    # An open socket delivering nothing looks exactly like a
-                    # quiet market from the outside, so nothing else in the
-                    # pipeline would ever notice this.
-                    log.warning(
-                        "DNSE WS is up but stalled (no pong within %.0fs); "
-                        "dropping the session so it can be rebuilt",
-                        client.heartbeat_interval * 2,
-                    )
-                    return
         finally:
             await client.disconnect()
 
@@ -889,50 +686,25 @@ class DnseTradePartition(StatelessSourcePartition):
 # ---------------------------------------------------------------------------
 # Bytewax dynamic source
 # ---------------------------------------------------------------------------
+@dataclass
 class DnseTradeSource(DynamicSource):
     """Bytewax source over DNSE OpenAPI's Trade-Extra WebSocket feed.
 
     Emits ``(topic, payload_bytes)`` per matched trade — a payload shaped for
     ``core.tick_contract.normalize_tick``. One partition per worker.
+
+    Every field is forwarded verbatim to ``DnseTradePartition``, which is where
+    they are documented and validated; the names must therefore match its
+    parameters.
     """
 
-    def __init__(
-        self,
-        api_key: str,
-        api_secret: str,
-        symbols: List[str],
-        boards: Optional[List[str]] = None,
-        base_url: str = DEFAULT_BASE_URL,
-        encoding: str = "json",
-        batch_size: int = 1024,
-        session_tz: str = DEFAULT_SESSION_TZ,
-        session_start: str = DEFAULT_SESSION_START,
-        session_end: str = DEFAULT_SESSION_END,
-        session_gate: bool = True,
-    ):
-        self._api_key = api_key
-        self._api_secret = api_secret
-        self._symbols = symbols
-        self._boards = boards
-        self._base_url = base_url
-        self._encoding = encoding
-        self._batch_size = batch_size
-        self._session_tz = session_tz
-        self._session_start = session_start
-        self._session_end = session_end
-        self._session_gate = session_gate
+    api_key: str
+    api_secret: str
+    symbols: List[str]
+    boards: Optional[List[str]] = None
+    base_url: str = DEFAULT_BASE_URL
+    encoding: str = "json"
+    batch_size: int = 1024
 
     def build(self, _step_id: str, _worker_index: int, _worker_count: int):
-        return DnseTradePartition(
-            self._api_key,
-            self._api_secret,
-            self._symbols,
-            boards=self._boards,
-            base_url=self._base_url,
-            encoding=self._encoding,
-            batch_size=self._batch_size,
-            session_tz=self._session_tz,
-            session_start=self._session_start,
-            session_end=self._session_end,
-            session_gate=self._session_gate,
-        )
+        return DnseTradePartition(**vars(self))
