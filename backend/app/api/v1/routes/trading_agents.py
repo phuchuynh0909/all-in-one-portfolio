@@ -220,8 +220,21 @@ def get_analysis(analysis_id: str) -> dict:
 
 @router.post("/analyze/stream")
 def analyze_stream(request: AnalyzeRequest) -> StreamingResponse:
-    """Run a multi-agent analysis for one symbol, streaming progress via SSE."""
-    from app.services.tradingagents.runner import DEFAULT_ANALYSTS
+    """Start a multi-agent analysis and stream its progress via SSE.
+
+    The response streams the run but no longer drives it: the job outlives this
+    request, so closing the connection detaches this viewer and leaves the
+    analysis to finish and save itself. There is deliberately no cancel — a
+    started run always completes, and the concurrency cap is what bounds the cost.
+    """
+    # Imported here so a heavy/broken TradingAgents install can't crash app
+    # startup — only requests to this endpoint pay the import cost.
+    from app.services.tradingagents import jobs
+    from app.services.tradingagents.runner import (
+        DEFAULT_ANALYSTS,
+        check_backend,
+        run_analysis_stream,
+    )
 
     symbol = request.symbol.strip().upper()
     trade_date = request.trade_date or date.today().strftime("%Y-%m-%d")
@@ -232,28 +245,17 @@ def analyze_stream(request: AnalyzeRequest) -> StreamingResponse:
     # error event the caller has to dig out of the stream.
     analyst_models = _validated_analyst_models(request)
 
-    def event_generator() -> Generator[str, None, None]:
-        # Import here so a heavy/broken TradingAgents install can't crash app
-        # startup — only requests to this endpoint pay the import cost.
-        from app.services.tradingagents.runner import (
-            check_backend,
-            run_analysis_stream,
-        )
+    logger.info("TradingAgents analyze: {} on {}", symbol, trade_date)
 
-        logger.info("TradingAgents analyze: {} on {}", symbol, trade_date)
+    # Checked before the job is created, for the same reason: an unreachable LLM
+    # backend is a 503 the caller can act on, not an error event mid-stream, and
+    # a run that cannot start must not occupy one of the concurrency slots.
+    ok, message = check_backend()
+    if not ok:
+        raise HTTPException(status_code=503, detail=message)
 
-        ok, message = check_backend()
-        if not ok:
-            yield _sse("error", {"error": message})
-            return
-
-        # Held by name so the runner's cleanup (releasing the checkpointer,
-        # unwinding the graph) is driven from this thread when the client
-        # disconnects, instead of being left to whenever the generator is
-        # collected. A disconnect closes *this* generator at the yield below, so
-        # GeneratorExit — a BaseException — deliberately passes the handler: there
-        # is no longer a client to send an error event to.
-        events = run_analysis_stream(
+    def make_events():
+        return run_analysis_stream(
             symbol,
             trade_date,
             analysts,
@@ -261,14 +263,17 @@ def analyze_stream(request: AnalyzeRequest) -> StreamingResponse:
             quick_think_llm=request.quick_think_llm,
             analyst_llms=analyst_models,
         )
-        try:
-            for event_type, data in events:
-                yield _sse(event_type, data)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("TradingAgents stream crashed")
-            yield _sse("error", {"error": str(exc)})
-        finally:
-            events.close()
+
+    try:
+        job = jobs.start(symbol, trade_date, make_events)
+    except jobs.TooManyRuns as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+
+    def event_generator() -> Generator[str, None, None]:
+        # No try/finally closing anything: this generator owns the subscription,
+        # not the run. A disconnect closes it at the yield and the job carries on.
+        for event_type, data in jobs.subscribe(job):
+            yield _sse(event_type, data)
 
     return StreamingResponse(
         event_generator(),
