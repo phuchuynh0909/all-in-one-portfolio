@@ -170,3 +170,41 @@ def subscribe(job: Job) -> EventStream:
 
         if exhausted:
             return
+
+
+def shutdown(timeout: float = 5.0) -> None:
+    """Ask every running job to stop, and wait briefly for the threads.
+
+    Cooperative by necessity, not by preference: a generator may only be closed
+    by the thread iterating it — calling ``close()`` on one parked in ``next()``
+    raises ``ValueError: generator already executing`` — so this sets a flag and
+    each worker closes its own generator on the way out.
+
+    A worker only checks that flag between events, and an event is a whole graph
+    node, so a job may not notice before the deadline. That is accepted: the
+    threads are daemons so the process still exits, and an interrupted run
+    resumes from its checkpoint on the next request for the same ticker and date.
+    """
+    with _lock:
+        running = list(_running.values())
+    if not running:
+        return
+
+    logger.info("Shutting down with %d analysis(es) in flight", len(running))
+    for job in running:
+        job.stop_requested = True
+        # Wakes any subscriber parked on the condition so it can notice too.
+        with job.cond:
+            job.cond.notify_all()
+
+    deadline = time.monotonic() + timeout
+    for job in running:
+        if job.thread is None:
+            continue
+        job.thread.join(max(0.0, deadline - time.monotonic()))
+        if job.thread.is_alive():
+            logger.warning(
+                "Analysis of %s did not stop in time; it is resumable from its "
+                "checkpoint",
+                job.symbol,
+            )

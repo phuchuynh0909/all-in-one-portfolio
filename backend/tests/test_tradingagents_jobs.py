@@ -207,3 +207,40 @@ def test_a_subscriber_of_a_failing_run_sees_the_error_and_stops():
 
     assert received[0] == ("started", {})
     assert received[-1][0] == "error"
+
+
+# --- shutdown ---------------------------------------------------------------
+
+
+def test_shutdown_stops_a_running_job():
+    gate = threading.Event()
+    events = [("started", {}), ("node", {}), ("done", {})]
+    job = jobs.start("VCG", "2026-08-27", make_stream(events, gate))
+    gate.set()
+    with job.cond:
+        job.cond.wait_for(lambda: job.events, timeout=5)
+
+    jobs.shutdown(timeout=5)
+
+    assert job.done
+    assert not jobs._running
+
+
+def test_shutdown_does_not_hang_on_a_job_that_never_notices():
+    # A worker only checks the flag between events, and an event is a whole
+    # graph node. Shutdown must give up rather than block the process exit;
+    # the threads are daemons and the run is resumable from its checkpoint.
+    gate = threading.Event()  # never set: the job is wedged on its first event
+    job = jobs.start("VCG", "2026-08-27", make_stream([("done", {})], gate))
+    try:
+        jobs.shutdown(timeout=0.2)
+
+        assert not job.done, "the job is still stuck, which is expected"
+    finally:
+        gate.set()
+        if job.thread is not None:
+            job.thread.join(timeout=5)
+
+
+def test_shutdown_with_no_jobs_is_harmless():
+    jobs.shutdown(timeout=0.1)

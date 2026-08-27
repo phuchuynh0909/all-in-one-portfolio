@@ -137,6 +137,15 @@ def get_app() -> FastAPI:
             backend.__class__.__name__,
         )
 
+    @app.on_event("shutdown")
+    async def shutdown():
+        # Analyses now outlive the request that started them, so leaving without
+        # this strands worker threads mid-graph. Imported here so app startup
+        # keeps paying no TradingAgents import cost.
+        from app.services.tradingagents import jobs
+
+        jobs.shutdown()
+
     return app
 
 
