@@ -322,3 +322,37 @@ def test_build_trades_rejects_a_parameter_sweep():
 
     with pytest.raises(AmbiguousSymbolColumns, match="parameter"):
         build_trades(make_param_sweep_portfolio(), run_id="r1")
+
+
+def test_build_symbol_stats_populates_metrics_for_multiindex_columns():
+    """Metrics must carry real numbers, not NaN.
+
+    Label-aligning vectorbt metrics against MultiIndex columns silently
+    produced NaN for every metric of a real 200-symbol run, while
+    trade-derived columns (n_trades, exposure) stayed populated — which is
+    exactly what made it easy to miss.
+    """
+    pf = make_multiindex_portfolio()
+    stats = build_symbol_stats(pf, run_id="r1", trades=build_trades(pf, run_id="r1"))
+
+    for column in ["total_return", "sharpe", "max_drawdown", "win_rate"]:
+        assert stats[column].notna().all(), f"{column} came back NaN: {stats[column].tolist()}"
+
+    # And the values must match what vectorbt actually reports, per symbol.
+    expected = pf.total_return()
+    np.testing.assert_allclose(
+        stats["total_return"].to_numpy(), np.asarray(expected, dtype="float64"), rtol=1e-12,
+    )
+
+
+def test_metric_values_raises_when_a_metric_cannot_be_aligned():
+    from app.services.experiments.adapter import MisalignedMetric, _metric_values
+
+    with pytest.raises(MisalignedMetric, match="sharpe"):
+        _metric_values("sharpe", np.array([1.0, 2.0, 3.0]), 2)
+
+
+def test_metric_values_broadcasts_a_scalar_metric():
+    from app.services.experiments.adapter import _metric_values
+
+    assert _metric_values("total_return", 0.5, 3).tolist() == [0.5, 0.5, 0.5]

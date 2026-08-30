@@ -131,19 +131,36 @@ def build_trades(pf, run_id: str) -> pd.DataFrame:
     return out[CORE_TRADE_COLUMNS].reset_index(drop=True)
 
 
-def _as_symbol_series(value, columns: pd.Index) -> pd.Series:
-    """Normalise a vectorbt metric into a Series indexed by symbol."""
-    if isinstance(value, pd.Series):
-        return value.reindex(columns)
-    return pd.Series(np.repeat(np.asarray(value), len(columns))[: len(columns)], index=columns)
+class MisalignedMetric(RuntimeError):
+    """A vectorbt metric did not yield one value per portfolio column."""
+
+
+def _metric_values(name: str, value, n_columns: int) -> np.ndarray:
+    """One float per portfolio column, aligned positionally.
+
+    Deliberately NOT aligned by label. vectorbt returns metric Series indexed
+    by the portfolio columns, but that index does not always match
+    `wrapper.columns` exactly — extra broadcast levels (e.g. from passing
+    `sl_stop` as a DataFrame) or stringified MultiIndex labels make every
+    lookup miss, and `reindex` reports that as NaN rather than as an error.
+    That silently wrote NULL for every metric of a real 200-symbol run.
+
+    Column order is what vectorbt guarantees, so position is the reliable key,
+    and a length mismatch raises instead of degrading to NaN.
+    """
+    array = np.asarray(value, dtype="float64").ravel()
+    if array.size == 1 and n_columns != 1:
+        array = np.repeat(array, n_columns)
+    if array.size != n_columns:
+        raise MisalignedMetric(
+            f"vectorbt metric {name!r} returned {array.size} values for "
+            f"{n_columns} portfolio columns; cannot align them."
+        )
+    return array
 
 
 def build_symbol_stats(pf, run_id: str, trades: pd.DataFrame) -> pd.DataFrame:
     """One row per symbol. Non-finite metrics are cleaned to NULL."""
-    # Metric Series from vectorbt are indexed by the original (possibly
-    # MultiIndex) columns, so alignment stays positional; only the emitted
-    # labels are the extracted symbols.
-    raw_columns = pd.Index(pf.wrapper.columns)
     columns = _checked_symbol_labels(pf.wrapper.columns)
     n_bars = len(pf.wrapper.index)
 
@@ -157,7 +174,7 @@ def build_symbol_stats(pf, run_id: str, trades: pd.DataFrame) -> pd.DataFrame:
         "expectancy": pf.trades.expectancy(),
     }
     frame = pd.DataFrame(
-        {name: _as_symbol_series(value, raw_columns).to_numpy() for name, value in metrics.items()},
+        {name: _metric_values(name, value, len(columns)) for name, value in metrics.items()},
         index=columns,
     )
 
