@@ -799,10 +799,14 @@ Add to `store.py` (imports at top: `import duckdb`):
 
         con = duckdb.connect(str(target))
         try:
+            # DuckDB rejects prepared parameters in CREATE VIEW ("Unexpected
+            # prepared parameter"), so the globs are inlined as literals.
+            def _lit(path: Path) -> str:
+                return "'" + str(path).replace("'", "''") + "'"
+
             con.execute(
-                "CREATE OR REPLACE VIEW runs AS "
-                "SELECT * FROM read_json_auto(?, union_by_name=true)",
-                [str(root / "runs" / "*" / "meta.json")],
+                "CREATE OR REPLACE VIEW runs AS SELECT * FROM read_json_auto("
+                f"{_lit(root / 'runs' / '*' / 'meta.json')}, union_by_name=true)"
             )
             for view, fname in [
                 ("trades", "trades.parquet"),
@@ -810,9 +814,8 @@ Add to `store.py` (imports at top: `import duckdb`):
                 ("equity", "equity.parquet"),
             ]:
                 con.execute(
-                    f"CREATE OR REPLACE VIEW {view} AS "
-                    "SELECT * FROM read_parquet(?, union_by_name=true)",
-                    [str(root / "runs" / "*" / fname)],
+                    f"CREATE OR REPLACE VIEW {view} AS SELECT * FROM read_parquet("
+                    f"{_lit(root / 'runs' / '*' / fname)}, union_by_name=true)"
                 )
         finally:
             con.close()

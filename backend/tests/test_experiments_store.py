@@ -135,3 +135,51 @@ def test_from_env_rejects_unknown_backend(monkeypatch):
     monkeypatch.setenv("EXPERIMENTS_BACKEND", "r2")
     with pytest.raises(NotImplementedError, match="r2"):
         ExperimentStore.from_env()
+
+
+def test_rebuild_views_creates_queryable_views(tmp_path):
+    duckdb = pytest.importorskip("duckdb")
+    store = _store(tmp_path)
+    trades, stats, equity = _frames()
+    store.write_run(run_id="r1", meta={"run_id": "r1", "name": "bt"},
+                    trades=trades, symbol_stats=stats, equity=equity)
+
+    db_path = store.rebuild_views()
+    assert db_path is not None and db_path.exists()
+
+    con = duckdb.connect(str(db_path), read_only=True)
+    try:
+        assert con.execute("SELECT count(*) FROM trades").fetchone()[0] == 1
+        assert con.execute("SELECT count(*) FROM symbol_stats").fetchone()[0] == 1
+        assert con.execute("SELECT count(*) FROM equity").fetchone()[0] == 1
+        assert con.execute("SELECT run_id FROM runs").fetchone()[0] == "r1"
+    finally:
+        con.close()
+
+
+def test_rebuild_views_unions_runs_with_different_feature_columns(tmp_path):
+    duckdb = pytest.importorskip("duckdb")
+    store = _store(tmp_path)
+    trades, stats, equity = _frames()
+
+    a = trades.assign(run_id="r1", feat_rsi=[55.0])
+    b = trades.assign(run_id="r2", feat_atr=[1.5])
+    store.write_run(run_id="r1", meta={"run_id": "r1"}, trades=a,
+                    symbol_stats=stats, equity=equity)
+    store.write_run(run_id="r2", meta={"run_id": "r2"}, trades=b,
+                    symbol_stats=stats, equity=equity)
+
+    con = duckdb.connect(str(store.rebuild_views()), read_only=True)
+    try:
+        rows = con.execute(
+            "SELECT run_id, feat_rsi, feat_atr FROM trades ORDER BY run_id"
+        ).fetchall()
+    finally:
+        con.close()
+    # Disjoint feature sets must union to NULL, not raise.
+    assert rows == [("r1", 55.0, None), ("r2", None, 1.5)]
+
+
+def test_rebuild_views_on_empty_store_returns_none(tmp_path):
+    pytest.importorskip("duckdb")
+    assert _store(tmp_path).rebuild_views() is None

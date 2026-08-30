@@ -6,6 +6,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import duckdb
 import pandas as pd
 from loguru import logger
 
@@ -25,6 +26,8 @@ class RunHandle:
 
 class ExperimentStore:
     """Owns the write path. Knows nothing about vectorbt."""
+
+    VIEWS_DB_NAME = "experiments.duckdb"
 
     def __init__(self, backend: StorageBackend) -> None:
         self.backend = backend
@@ -66,6 +69,7 @@ class ExperimentStore:
         # write and is skipped by list_run_ids(), so a crash mid-write is invisible.
         self.backend.write_json(f"runs/{run_id}/meta.json", full_meta)
         self.rebuild_catalog()
+        self.rebuild_views()
 
         logger.info("experiment run written run_id={} rows_trades={}", run_id, len(trades))
         return RunHandle(run_id=run_id, meta=full_meta, base_uri=self.backend.base_uri())
@@ -84,3 +88,48 @@ class ExperimentStore:
                 runs.append(meta)
         self.backend.write_json(CATALOG_PATH, {"schema_version": SCHEMA_VERSION, "runs": runs})
         return len(runs)
+
+    def rebuild_views(self, db_path: Path | None = None) -> Path | None:
+        """Regenerate experiments.duckdb as views over the Parquet files.
+
+        The database holds no data — only views — so it is disposable and can
+        be regenerated at any time. Requires a filesystem-backed store because
+        the views use globs, which need directory listing.
+        """
+        backend = self.backend
+        if not isinstance(backend, LocalBackend):
+            raise NotImplementedError("rebuild_views requires a filesystem-backed store")
+        if not backend.list_run_ids():
+            return None
+
+        root = backend.root
+        target = Path(db_path) if db_path else root / self.VIEWS_DB_NAME
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            target.unlink()
+
+        con = duckdb.connect(str(target))
+        try:
+            # DuckDB rejects prepared parameters in CREATE VIEW, so the globs are
+            # inlined as literals with single quotes escaped.
+            def _lit(path: Path) -> str:
+                return "'" + str(path).replace("'", "''") + "'"
+
+            con.execute(
+                "CREATE OR REPLACE VIEW runs AS SELECT * FROM read_json_auto("
+                f"{_lit(root / 'runs' / '*' / 'meta.json')}, union_by_name=true)"
+            )
+            for view, fname in [
+                ("trades", "trades.parquet"),
+                ("symbol_stats", "symbol_stats.parquet"),
+                ("equity", "equity.parquet"),
+            ]:
+                con.execute(
+                    f"CREATE OR REPLACE VIEW {view} AS SELECT * FROM read_parquet("
+                    f"{_lit(root / 'runs' / '*' / fname)}, union_by_name=true)"
+                )
+        finally:
+            con.close()
+
+        logger.info("experiment views rebuilt at {}", target)
+        return target
