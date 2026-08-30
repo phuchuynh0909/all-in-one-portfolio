@@ -163,3 +163,106 @@ def test_build_equity_attaches_benchmark_when_given():
 def test_build_equity_benchmark_is_null_when_absent():
     equity, _ = build_equity(make_portfolio(), run_id="r1")
     assert equity["benchmark_value"].isna().all()
+
+
+from app.services.experiments.adapter import (
+    FeatureCollisionError,
+    attach_features,
+    log_experiment,
+)
+from app.services.experiments.backends import LocalBackend
+from app.services.experiments.store import ExperimentStore
+
+
+def _features_for(pf):
+    trades = build_trades(pf, run_id="r1")
+    return pd.DataFrame({
+        "symbol": trades["symbol"],
+        "entry_dt": trades["entry_dt"],
+        "rsi": np.arange(len(trades), dtype="float64"),
+    })
+
+
+def test_attach_features_prefixes_columns():
+    pf = make_portfolio()
+    out = attach_features(build_trades(pf, run_id="r1"), _features_for(pf))
+    assert "feat_rsi" in out.columns
+    assert "rsi" not in out.columns
+    assert out["feat_rsi"].notna().all()
+
+
+def test_attach_features_joins_on_symbol_and_entry_dt():
+    pf = make_portfolio()
+    trades = build_trades(pf, run_id="r1")
+    features = _features_for(pf).iloc[[0]]  # only the first trade has a feature
+    out = attach_features(trades, features)
+    assert out["feat_rsi"].notna().sum() == 1
+    assert len(out) == len(trades), "join must not drop trades"
+
+
+def test_attach_features_rejects_a_core_column_collision():
+    pf = make_portfolio()
+    trades = build_trades(pf, run_id="r1")
+    bad = _features_for(pf).rename(columns={"rsi": "pnl"})
+    # 'pnl' would become 'feat_pnl', which is fine; a literal 'feat_' name that
+    # collides with an existing trade column is the failure case.
+    ok = attach_features(trades, bad)
+    assert "feat_pnl" in ok.columns
+
+    trades2 = trades.assign(feat_rsi=1.0)
+    with pytest.raises(FeatureCollisionError, match="feat_rsi"):
+        attach_features(trades2, _features_for(pf))
+
+
+def test_attach_features_requires_join_keys():
+    pf = make_portfolio()
+    with pytest.raises(ValueError, match="entry_dt"):
+        attach_features(build_trades(pf, run_id="r1"), pd.DataFrame({"symbol": ["AAA"]}))
+
+
+def test_log_experiment_writes_a_queryable_run(tmp_path):
+    duckdb = pytest.importorskip("duckdb")
+    pf = make_portfolio()
+    store = ExperimentStore(backend=LocalBackend(root=tmp_path))
+
+    handle = log_experiment(pf, name="bt 012", params={"a": 1}, tags=["oos"],
+                            features=_features_for(pf), notes="hello", store=store)
+
+    assert handle.run_id.startswith("bt-012__")
+    assert handle.meta["tags"] == ["oos"]
+    assert handle.meta["equity_agg"] == "mean"
+    assert handle.meta["n_symbols"] == 2
+    assert handle.meta["n_trades"] == 4
+    assert handle.meta["metrics"]["mean_total_return"] is not None
+
+    con = duckdb.connect(str(tmp_path / "experiments.duckdb"), read_only=True)
+    try:
+        assert con.execute("SELECT count(*) FROM trades").fetchone()[0] == 4
+        assert con.execute("SELECT count(*) FROM symbol_stats").fetchone()[0] == 2
+        assert con.execute("SELECT count(DISTINCT feat_rsi) FROM trades").fetchone()[0] == 4
+    finally:
+        con.close()
+
+
+def test_log_experiment_records_source_metadata(tmp_path):
+    pf = make_portfolio()
+    store = ExperimentStore(backend=LocalBackend(root=tmp_path))
+    handle = log_experiment(pf, name="bt", store=store, notebook="notebooks/backtest_012.ipynb")
+    assert handle.meta["source"]["notebook"] == "notebooks/backtest_012.ipynb"
+    assert "git_sha" in handle.meta["source"]
+
+
+def test_log_experiment_applies_exit_reasons(tmp_path):
+    pf = make_portfolio()
+    trades = build_trades(pf, run_id="x")
+    reasons = pd.DataFrame({
+        "symbol": trades["symbol"].iloc[:1],
+        "entry_dt": trades["entry_dt"].iloc[:1],
+        "exit_reason": ["stop_loss"],
+    })
+    store = ExperimentStore(backend=LocalBackend(root=tmp_path))
+    handle = log_experiment(pf, name="bt", exit_reasons=reasons, store=store)
+
+    written = pd.read_parquet(tmp_path / "runs" / handle.run_id / "trades.parquet")
+    assert written["exit_reason"].notna().sum() == 1
+    assert set(written["exit_reason"].dropna()) == {"stop_loss"}

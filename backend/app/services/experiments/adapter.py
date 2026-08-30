@@ -6,15 +6,24 @@ incompatible version fails loudly at log time instead of writing NULLs.
 """
 from __future__ import annotations
 
+import subprocess
+from datetime import datetime, timezone
+from typing import Mapping, Sequence
+
 import numpy as np
 import pandas as pd
+from loguru import logger
 
 from app.services.experiments.schema import (
     CORE_TRADE_COLUMNS,
     EQUITY_COLUMNS,
+    FEATURE_PREFIX,
     SYMBOL_STATS_COLUMNS,
     clean_float,
+    json_safe,
+    make_run_id,
 )
+from app.services.experiments.store import ExperimentStore, RunHandle
 
 REQUIRED_RECORD_COLUMNS = [
     "id", "col", "size", "entry_idx", "entry_price", "entry_fees",
@@ -165,3 +174,110 @@ def build_equity(pf, run_id: str, benchmark: pd.Series | None = None) -> tuple[p
     })
     frame = frame.replace([np.inf, -np.inf], np.nan)
     return frame[EQUITY_COLUMNS].reset_index(drop=True), agg
+
+
+class FeatureCollisionError(ValueError):
+    """A supplied feature column would overwrite an existing trade column."""
+
+
+_JOIN_KEYS = ["symbol", "entry_dt"]
+
+
+def attach_features(trades: pd.DataFrame, features: pd.DataFrame) -> pd.DataFrame:
+    """Left-join per-trade features, prefixing every value column with feat_."""
+    missing = [k for k in _JOIN_KEYS if k not in features.columns]
+    if missing:
+        raise ValueError(f"features must contain join keys {_JOIN_KEYS}; missing {missing}")
+
+    value_cols = [c for c in features.columns if c not in _JOIN_KEYS]
+    renamed = features.rename(columns={c: f"{FEATURE_PREFIX}{c}" for c in value_cols})
+    clashing = [c for c in renamed.columns if c not in _JOIN_KEYS and c in trades.columns]
+    if clashing:
+        raise FeatureCollisionError(
+            f"feature columns {clashing} already exist on the trade frame; "
+            "rename them before logging"
+        )
+
+    out = trades.merge(renamed, on=_JOIN_KEYS, how="left", validate="many_to_one")
+    if len(out) != len(trades):
+        raise ValueError("feature join changed the trade row count; keys are not unique")
+    return out
+
+
+def _apply_exit_reasons(trades: pd.DataFrame, exit_reasons: pd.DataFrame) -> pd.DataFrame:
+    required = _JOIN_KEYS + ["exit_reason"]
+    missing = [k for k in required if k not in exit_reasons.columns]
+    if missing:
+        raise ValueError(f"exit_reasons must contain {required}; missing {missing}")
+    return trades.drop(columns=["exit_reason"]).merge(
+        exit_reasons[required], on=_JOIN_KEYS, how="left", validate="many_to_one"
+    )
+
+
+def _git_source(notebook: str | None) -> dict:
+    def _git(*args: str) -> str | None:
+        try:
+            return subprocess.run(
+                ["git", *args], capture_output=True, text=True, timeout=5, check=True
+            ).stdout.strip()
+        except Exception:  # git absent, not a repo, or timed out — never fatal
+            return None
+
+    return {
+        "notebook": notebook,
+        "git_sha": _git("rev-parse", "--short", "HEAD"),
+        "dirty": bool(_git("status", "--porcelain")) or None,
+    }
+
+
+def log_experiment(
+    pf,
+    name: str,
+    params: Mapping[str, object] | None = None,
+    tags: Sequence[str] | None = None,
+    features: pd.DataFrame | None = None,
+    benchmark: pd.Series | None = None,
+    exit_reasons: pd.DataFrame | None = None,
+    notes: str | None = None,
+    notebook: str | None = None,
+    store: ExperimentStore | None = None,
+) -> RunHandle:
+    """Persist a vectorbt Portfolio as an experiment run."""
+    store = store or ExperimentStore.from_env()
+    created_at = datetime.now(timezone.utc)
+    run_id = make_run_id(name, params, created_at)
+
+    trades = build_trades(pf, run_id=run_id)
+    if exit_reasons is not None and len(trades):
+        trades = _apply_exit_reasons(trades, exit_reasons)
+    if features is not None and len(trades):
+        trades = attach_features(trades, features)
+
+    symbol_stats = build_symbol_stats(pf, run_id=run_id, trades=trades)
+    equity, equity_agg = build_equity(pf, run_id=run_id, benchmark=benchmark)
+
+    total_return = symbol_stats["total_return"].dropna()
+    meta = {
+        "run_id": run_id,
+        "name": name,
+        "created_at": created_at.isoformat(),
+        "tags": list(tags or []),
+        "params": json_safe(dict(params or {})),
+        "notes": notes,
+        "data_start": str(pd.Timestamp(pf.wrapper.index[0]).date()),
+        "data_end": str(pd.Timestamp(pf.wrapper.index[-1]).date()),
+        "n_symbols": int(len(pd.Index(pf.wrapper.columns))),
+        "n_trades": int(len(trades)),
+        "equity_agg": equity_agg,
+        "metrics": {
+            "mean_total_return": clean_float(total_return.mean()),
+            "mean_sharpe": clean_float(symbol_stats["sharpe"].dropna().mean()),
+            "pct_symbols_positive": clean_float((total_return > 0).mean()),
+        },
+        "source": _git_source(notebook),
+        "feature_columns": [c for c in trades.columns if c.startswith(FEATURE_PREFIX)],
+    }
+
+    logger.info("logging experiment name={} run_id={} trades={}", name, run_id, len(trades))
+    return store.write_run(run_id=run_id, meta=meta, trades=trades,
+                           symbol_stats=symbol_stats, equity=equity)
