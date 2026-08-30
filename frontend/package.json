@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@bokeh/bokehjs": "^3.7.3",
+    "@duckdb/duckdb-wasm": "^1.33.1-dev57.0",
     "@emotion/react": "^11.10.6",
     "@emotion/styled": "^11.10.6",
     "@mui/icons-material": "^5.11.16",
