@@ -76,7 +76,7 @@ reachable over HTTP. In dev that is a symlink into the Vite public dir:
 
 ```bash
 mkdir -p data/experiments
-ln -sfn ../../data/experiments frontend/public/experiments
+ln -sfn ../../data/experiments frontend/public/experiment-data
 cd frontend && npm run dev     # then open /experiments
 ```
 
@@ -85,6 +85,11 @@ range request returns `206 Partial Content`), which is what lets DuckDB read
 only the column chunks a query needs. In production the same must hold — nginx
 supports ranges by default. Override the location with
 `VITE_EXPERIMENTS_BASE_URL` if the files are served from elsewhere.
+
+The directory is `experiment-data`, **not** `experiments`: the latter collides
+with the `/experiments` SPA route. Vite happens to survive that collision
+because its HTML-fallback middleware runs before static file resolution, but
+nginx gives no such guarantee, so the two names are kept distinct.
 
 ## Things that will surprise you
 

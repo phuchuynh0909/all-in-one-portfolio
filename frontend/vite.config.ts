@@ -4,6 +4,14 @@ import react from '@vitejs/plugin-react'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
+  // duckdb-wasm is only reached through a dynamic import inside the Experiments
+  // page, and its package.json `exports` map has no "." entry. Listing it here
+  // makes Vite pre-bundle it at server start rather than relying on the dep
+  // scanner finding it, so a dev server that was running when the package was
+  // installed does not fail with "Failed to resolve import".
+  optimizeDeps: {
+    include: ['@duckdb/duckdb-wasm'],
+  },
   build: {
     outDir: 'dist',
     assetsDir: 'assets',

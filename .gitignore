@@ -26,4 +26,4 @@ lstm_cache/*
 
 # Experiment store output (Parquet + DuckDB views); never committed.
 data/experiments/
-frontend/public/experiments
+frontend/public/experiment-data
