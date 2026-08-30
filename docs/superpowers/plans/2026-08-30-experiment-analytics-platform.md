@@ -1237,7 +1237,7 @@ def build_symbol_stats(pf, run_id: str, trades: pd.DataFrame) -> pd.DataFrame:
 
     # Derived from the trade frame rather than more vectorbt API surface.
     by_symbol = trades.groupby("symbol", dropna=False)
-    frame["n_trades"] = by_symbol.size().reindex(columns).fillna(0).astype("int64")
+    n_trades = by_symbol.size().reindex(columns).fillna(0).astype("int64")
     wins = trades[trades["net_return"] > 0].groupby("symbol")["net_return"].mean()
     losses = trades[trades["net_return"] <= 0].groupby("symbol")["net_return"].mean()
     frame["avg_win"] = wins.reindex(columns).to_numpy()
@@ -1245,8 +1245,9 @@ def build_symbol_stats(pf, run_id: str, trades: pd.DataFrame) -> pd.DataFrame:
     held = by_symbol["bars_held"].sum().reindex(columns).fillna(0)
     frame["exposure"] = (held / n_bars).to_numpy() if n_bars else np.nan
 
-    frame = frame.applymap(clean_float)
-    frame["n_trades"] = by_symbol.size().reindex(columns).fillna(0).astype("int64")
+    # DataFrame.map (pandas >= 2.1); the repo is on 2.2.2. applymap is deprecated.
+    frame = frame.map(clean_float)
+    frame["n_trades"] = n_trades
     frame.insert(0, "symbol", columns)
     frame.insert(0, "run_id", run_id)
     return frame.reset_index(drop=True)[SYMBOL_STATS_COLUMNS]
@@ -1285,8 +1286,6 @@ def build_equity(pf, run_id: str, benchmark: pd.Series | None = None) -> tuple[p
     frame = frame.replace([np.inf, -np.inf], np.nan)
     return frame[EQUITY_COLUMNS].reset_index(drop=True), agg
 ```
-
-If `DataFrame.applymap` emits a deprecation warning on the installed pandas, use `frame.map(clean_float)` instead — check with `python -c "import pandas; print(pandas.__version__)"`; `map` on DataFrame exists from pandas 2.1.
 
 - [ ] **Step 4: Run test to verify it passes**
 

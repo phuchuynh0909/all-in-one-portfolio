@@ -9,7 +9,12 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-from app.services.experiments.schema import CORE_TRADE_COLUMNS
+from app.services.experiments.schema import (
+    CORE_TRADE_COLUMNS,
+    EQUITY_COLUMNS,
+    SYMBOL_STATS_COLUMNS,
+    clean_float,
+)
 
 REQUIRED_RECORD_COLUMNS = [
     "id", "col", "size", "entry_idx", "entry_price", "entry_fees",
@@ -83,3 +88,80 @@ def build_trades(pf, run_id: str) -> pd.DataFrame:
         "exit_reason": pd.Series([None] * len(rec), dtype="object"),
     })
     return out[CORE_TRADE_COLUMNS].reset_index(drop=True)
+
+
+def _as_symbol_series(value, columns: pd.Index) -> pd.Series:
+    """Normalise a vectorbt metric into a Series indexed by symbol."""
+    if isinstance(value, pd.Series):
+        return value.reindex(columns)
+    return pd.Series(np.repeat(np.asarray(value), len(columns))[: len(columns)], index=columns)
+
+
+def build_symbol_stats(pf, run_id: str, trades: pd.DataFrame) -> pd.DataFrame:
+    """One row per symbol. Non-finite metrics are cleaned to NULL."""
+    columns = pd.Index(pf.wrapper.columns).astype(str)
+    n_bars = len(pf.wrapper.index)
+
+    metrics = {
+        "total_return": pf.total_return(),
+        "sharpe": pf.sharpe_ratio(),
+        "sortino": pf.sortino_ratio(),
+        "max_drawdown": pf.max_drawdown(),
+        "win_rate": pf.trades.win_rate(),
+        "profit_factor": pf.trades.profit_factor(),
+        "expectancy": pf.trades.expectancy(),
+    }
+    frame = pd.DataFrame(
+        {name: _as_symbol_series(value, columns).to_numpy() for name, value in metrics.items()},
+        index=columns,
+    )
+
+    # Derived from the trade frame rather than more vectorbt API surface.
+    by_symbol = trades.groupby("symbol", dropna=False)
+    n_trades = by_symbol.size().reindex(columns).fillna(0).astype("int64")
+    wins = trades[trades["net_return"] > 0].groupby("symbol")["net_return"].mean()
+    losses = trades[trades["net_return"] <= 0].groupby("symbol")["net_return"].mean()
+    frame["avg_win"] = wins.reindex(columns).to_numpy()
+    frame["avg_loss"] = losses.reindex(columns).to_numpy()
+    held = by_symbol["bars_held"].sum().reindex(columns).fillna(0)
+    frame["exposure"] = (held / n_bars).to_numpy() if n_bars else np.nan
+
+    frame = frame.map(clean_float)
+    frame["n_trades"] = n_trades
+    frame.insert(0, "symbol", columns)
+    frame.insert(0, "run_id", run_id)
+    return frame.reset_index(drop=True)[SYMBOL_STATS_COLUMNS]
+
+
+def build_equity(pf, run_id: str, benchmark: pd.Series | None = None) -> tuple[pd.DataFrame, str]:
+    """Portfolio equity curve.
+
+    With cash_sharing=False every symbol is an independent book, so there is
+    no single traded curve; the equal-weight mean across symbols is stored and
+    labelled agg="mean" so the UI never implies a real portfolio.
+    """
+    value = pf.value()
+    if isinstance(value, pd.DataFrame):
+        series, agg = value.mean(axis=1), "mean"
+    else:
+        series, agg = pd.Series(np.asarray(value), index=pf.wrapper.index), "portfolio"
+
+    running_max = series.cummax()
+    drawdown = (series / running_max - 1.0).where(running_max != 0, 0.0)
+
+    bench = (
+        pd.Series(np.asarray(benchmark), index=pd.DatetimeIndex(benchmark.index)).reindex(series.index)
+        if benchmark is not None
+        else pd.Series(np.nan, index=series.index)
+    )
+
+    frame = pd.DataFrame({
+        "run_id": run_id,
+        "dt": pd.DatetimeIndex(series.index),
+        "value": series.to_numpy(dtype="float64"),
+        "returns": series.pct_change().to_numpy(dtype="float64"),
+        "drawdown": drawdown.to_numpy(dtype="float64"),
+        "benchmark_value": bench.to_numpy(dtype="float64"),
+    })
+    frame = frame.replace([np.inf, -np.inf], np.nan)
+    return frame[EQUITY_COLUMNS].reset_index(drop=True), agg
