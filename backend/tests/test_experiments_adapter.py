@@ -266,3 +266,59 @@ def test_log_experiment_applies_exit_reasons(tmp_path):
     written = pd.read_parquet(tmp_path / "runs" / handle.run_id / "trades.parquet")
     assert written["exit_reason"].notna().sum() == 1
     assert set(written["exit_reason"].dropna()) == {"stop_loss"}
+
+
+from tests.experiments_fixtures import (
+    make_multiindex_portfolio,
+    make_param_sweep_portfolio,
+)
+
+
+def test_build_trades_reads_symbol_from_multiindex_columns():
+    """Parameterised runs give MultiIndex columns; the symbol is the last level.
+
+    Stringifying the tuple instead produced "(5, 10, 'AAA')" in the store.
+    """
+    df = build_trades(make_multiindex_portfolio(), run_id="r1")
+    assert set(df["symbol"]) <= {"AAA", "BBB"}
+    assert not any("(" in s for s in df["symbol"]), df["symbol"].unique()[:3]
+
+
+def test_build_symbol_stats_reads_symbol_from_multiindex_columns():
+    pf = make_multiindex_portfolio()
+    stats = build_symbol_stats(pf, run_id="r1", trades=build_trades(pf, run_id="r1"))
+    assert sorted(stats["symbol"]) == ["AAA", "BBB"]
+
+
+def test_build_trades_prefers_a_level_explicitly_named_symbol():
+    """A level named 'symbol' wins over the positional last-level fallback."""
+    from app.services.experiments.adapter import symbol_labels
+
+    columns = pd.MultiIndex.from_arrays(
+        [[5, 5], ["AAA", "BBB"], [10, 10]],
+        names=["fast_window", "symbol", "slow_window"],
+    )
+    assert list(symbol_labels(columns)) == ["AAA", "BBB"]
+
+
+def test_symbol_labels_falls_back_to_last_level_when_unnamed():
+    from app.services.experiments.adapter import symbol_labels
+
+    columns = pd.MultiIndex.from_arrays(
+        [[5, 5], ["AAA", "BBB"]], names=["fast_window", None],
+    )
+    assert list(symbol_labels(columns)) == ["AAA", "BBB"]
+
+
+def test_symbol_labels_passes_through_a_plain_index():
+    from app.services.experiments.adapter import symbol_labels
+
+    assert list(symbol_labels(pd.Index(["AAA", "BBB"]))) == ["AAA", "BBB"]
+
+
+def test_build_trades_rejects_a_parameter_sweep():
+    """Several columns per symbol cannot be reconciled with one params dict."""
+    from app.services.experiments.adapter import AmbiguousSymbolColumns
+
+    with pytest.raises(AmbiguousSymbolColumns, match="parameter"):
+        build_trades(make_param_sweep_portfolio(), run_id="r1")

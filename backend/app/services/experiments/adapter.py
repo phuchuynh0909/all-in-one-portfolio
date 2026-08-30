@@ -41,6 +41,38 @@ class UnmappedVectorbtColumns(RuntimeError):
     """Raised when the installed vectorbt exposes an unexpected record schema."""
 
 
+class AmbiguousSymbolColumns(ValueError):
+    """Raised when several portfolio columns resolve to the same symbol."""
+
+
+def symbol_labels(columns) -> pd.Index:
+    """One symbol label per portfolio column.
+
+    A parameterised indicator makes `pf.wrapper.columns` a MultiIndex: vectorbt
+    puts the named parameter levels first and leaves the original symbol level
+    last, unnamed. Stringifying the whole index yields tuple reprs like
+    "(5, 'AAA')", which is what used to reach the store.
+    """
+    if isinstance(columns, pd.MultiIndex):
+        names = list(columns.names)
+        level = names.index("symbol") if "symbol" in names else columns.nlevels - 1
+        return pd.Index(columns.get_level_values(level)).astype(str)
+    return pd.Index(columns).astype(str)
+
+
+def _checked_symbol_labels(columns) -> pd.Index:
+    labels = symbol_labels(columns)
+    if labels.has_duplicates:
+        dupes = labels[labels.duplicated()].unique()[:3].tolist()
+        raise AmbiguousSymbolColumns(
+            f"several portfolio columns map to the same symbol ({dupes}), which "
+            "means this Portfolio holds more than one parameter combination. A "
+            "run records a single `params` dict, so log one combination per "
+            "run — select the parameter set first, then call log_experiment."
+        )
+    return labels
+
+
 def _empty_trades() -> pd.DataFrame:
     return pd.DataFrame({c: pd.Series(dtype="object") for c in CORE_TRADE_COLUMNS})
 
@@ -58,7 +90,7 @@ def build_trades(pf, run_id: str) -> pd.DataFrame:
     if len(rec) == 0:
         return _empty_trades()
 
-    columns = pd.Index(pf.wrapper.columns)
+    columns = _checked_symbol_labels(pf.wrapper.columns)
     index = pd.DatetimeIndex(pf.wrapper.index)
 
     entry_idx = rec["entry_idx"].to_numpy(dtype="int64")
@@ -81,7 +113,7 @@ def build_trades(pf, run_id: str) -> pd.DataFrame:
     out = pd.DataFrame({
         "run_id": run_id,
         "trade_id": rec["id"].astype("int64").to_numpy(),
-        "symbol": columns[rec["col"].to_numpy(dtype="int64")].astype(str),
+        "symbol": columns[rec["col"].to_numpy(dtype="int64")],
         "entry_dt": index[entry_idx],
         "entry_price": entry_price,
         "exit_dt": exit_dt.to_numpy(),
@@ -108,7 +140,11 @@ def _as_symbol_series(value, columns: pd.Index) -> pd.Series:
 
 def build_symbol_stats(pf, run_id: str, trades: pd.DataFrame) -> pd.DataFrame:
     """One row per symbol. Non-finite metrics are cleaned to NULL."""
-    columns = pd.Index(pf.wrapper.columns).astype(str)
+    # Metric Series from vectorbt are indexed by the original (possibly
+    # MultiIndex) columns, so alignment stays positional; only the emitted
+    # labels are the extracted symbols.
+    raw_columns = pd.Index(pf.wrapper.columns)
+    columns = _checked_symbol_labels(pf.wrapper.columns)
     n_bars = len(pf.wrapper.index)
 
     metrics = {
@@ -121,7 +157,7 @@ def build_symbol_stats(pf, run_id: str, trades: pd.DataFrame) -> pd.DataFrame:
         "expectancy": pf.trades.expectancy(),
     }
     frame = pd.DataFrame(
-        {name: _as_symbol_series(value, columns).to_numpy() for name, value in metrics.items()},
+        {name: _as_symbol_series(value, raw_columns).to_numpy() for name, value in metrics.items()},
         index=columns,
     )
 
