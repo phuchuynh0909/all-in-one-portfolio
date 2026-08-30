@@ -1651,8 +1651,15 @@ def test_outcome_buckets_partition_all_trades(con):
 
 
 def test_outcome_buckets_respect_custom_quantiles(con):
+    # Collapsing each pair of cut points makes the two intermediate buckets
+    # unreachable, leaving a 25/50/25 split across the outer three.
     out = con.execute(_read("outcome_buckets.sql"), [[0.25, 0.25, 0.75, 0.75]]).df()
-    assert out["outcome"].value_counts().get("3_marginal", 0) == 0
+    counts = out["outcome"].value_counts()
+    assert counts.get("2_medium_loss", 0) == 0
+    assert counts.get("4_medium_win", 0) == 0
+    assert counts["1_catastrophic_loss"] == 50
+    assert counts["3_marginal"] == 100
+    assert counts["5_big_win"] == 50
 
 
 def test_outcome_buckets_preserve_source_columns(con):
