@@ -29,6 +29,7 @@ import Report from './pages/Report';
 import ReportDetail from './pages/ReportDetail';
 import Backtest from './pages/Backtest';
 import BacktestVisualization from './pages/BacktestVisualization';
+import Experiments from './pages/Experiments';
 import { FinancialStatements } from './pages/FinancialStatements';
 import Scanner from './pages/Scanner';
 import Regime from './pages/Regime';
@@ -66,6 +67,7 @@ const navItems = [
   { path: '/report', label: 'Report' },
   { path: '/backtest', label: 'Backtest' },
   { path: '/backtest-viz', label: '📊 BT Visual' },
+  { path: '/experiments', label: '🧪 Experiments' },
   { path: '/financial', label: 'Financial Statements' },
   { path: '/scanner', label: 'Scanner' },
   { path: '/regime', label: '📊 Regime' },
@@ -159,6 +161,7 @@ function AppShell() {
           <Route path="/report/:reportId" element={<ReportDetail />} />
           <Route path="/backtest" element={<Backtest />} />
           <Route path="/backtest-viz" element={<BacktestVisualization />} />
+          <Route path="/experiments" element={<Experiments />} />
           <Route path="/financial" element={<FinancialStatements />} />
           <Route path="/scanner" element={<Scanner />} />
           <Route path="/regime" element={<Regime />} />
