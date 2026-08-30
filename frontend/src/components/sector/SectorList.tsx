@@ -136,16 +136,13 @@ export default function SectorList({
   });
 
   return (
-    <Box sx={{ height: 500, width: '100%' }}>
-      <Box sx={{ mb: 3 }}>
-        <Typography variant="h6">
-          Sectors (Level {level})
-          {searchTerm && (
-            <Typography component="span" variant="body2" sx={{ ml: 1, color: 'text.secondary' }}>
-              - {filteredSectors.length} of {sectors.length} shown
-            </Typography>
-          )}
-        </Typography>
+    <Box sx={{ height: 500, width: '100%', p: 1 }}>
+      <Box sx={{ mb: 1 }}>
+        {searchTerm && (
+          <Typography variant="caption" sx={{ color: 'text.tertiary', display: 'block', mb: 0.5 }}>
+            {filteredSectors.length} of {sectors.length} shown
+          </Typography>
+        )}
         <TextField
           size="small"
           placeholder="Search by name..."

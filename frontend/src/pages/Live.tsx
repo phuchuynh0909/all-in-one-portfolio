@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, Fragment } from 'react';
+import { PageContainer, PageHeader } from '../components/ui';
 import {
   Box,
   Typography,
@@ -153,9 +154,10 @@ const Live = () => {
 
   const getOFIColor = (ofi: number): string => {
     // OFI ranges from -1 (100% sell) to +1 (100% buy)
-    if (ofi > 0.3) return '#4caf50'; // Green for buy pressure
-    if (ofi < -0.3) return '#f44336'; // Red for sell pressure
-    return '#9e9e9e'; // Gray for neutral
+    // Order-flow imbalance: buy pressure / sell pressure / balanced.
+    if (ofi > 0.3) return 'var(--color-long)';
+    if (ofi < -0.3) return 'var(--color-short)';
+    return 'var(--color-flat)';
   };
 
   const getOFILabel = (ofi: number): string => {
@@ -253,14 +255,12 @@ const Live = () => {
   }
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Stack spacing={3}>
-        {/* Header */}
-        <Box display="flex" justifyContent="space-between" alignItems="center">
-          <Typography variant="h4" component="h1">
-            🔴 Live ISP Alerts
-          </Typography>
-          <Stack direction="row" spacing={2} alignItems="center">
+    <PageContainer>
+      <PageHeader
+        title="Live Tape"
+        description="Real-time intraday signal pressure alerts, grouped by symbol."
+        actions={
+          <Stack direction="row" spacing={1} alignItems="center">
             <Chip
               label={`Last Update: ${lastUpdate ? lastUpdate.toLocaleTimeString() : 'Never'}`}
               color="primary"
@@ -274,8 +274,9 @@ const Live = () => {
             />
             {loading && <CircularProgress size={20} />}
           </Stack>
-        </Box>
-
+        }
+      />
+      <Stack spacing={2}>
         {/* Controls */}
         <Paper sx={{ p: 2 }}>
           <Stack direction="row" spacing={3} alignItems="center" flexWrap="wrap">
@@ -589,7 +590,7 @@ const Live = () => {
           </Table>
         </TableContainer>
       </Stack>
-    </Box>
+    </PageContainer>
   );
 };
 

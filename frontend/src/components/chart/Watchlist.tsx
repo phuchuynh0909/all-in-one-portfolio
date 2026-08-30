@@ -52,9 +52,9 @@ import { fetchQuotes, isVnMarketSession, type LatestQuote } from '../../lib/serv
 /** How often quotes refresh while the market is open. */
 const POLL_MS = 5_000;
 
-const UP = '#22c55e';
-const DOWN = '#ef4444';
-const FLAT = '#9ca3af';
+const UP = 'var(--color-long)';
+const DOWN = 'var(--color-short)';
+const FLAT = 'var(--color-flat)';
 
 /** Prices are in thousands of VND; indices are whole numbers of points. */
 function formatPrice(quote: LatestQuote): string {
@@ -208,7 +208,7 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
           endIcon={<ArrowDropDown />}
           onClick={(e) => setListMenuAnchor(e.currentTarget)}
           sx={{
-            color: '#e5e7eb',
+            color: 'text.primary',
             fontWeight: 600,
             fontSize: 13,
             letterSpacing: 0.3,
@@ -222,7 +222,7 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
           </Box>
         </Button>
         <Tooltip title={adding ? 'Cancel' : 'Add symbol'}>
-          <IconButton size="small" onClick={() => { setAdding((p) => !p); setDraft(''); }} sx={{ color: '#9ca3af' }}>
+          <IconButton size="small" onClick={() => { setAdding((p) => !p); setDraft(''); }} sx={{ color: 'text.secondary' }}>
             {adding ? <Close fontSize="small" /> : <Add fontSize="small" />}
           </IconButton>
         </Tooltip>
@@ -292,15 +292,15 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
             InputProps={{
               endAdornment: (
                 <InputAdornment position="end">
-                  <IconButton size="small" onClick={addItem} sx={{ color: '#9ca3af' }}>
+                  <IconButton size="small" onClick={addItem} sx={{ color: 'text.secondary' }}>
                     <Add fontSize="small" />
                   </IconButton>
                 </InputAdornment>
               ),
-              sx: { color: '#e5e7eb', fontSize: 13 },
+              sx: { color: 'text.primary', fontSize: 13 },
             }}
             sx={{
-              '& .MuiOutlinedInput-notchedOutline': { borderColor: 'rgba(99,102,241,0.3)' },
+              '& .MuiOutlinedInput-notchedOutline': { borderColor: 'line.default' },
             }}
           />
         </Box>
@@ -365,9 +365,9 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
                 py: 0.5,
                 px: 1,
                 borderLeft: '2px solid',
-                borderLeftColor: isActive ? '#6366f1' : 'transparent',
-                '&.Mui-selected': { bgcolor: 'rgba(99,102,241,0.14)' },
-                '&.Mui-selected:hover': { bgcolor: 'rgba(99,102,241,0.2)' },
+                borderLeftColor: isActive ? 'primary.main' : 'transparent',
+                '&.Mui-selected': { bgcolor: 'action.selected' },
+                '&.Mui-selected:hover': { bgcolor: 'action.selected' },
                 '& .wl-remove': { opacity: 0 },
                 '&:hover .wl-remove': { opacity: 1 },
               }}
@@ -376,7 +376,7 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
                 <Stack direction="row" alignItems="center" spacing={0.5}>
                   <Typography
                     noWrap
-                    sx={{ fontSize: 13, fontWeight: 600, color: isActive ? '#c7d2fe' : '#e5e7eb' }}
+                    sx={{ fontSize: 13, fontWeight: 600, color: isActive ? 'primary.main' : 'text.primary' }}
                   >
                     {item}
                   </Typography>
@@ -391,7 +391,7 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
               </Box>
 
               <Stack alignItems="flex-end" sx={{ minWidth: 84 }}>
-                <Typography sx={{ fontSize: 13, color: quote ? '#e5e7eb' : FLAT, fontVariantNumeric: 'tabular-nums' }}>
+                <Typography sx={{ fontSize: 13, color: quote ? 'text.primary' : FLAT, fontVariantNumeric: 'tabular-nums' }}>
                   {quote ? formatPrice(quote) : unavailable.has(item) ? 'n/a' : '—'}
                 </Typography>
                 {pct != null && (

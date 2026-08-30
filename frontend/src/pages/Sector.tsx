@@ -1,84 +1,78 @@
 import { useState } from 'react';
-import { 
-  Box, 
-  FormControl, 
-  InputLabel, 
-  Select, 
-  MenuItem, 
-  Typography,
-  Stack 
-} from '@mui/material';
+import { Box, FormControl, InputLabel, MenuItem, Select } from '@mui/material';
 
 import SectorList from '../components/sector/SectorList';
 import StockList from '../components/sector/StockList';
 import SectorChart from '../components/sector/SectorChart';
 import StockComparisonChart from '../components/sector/StockComparisonChart';
+import { PageContainer, PageHeader, Panel, EmptyState } from '../components/ui';
+
+const LEVELS = [1, 2, 3, 4];
 
 export default function Sector() {
   const [sectorLevel, setSectorLevel] = useState<number>(3);
   const [selectedSectorId, setSelectedSectorId] = useState<number | null>(null);
 
   return (
-    <Box sx={{ width: '95%', margin: '0 auto', pb: 4 }}>
-      {/* Level Selector */}
-      <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 3 }}>
-        <Typography variant="h5">Sector Analysis</Typography>
-        <FormControl size="small" sx={{ minWidth: 150 }}>
-          <InputLabel>Sector Level</InputLabel>
-          <Select
-            value={sectorLevel}
-            label="Sector Level"
-            onChange={(e) => {
-              setSectorLevel(e.target.value as number);
-              setSelectedSectorId(null); // Clear selection when level changes
-            }}
-          >
-            <MenuItem value={1}>Level 1</MenuItem>
-            <MenuItem value={2}>Level 2</MenuItem>
-            <MenuItem value={3}>Level 3</MenuItem>
-            <MenuItem value={4}>Level 4</MenuItem>
-          </Select>
-        </FormControl>
-      </Stack>
+    <PageContainer>
+      <PageHeader
+        title="Sectors"
+        description="Relative strength and rotation across the sector hierarchy."
+        actions={
+          <FormControl size="small" sx={{ minWidth: 150 }}>
+            <InputLabel>Sector level</InputLabel>
+            <Select
+              value={sectorLevel}
+              label="Sector level"
+              onChange={(e) => {
+                setSectorLevel(e.target.value as number);
+                // Selection is level-scoped, so it cannot survive a level change.
+                setSelectedSectorId(null);
+              }}
+            >
+              {LEVELS.map((l) => (
+                <MenuItem key={l} value={l}>
+                  Level {l}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+        }
+      />
 
-      {/* Sector Chart Section */}
-      <Box sx={{ mb: 4 }}>
-        <SectorChart level={sectorLevel} />
-      </Box>
+      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        <Panel title="Sector performance" subtitle={`Level ${sectorLevel} · indexed returns`}>
+          <SectorChart level={sectorLevel} />
+        </Panel>
 
-      {/* Sector List and Stock List Section */}
-      <Box sx={{ 
-        display: 'flex', 
-        flexDirection: { xs: 'column', md: 'row' }, 
-        gap: 3, 
-        mb: 6,
-        minHeight: 500
-      }}>
-        <Box sx={{ flex: 1, minWidth: 0 }}>
-          <SectorList level={sectorLevel} onSectorSelect={setSelectedSectorId} />
+        <Box
+          sx={{
+            display: 'grid',
+            gap: 2,
+            gridTemplateColumns: { xs: '1fr', md: 'minmax(0, 1fr) minmax(0, 2fr)' },
+            alignItems: 'start',
+          }}
+        >
+          <Panel title="Sectors" flush>
+            <SectorList level={sectorLevel} onSectorSelect={setSelectedSectorId} />
+          </Panel>
+
+          <Panel title="Constituents" flush>
+            {selectedSectorId ? (
+              <StockList level={sectorLevel} sectorId={selectedSectorId} />
+            ) : (
+              <EmptyState
+                title="No sector selected"
+                description="Pick a sector on the left to list the stocks inside it."
+              />
+            )}
+          </Panel>
         </Box>
-        <Box sx={{ flex: 2, minWidth: 0 }}>
-          {selectedSectorId ? (
-            <StockList level={sectorLevel} sectorId={selectedSectorId} />
-          ) : (
-            <Box sx={{ 
-              height: 400,
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center',
-              border: '1px dashed #ccc',
-              borderRadius: 1,
-              color: 'text.secondary',
-              backgroundColor: 'background.paper'
-            }}>
-              <Typography>Select a sector to view stocks</Typography>
-            </Box>
-          )}
-        </Box>
+
+        <Panel title="Stock comparison" subtitle="Normalised price series across a custom basket">
+          <StockComparisonChart />
+        </Panel>
       </Box>
-      <Box sx={{ mt: 20 }}>
-        <StockComparisonChart />
-      </Box>
-    </Box>
+    </PageContainer>
   );
 }

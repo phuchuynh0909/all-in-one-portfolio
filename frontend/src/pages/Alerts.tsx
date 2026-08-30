@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { PageContainer, PageHeader } from '../components/ui';
 import {
   Box,
   Button,
@@ -249,12 +250,12 @@ export default function Alerts() {
   });
 
   return (
-    <Box sx={{ p: 3, maxWidth: 1400, mx: 'auto' }}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 3 }}>
-        <Typography variant="h4" sx={{ fontWeight: 700, letterSpacing: -0.5 }}>
-          🔔 Price Alerts
-        </Typography>
-        <Stack direction="row" spacing={1}>
+    <PageContainer>
+      <PageHeader
+        title="Alerts"
+        description="Price and indicator triggers evaluated in the background by a service worker."
+        actions={
+          <Stack direction="row" spacing={1}>
           <Button
             variant="outlined"
             startIcon={<RefreshIcon />}
@@ -268,14 +269,15 @@ export default function Alerts() {
             startIcon={<AddIcon />}
             onClick={() => handleOpenDialog()}
           >
-            New Alert
+            New alert
           </Button>
-        </Stack>
-      </Stack>
+          </Stack>
+        }
+      />
 
       {/* Filters */}
-      <Card sx={{ mb: 3, bgcolor: 'background.paper' }}>
-        <CardContent>
+      <Card sx={{ mb: 2 }}>
+        <CardContent sx={{ py: 1.5, '&:last-child': { pb: 1.5 } }}>
           <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2}>
             <TextField
               label="Filter by Symbol"
@@ -525,7 +527,7 @@ export default function Alerts() {
           </Button>
         </DialogActions>
       </Dialog>
-    </Box>
+    </PageContainer>
   );
 }
 

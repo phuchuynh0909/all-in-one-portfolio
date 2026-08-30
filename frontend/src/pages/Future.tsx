@@ -10,6 +10,8 @@ import ClearIcon from '@mui/icons-material/Clear';
 import { fetchFutureOhlc, fetchRlExits } from '../lib/services/future';
 import type { FutureOhlcResponse, RlTrade } from '../lib/services/future';
 import { createTvWidget, LIBRARY_PATH } from '../lib/tv';
+import { studyPalette, tvOverrides } from '../lib/tv/theme';
+import { useColorMode } from '../theme';
 import type {
   IChartingLibraryWidget,
   IExecutionLineAdapter,
@@ -92,11 +94,11 @@ function computeSignals(data: FutureOhlcResponse): Signal[] {
     const kamaOk = k === null || Number.isNaN(k as number);
 
     if (pos === 1 && b < lo) {
-      signals.push({ timeSec: nextTime, price: nextPrice, side: 'sell', color: '#888888', text: 'Exit L' });
+      signals.push({ timeSec: nextTime, price: nextPrice, side: 'sell', color: studyPalette.neutral, text: 'Exit L' });
       pos = 0;
     }
     if (pos === -1 && b > hi) {
-      signals.push({ timeSec: nextTime, price: nextPrice, side: 'buy', color: '#888888', text: 'Exit S' });
+      signals.push({ timeSec: nextTime, price: nextPrice, side: 'buy', color: studyPalette.neutral, text: 'Exit S' });
       pos = 0;
     }
 
@@ -120,7 +122,7 @@ function computeSignals(data: FutureOhlcResponse): Signal[] {
         && priceChange > 0
         && (kamaOk || close > (k as number));
       if (longOk) {
-        signals.push({ timeSec: nextTime, price: nextPrice, side: 'buy', color: '#26a69a', text: 'Long' });
+        signals.push({ timeSec: nextTime, price: nextPrice, side: 'buy', color: studyPalette.teal, text: 'Long' });
         pos = 1;
         inUpperZone = false;
       }
@@ -129,7 +131,7 @@ function computeSignals(data: FutureOhlcResponse): Signal[] {
     if (b <= lo && inLowerZone) {
       const shortOk = kamaOk || close < (k as number);
       if (shortOk) {
-        signals.push({ timeSec: nextTime, price: nextPrice, side: 'sell', color: '#ef5350', text: 'Short' });
+        signals.push({ timeSec: nextTime, price: nextPrice, side: 'sell', color: studyPalette.red, text: 'Short' });
         pos = -1;
         inLowerZone = false;
       }
@@ -150,7 +152,7 @@ function computeRlMarkers(trades: RlTrade[]): Signal[] {
       price: t.rl_exit_price,
       // A long exit sits above the bar (a "sell" arrow), a short exit below.
       side: (t.direction === 1 ? 'sell' : 'buy') as 'buy' | 'sell',
-      color: '#f59e0b',
+      color: studyPalette.rsiSignal,
       text: `RL ${sign}${pnl.toFixed(2)}%`,
     };
   });
@@ -159,6 +161,7 @@ function computeRlMarkers(trades: RlTrade[]): Signal[] {
 // ── Component ─────────────────────────────────────────────────────────────
 
 export default function Future() {
+  const { mode } = useColorMode();
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef    = useRef<IChartingLibraryWidget | null>(null);
   const readyRef     = useRef(false);
@@ -302,17 +305,13 @@ export default function Future() {
       interval: TF_TO_RESOLUTION[timeframe],
       locale: 'en' as LanguageCode,
       autosize: true,
-      theme: 'dark',
+      theme: mode,
       timezone: 'Asia/Ho_Chi_Minh',
       custom_indicators_getter: futureIndicatorsGetter(futureStore),
       disabled_features: ['header_symbol_search', 'symbol_search_hot_key'],
       overrides: {
-        'paneProperties.background': '#1e1e1e',
+        ...tvOverrides(mode),
         'paneProperties.backgroundType': 'solid',
-        'mainSeriesProperties.candleStyle.upColor': '#26a69a',
-        'mainSeriesProperties.candleStyle.downColor': '#ef5350',
-        'mainSeriesProperties.candleStyle.wickUpColor': '#26a69a',
-        'mainSeriesProperties.candleStyle.wickDownColor': '#ef5350',
         'mainSeriesProperties.candleStyle.borderVisible': false,
       },
     }).then((widget) => {
@@ -368,7 +367,7 @@ export default function Future() {
   // marks off the fresh store data when they land.
   useEffect(() => futureStore.onUpdate(() => redrawRef.current()), []);
 
-  const sliderSx = { color: '#10a4f4', '& .MuiSlider-thumb': { width: 14, height: 14 } };
+  const sliderSx = { color: 'primary.main', '& .MuiSlider-thumb': { width: 14, height: 14 } };
 
   const rlStats = rlTrades.length > 0 ? {
     n: rlTrades.length,
@@ -434,26 +433,26 @@ export default function Future() {
           </Tooltip>
 
           <IconButton onClick={() => setPanelOpen(v => !v)} title="Parameters">
-            <TuneIcon sx={{ color: panelOpen ? '#10a4f4' : 'inherit' }} />
+            <TuneIcon sx={{ color: panelOpen ? 'primary.main' : 'inherit' }} />
           </IconButton>
         </Box>
 
         {/* ── RL summary bar ── */}
         {showRl && rlStats && (
-          <Paper sx={{ px: 2, py: 1, bgcolor: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)' }}>
+          <Paper sx={{ px: 2, py: 1, bgcolor: 'warning.main', borderColor: 'warning.main' }}>
             <Stack direction="row" spacing={3} flexWrap="wrap">
-              <Typography variant="caption" sx={{ color: '#f59e0b' }}>
+              <Typography variant="caption" sx={{ color: 'warning.main' }}>
                 RL exits &nbsp;<strong>{rlStats.n}</strong> trades
               </Typography>
               <Typography variant="caption">
                 RL total&nbsp;
-                <strong style={{ color: rlStats.total >= 0 ? '#26a69a' : '#ef5350' }}>
+                <strong style={{ color: rlStats.total >= 0 ? 'var(--color-long)' : 'var(--color-short)' }}>
                   {rlStats.total >= 0 ? '+' : ''}{rlStats.total.toFixed(2)}%
                 </strong>
               </Typography>
               <Typography variant="caption">
                 Rule total&nbsp;
-                <strong style={{ color: rlStats.ruleTotal >= 0 ? '#26a69a' : '#ef5350' }}>
+                <strong style={{ color: rlStats.ruleTotal >= 0 ? 'var(--color-long)' : 'var(--color-short)' }}>
                   {rlStats.ruleTotal >= 0 ? '+' : ''}{rlStats.ruleTotal.toFixed(2)}%
                 </strong>
               </Typography>
@@ -545,10 +544,10 @@ export default function Future() {
             pointerEvents: 'none', display: 'flex', gap: 2, flexWrap: 'wrap',
           }}>
             {[
-              { color: '#26a69a', label: '▲ Long entry' },
-              { color: '#ef5350', label: '▼ Short entry' },
-              { color: '#888888', label: '✕ Rule exit' },
-              ...(showRl ? [{ color: '#f59e0b', label: '■ RL exit' }] : []),
+              { color: 'var(--color-long)', label: '▲ Long entry' },
+              { color: 'var(--color-short)', label: '▼ Short entry' },
+              { color: 'var(--color-flat)', label: '✕ Rule exit' },
+              ...(showRl ? [{ color: 'var(--color-warning)', label: '■ RL exit' }] : []),
             ].map(({ color, label }) => (
               <Typography key={label} variant="caption" sx={{ color, fontWeight: 600 }}>
                 {label}

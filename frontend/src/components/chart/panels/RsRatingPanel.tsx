@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { useChartTheme } from '../../../theme';
 import { LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import { formatIndicatorData } from '../../../lib/services/timeseries';
@@ -10,6 +11,7 @@ type RsRatingPanelProps = {
 };
 
 export default function RsRatingPanel({ chart, data, timestamps }: RsRatingPanelProps) {
+    const ct = useChartTheme();
     const rsRating20SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const rsRating20EmaSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const rsRating50SeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -20,7 +22,7 @@ export default function RsRatingPanel({ chart, data, timestamps }: RsRatingPanel
 
         // Create RS Rating series in a separate pane (Panel 4)
         const rsRating20Series = chart.addSeries(LineSeries, {
-            color: '#f97316',  // Orange
+            color: ct.seriesColor(7),  // Orange
             lineWidth: 2,
             priceFormat: {
                 type: 'custom',
@@ -34,7 +36,7 @@ export default function RsRatingPanel({ chart, data, timestamps }: RsRatingPanel
 
         // Create RS Rating EMA series in the same pane
         const rsRating20EmaSeries = chart.addSeries(LineSeries, {
-            color: '#8b5cf6',  // Violet
+            color: ct.seriesColor(2),  // Violet
             lineWidth: 2,
             priceFormat: {
                 type: 'custom',
@@ -48,7 +50,7 @@ export default function RsRatingPanel({ chart, data, timestamps }: RsRatingPanel
 
         // Create RS Rating 50 series in the same pane
         const rsRating50Series = chart.addSeries(LineSeries, {
-            color: '#14b8a6',  // Teal
+            color: ct.seriesColor(8),  // Teal
             lineWidth: 2,
             priceFormat: {
                 type: 'custom',
@@ -62,7 +64,7 @@ export default function RsRatingPanel({ chart, data, timestamps }: RsRatingPanel
 
         // Create RS Rating 252 series in the same pane
         const rsRating252Series = chart.addSeries(LineSeries, {
-            color: '#22c55e',  // Green
+            color: ct.seriesColor(3),  // Green
             lineWidth: 2,
             priceFormat: {
                 type: 'custom',

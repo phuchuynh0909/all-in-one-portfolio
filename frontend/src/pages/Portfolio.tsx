@@ -188,10 +188,10 @@ export default function Portfolio() {
               alignItems: 'start',
             }}
           >
-            <Panel title="Current allocation" subtitle="By market value">
+            <Panel title="Current allocation" subtitle="Actual weights by market value" flush>
               <CurrentPortfolioPieChart positions={pricedPositions} />
             </Panel>
-            <Panel title="Sector exposure" subtitle="Holdings grouped by sector">
+            <Panel title="Optimizer" subtitle="Suggested weights — what to hold, not what is held" flush>
               <PortfolioPieChart tickers={pricedPositions.map((p) => p.ticker)} />
             </Panel>
           </Box>
@@ -236,8 +236,8 @@ export default function Portfolio() {
       {/* --- Allocation ---------------------------------------------------- */}
       {tab === 3 && (
         <Panel
-          title="Optimizer"
-          subtitle="Forward-looking weights — what to hold, not what is held"
+          title="MVF-LSTM allocation"
+          subtitle="Model-forecast weights over the coming horizon"
           flush
         >
           <Box sx={{ p: 2 }}>

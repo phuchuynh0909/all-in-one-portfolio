@@ -349,21 +349,21 @@ export const STUDY_SPECS: StudySpec[] = [
   },
   {
     id: 'chandelier_exit', name: 'Chandelier Exit (bridged)', priceStudy: true,
-    plots: [{ id: 'ce', title: 'CE', color: '#00ffff', width: 2, dashed: true, get: (d, i) => d.chandelier_exit?.value?.[i] }],
+    plots: [{ id: 'ce', title: 'CE', color: studyPalette.trendUp, width: 2, dashed: true, get: (d, i) => d.chandelier_exit?.value?.[i] }],
     palettes: [{
       target: 'ce',
-      colors: ['#00ffff', '#f23645'],
+      colors: [studyPalette.trendUp, studyPalette.trendDown],
       index: (d, i) => (d.chandelier_exit?.direction?.[i] === 1 ? 0 : 1),
     }],
   },
   {
     id: 'linreg_channel', name: 'LR Prediction Channel (bridged)', priceStudy: true,
     plots: [
-      { id: 'reg', title: 'LR Reg', color: '#38bdf8', width: 1, get: (d, i) => d.linreg_channel?.reg?.[i] },
-      { id: 'piUp', title: 'LR PI Up', color: '#f43f5e', width: 1, dashed: true, get: (d, i) => d.linreg_channel?.pi_upper?.[i] },
-      { id: 'piLow', title: 'LR PI Low', color: '#f43f5e', width: 1, dashed: true, get: (d, i) => d.linreg_channel?.pi_lower?.[i] },
+      { id: 'reg', title: 'LR Reg', color: studyPalette.regression, width: 1, get: (d, i) => d.linreg_channel?.reg?.[i] },
+      { id: 'piUp', title: 'LR PI Up', color: studyPalette.regressionBand, width: 1, dashed: true, get: (d, i) => d.linreg_channel?.pi_upper?.[i] },
+      { id: 'piLow', title: 'LR PI Low', color: studyPalette.regressionBand, width: 1, dashed: true, get: (d, i) => d.linreg_channel?.pi_lower?.[i] },
     ],
-    fills: [{ a: 'piUp', b: 'piLow', color: 'rgba(56,189,248,0.08)', title: 'LR Channel' }],
+    fills: [{ a: 'piUp', b: 'piLow', color: studyPalette.regressionFill, title: 'LR Channel' }],
   },
   {
     id: 'gaussian_frama', name: 'Gaussian FRAMA (bridged)', priceStudy: true,
@@ -378,7 +378,7 @@ export const STUDY_SPECS: StudySpec[] = [
       colors: [studyPalette.blue, studyPalette.red, studyPalette.neutral],
       index: (d, i) => (d.gaussian_frama?.qb?.[i] === 1 ? 0 : d.gaussian_frama?.qb?.[i] === -1 ? 1 : 2),
     }],
-    fills: [{ a: 'longV', b: 'shortV', color: 'rgba(99,102,241,0.08)', title: 'G-FRAMA Cloud' }],
+    fills: [{ a: 'longV', b: 'shortV', color: studyPalette.cloudFill, title: 'G-FRAMA Cloud' }],
   },
   {
     id: 'hull_butterfly', name: 'Hull Butterfly Oscillator (bridged)', priceStudy: false, precision: 2,
@@ -386,7 +386,7 @@ export const STUDY_SPECS: StudySpec[] = [
     // Bullish/bearish/neutral state coloring driven by the discrete `os` signal.
     palettes: [{
       target: 'hso',
-      colors: [studyPalette.green, studyPalette.red, 'rgba(156,163,175,0.6)'],
+      colors: [studyPalette.green, studyPalette.red, studyPalette.neutralFill],
       index: (d, i) => (d.hull_butterfly?.os?.[i] === 1 ? 0 : d.hull_butterfly?.os?.[i] === -1 ? 1 : 2),
     }],
   },
@@ -461,16 +461,16 @@ function buildRsiStudy(pine: PineJS): CustomIndicator {
       styles: {
         slow: {
           linestyle: LINE_SOLID, linewidth: 2, plottype: PLOT_LINE,
-          trackPrice: false, transparency: 0, visible: true, color: '#6366f1',
+          trackPrice: false, transparency: 0, visible: true, color: studyPalette.rsi,
         },
         fast: {
           linestyle: LINE_SOLID, linewidth: 2, plottype: PLOT_LINE,
-          trackPrice: false, transparency: 0, visible: true, color: '#f59e0b',
+          trackPrice: false, transparency: 0, visible: true, color: studyPalette.rsiSignal,
         },
       },
       bands: [
-        { color: 'rgba(239, 68, 68, 0.5)', linestyle: LINE_DASHED, linewidth: 1, value: 70, visible: true },
-        { color: 'rgba(34, 197, 94, 0.5)', linestyle: LINE_DASHED, linewidth: 1, value: 30, visible: true },
+        { color: studyPalette.rsiUpper, linestyle: LINE_DASHED, linewidth: 1, value: 70, visible: true },
+        { color: studyPalette.rsiLower, linestyle: LINE_DASHED, linewidth: 1, value: 30, visible: true },
       ],
       precision: 2,
       inputs: { length: 14, fast_length: 5, source: 'close' },

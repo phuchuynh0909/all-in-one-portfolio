@@ -91,14 +91,15 @@ export const FinancialStatementsTable: React.FC<FinancialStatementsTableProps> =
       <TableRow 
         key={item.item_id}
         sx={{
-          '&:hover': { backgroundColor: 'rgba(0, 0, 0, 0.04)' },
-          backgroundColor: item.level === 1 ? 'rgba(25, 118, 210, 0.08)' : 'inherit'
+          '&:hover': { backgroundColor: 'action.hover' },
+          backgroundColor: item.level === 1 ? 'action.selected' : 'inherit'
         }}
       >
         <TableCell 
           sx={{ 
             paddingLeft: `${16 + indentation}px`,
-            borderRight: '1px solid rgba(224, 224, 224, 1)',
+            borderRight: 1,
+            borderRightColor: 'line.subtle',
             minWidth: 300,
             fontWeight: item.level <= 2 ? 600 : 400,
             fontSize: item.level === 1 ? '0.95rem' : '0.875rem',
@@ -136,12 +137,13 @@ export const FinancialStatementsTable: React.FC<FinancialStatementsTableProps> =
             key={period.label}
             align="right"
             sx={{
-              borderRight: '1px solid rgba(224, 224, 224, 1)',
+              borderRight: 1,
+            borderRightColor: 'line.subtle',
               fontFamily: 'monospace',
               fontSize: '0.875rem',
               fontWeight: item.level <= 2 ? 600 : 400,
               color: item.level === 1 ? 'primary.main' : 'text.primary',
-              backgroundColor: item.level === 1 ? 'rgba(25, 118, 210, 0.04)' : 'inherit'
+              backgroundColor: item.level === 1 ? 'action.selected' : 'inherit'
             }}
           >
             {formatValue(item.values[period.label])}
@@ -205,9 +207,11 @@ export const FinancialStatementsTable: React.FC<FinancialStatementsTableProps> =
         component={Paper} 
         sx={{ 
           maxHeight: '70vh',
-          border: '1px solid rgba(224, 224, 224, 1)',
+          border: 1,
+          borderColor: 'line.subtle',
           '& .MuiTableCell-root': {
-            borderBottom: '1px solid rgba(224, 224, 224, 1)',
+            borderBottom: 1,
+            borderBottomColor: 'line.subtle',
           }
         }}
       >
@@ -219,7 +223,8 @@ export const FinancialStatementsTable: React.FC<FinancialStatementsTableProps> =
                   backgroundColor: 'primary.main',
                   color: 'white',
                   fontWeight: 600,
-                  borderRight: '1px solid rgba(255, 255, 255, 0.3)',
+                  borderRight: 1,
+                  borderRightColor: 'line.subtle',
                   minWidth: 300
                 }}
               >
@@ -233,7 +238,8 @@ export const FinancialStatementsTable: React.FC<FinancialStatementsTableProps> =
                     backgroundColor: 'primary.main',
                     color: 'white',
                     fontWeight: 600,
-                    borderRight: '1px solid rgba(255, 255, 255, 0.3)',
+                    borderRight: 1,
+                  borderRightColor: 'line.subtle',
                     minWidth: 120
                   }}
                 >

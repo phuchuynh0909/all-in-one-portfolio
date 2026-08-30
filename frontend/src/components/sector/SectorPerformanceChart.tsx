@@ -22,6 +22,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import { Add as AddIcon, Remove as RemoveIcon } from '@mui/icons-material';
+import { useChartTheme } from '../../theme';
 
 
 type TimePeriod = 'YTD' | '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | '10Y' | 'ALL';
@@ -38,10 +39,6 @@ const PERIODS: { value: TimePeriod; label: string }[] = [
   { value: 'ALL', label: 'All' },
 ];
 
-const COLORS = [
-  '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
-];
 
 interface SectorTimeseries {
   timestamps: string[];
@@ -51,6 +48,7 @@ interface SectorTimeseries {
 }
 
 export default function SectorPerformanceChart() {
+  const ct = useChartTheme();
   const [period, setPeriod] = useState<TimePeriod>('6M');
   const [topN, setTopN] = useState(10);
   const [selectedSectors, setSelectedSectors] = useState<string[]>([]);
@@ -239,7 +237,7 @@ export default function SectorPerformanceChart() {
                   key={sector}
                   type="monotone"
                   dataKey={sector}
-                  stroke={COLORS[i % COLORS.length]}
+                  stroke={ct.seriesColor(i)}
                   dot={false}
                 />
               ))}

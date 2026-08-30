@@ -1,11 +1,13 @@
-import { Card, CardContent, Typography, Box } from '@mui/material';
+import { Box } from '@mui/material';
 import { PieChart } from '@mui/x-charts/PieChart';
+import { useChartTheme } from '../../theme';
 
 interface CurrentPortfolioPieChartProps {
   positions: Array<{ ticker: string; quantity: number; current_price: number }>;
 }
 
 export default function CurrentPortfolioPieChart({ positions }: CurrentPortfolioPieChartProps) {
+  const ct = useChartTheme();
   const grouped = positions.reduce((acc, pos) => {
     acc[pos.ticker] ??= { ticker: pos.ticker, totalQuantity: 0, totalValue: 0 };
     acc[pos.ticker].totalQuantity += pos.quantity;
@@ -21,6 +23,8 @@ export default function CurrentPortfolioPieChart({ positions }: CurrentPortfolio
     return {
       id: index,
       value: p.totalValue, // Use actual value, not fraction
+      // x-charts otherwise falls back to its own palette.
+      color: ct.seriesColor(index),
       label: `${p.ticker} (${(weight * 100).toFixed(1)}%)`,
       ticker: p.ticker,
       totalQuantity: p.totalQuantity,
@@ -29,21 +33,17 @@ export default function CurrentPortfolioPieChart({ positions }: CurrentPortfolio
   });
 
   return (
-    <Card>
-      <CardContent>
-        <Typography variant="h6" gutterBottom>Current Portfolio Weights</Typography>
-        <Box sx={{ width: '100%', height: 500 }}>
+    <Box sx={{ width: '100%', height: 460, p: 1 }}>
           <PieChart
+              sx={ct.xChartsSx}
             series={[{
               data: pieData,
               highlightScope: { fade: 'global', highlight: 'item' },
               arcLabel: 'label',
             }]}
-            height={500}
+            height={440}
             margin={{ right: 5 }}
           />
-        </Box>
-      </CardContent>
-    </Card>
+    </Box>
   );
 }

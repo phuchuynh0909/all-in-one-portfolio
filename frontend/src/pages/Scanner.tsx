@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { PageContainer, PageHeader } from '../components/ui';
 import { Box, Button, Card, CardContent, Divider, FormControl, Grid, IconButton, InputLabel, MenuItem, Select, Stack, TextField, Typography, Checkbox, FormControlLabel } from '@mui/material';
 import type { SelectChangeEvent } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
@@ -166,8 +167,11 @@ export default function Scanner() {
   }
 
   return (
-    <Box>
-      <Typography variant="h5" sx={{ mb: 2 }}>Feature Scanner</Typography>
+    <PageContainer>
+      <PageHeader
+        title="Scanner"
+        description="Screen the universe against technical and fundamental feature conditions."
+      />
 
       <Card sx={{ mb: 2 }}>
         <CardContent>
@@ -298,7 +302,7 @@ export default function Scanner() {
           </Box>
         </CardContent>
       </Card>
-    </Box>
+    </PageContainer>
   );
 }
 

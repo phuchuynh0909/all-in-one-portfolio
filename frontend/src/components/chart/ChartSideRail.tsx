@@ -26,8 +26,9 @@ export default function ChartSideRail({ items }: { items: RailItem[] }) {
         py: 1,
         display: 'flex',
         justifyContent: 'center',
-        background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
-        border: '1px solid rgba(99, 102, 241, 0.2)',
+        bgcolor: 'surface.default',
+        border: 1,
+        borderColor: 'line.subtle',
         borderRadius: 2,
       }}
     >
@@ -43,10 +44,10 @@ export default function ChartSideRail({ items }: { items: RailItem[] }) {
                 width: 32,
                 height: 32,
                 borderRadius: 1,
-                color: item.active ? '#c7d2fe' : '#9ca3af',
-                bgcolor: item.active ? 'rgba(99,102,241,0.22)' : 'transparent',
+                color: item.active ? 'primary.main' : 'text.secondary',
+                bgcolor: item.active ? 'action.selected' : 'transparent',
                 '&:hover': {
-                  bgcolor: item.active ? 'rgba(99,102,241,0.3)' : 'rgba(148,163,184,0.12)',
+                  bgcolor: item.active ? 'action.selected' : 'action.hover',
                 },
               }}
             >

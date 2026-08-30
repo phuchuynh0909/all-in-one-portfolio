@@ -1,9 +1,21 @@
-"""Persistence for completed TradingAgents analyses (ClickHouse).
+"""Persistence for completed TradingAgents analyses (MySQL).
 
 Each finished run — every agent report plus the final decision and run
 metadata — is saved as one row so the frontend can list past analyses and
 reopen any of them. The full per-agent reports are stored as a JSON blob in
 ``sections``; list queries return only metadata + a short snippet to stay cheap.
+
+Moved from ClickHouse to MySQL so agent history lives with the rest of the
+app's primary store (portfolio, reports, RAG state) and is reachable from every
+process that needs it. The engine and schema bootstrap are shared via
+``app.db.mysql``, so the table is created on first use and there is no
+migration step to run.
+
+The public functions and their return shapes are unchanged, so the route layer,
+``runner`` and ``past_runs`` are untouched.
+
+Config: ``MYSQL_HOST/PORT/USER/PASSWORD/DB``, or ``MYSQL_URL`` to override the
+whole DSN. See ``app/core/settings.py``.
 """
 from __future__ import annotations
 
@@ -12,46 +24,68 @@ import os
 import uuid
 from typing import Any, Optional
 
-import clickhouse_connect
 from loguru import logger
+from sqlalchemy import (
+    Column,
+    Index,
+    Integer,
+    MetaData,
+    String,
+    Table,
+    and_,
+    func,
+    insert,
+    select,
+    text,
+)
+from sqlalchemy.dialects.mysql import DATETIME, LONGTEXT
 
-from app.core.settings import settings
+from app.db import mysql
 
-_TABLE = os.getenv("CLICKHOUSE_TRADING_AGENTS_TABLE", "trading_agent_analyses")
+_TABLE = os.getenv("MYSQL_TRADING_AGENTS_TABLE", "trading_agent_analyses")
+
+_metadata = MetaData()
+
+# NOTE: `signal` is a reserved word in MySQL. Every query here goes through
+# SQLAlchemy Core, which quotes identifiers, so the column keeps its name and
+# the API shape is preserved. Do not hand-write SQL against this table.
+_analyses = Table(
+    _TABLE,
+    _metadata,
+    Column("id", String(32), primary_key=True),
+    Column("symbol", String(32), nullable=False),
+    Column("trade_date", String(10), nullable=False),
+    Column("provider", String(128), nullable=False, server_default=""),
+    Column("model", String(255), nullable=False, server_default=""),
+    Column("signal", String(64), nullable=False, server_default=""),
+    # JSON blobs, kept as text so the round-trip matches what ClickHouse held.
+    Column("analysts", LONGTEXT),
+    Column("sections", LONGTEXT),
+    Column("final_decision", LONGTEXT),
+    Column("duration_ms", Integer, nullable=False, server_default="0"),
+    # Millisecond precision, matching the previous DateTime64(3): two runs of
+    # the same ticker+date must be distinguishable by recency.
+    Column(
+        "created_at",
+        DATETIME(fsp=3),
+        nullable=False,
+        server_default=text("CURRENT_TIMESTAMP(3)"),
+    ),
+    # Serves both the per-symbol history list and the prior-decision lookup.
+    Index("ix_taa_symbol_trade_date", "symbol", "trade_date"),
+    Index("ix_taa_created_at", "created_at"),
+    mysql_charset="utf8mb4",
+    mysql_collate="utf8mb4_unicode_ci",
+)
 
 
-def _client():
-    return clickhouse_connect.get_client(
-        host=settings.clickhouse_host,
-        port=settings.clickhouse_port,
-        username=settings.clickhouse_user,
-        password=settings.clickhouse_password,
-        database=settings.clickhouse_db,
-    )
+def _engine():
+    return mysql.ensure_table(_metadata, _analyses)
 
 
-def _ensure_table(client) -> None:
-    db = settings.clickhouse_db
-    client.command(f"CREATE DATABASE IF NOT EXISTS {db}")
-    client.command(
-        f"""
-        CREATE TABLE IF NOT EXISTS {db}.{_TABLE} (
-            id String,
-            symbol String,
-            trade_date String,
-            provider String,
-            model String,
-            signal String,
-            analysts String,           -- JSON array
-            sections String,           -- JSON object {{section: markdown}}
-            final_decision String,
-            duration_ms UInt32,
-            created_at DateTime64(3) DEFAULT now64(3)
-        )
-        ENGINE = MergeTree
-        ORDER BY (created_at, id)
-        """
-    )
+def _iso(value: Any) -> str:
+    """Datetimes come back as objects; empty string when the row has none."""
+    return value.isoformat() if value is not None else ""
 
 
 def save_analysis(
@@ -68,69 +102,67 @@ def save_analysis(
 ) -> str:
     """Insert one completed analysis; returns its generated id."""
     analysis_id = uuid.uuid4().hex
-    client = _client()
-    try:
-        _ensure_table(client)
-        client.insert(
-            table=f"{settings.clickhouse_db}.{_TABLE}",
-            data=[[
-                analysis_id,
-                symbol.upper(),
-                trade_date,
-                provider,
-                model,
-                signal,
-                json.dumps(analysts, ensure_ascii=False),
-                json.dumps(sections, ensure_ascii=False),
-                final_decision,
-                int(duration_ms),
-            ]],
-            column_names=[
-                "id", "symbol", "trade_date", "provider", "model", "signal",
-                "analysts", "sections", "final_decision", "duration_ms",
-            ],
+    engine = _engine()
+    with engine.begin() as conn:
+        conn.execute(
+            insert(_analyses).values(
+                id=analysis_id,
+                symbol=symbol.upper(),
+                trade_date=trade_date,
+                provider=provider,
+                model=model,
+                signal=signal,
+                analysts=json.dumps(analysts, ensure_ascii=False),
+                sections=json.dumps(sections, ensure_ascii=False),
+                final_decision=final_decision,
+                duration_ms=int(duration_ms),
+            )
         )
-        return analysis_id
-    finally:
-        client.close()
+    return analysis_id
 
 
 def list_analyses(symbol: Optional[str] = None, limit: int = 100) -> list[dict[str, Any]]:
     """List saved analyses (metadata + snippet), newest first."""
-    client = _client()
     try:
-        _ensure_table(client)
-        query = (
-            "SELECT id, symbol, trade_date, provider, model, signal, "
-            "substring(final_decision, 1, 240) AS snippet, duration_ms, created_at "
-            f"FROM {settings.clickhouse_db}.{_TABLE} "
+        engine = _engine()
+        stmt = (
+            select(
+                _analyses.c.id,
+                _analyses.c.symbol,
+                _analyses.c.trade_date,
+                _analyses.c.provider,
+                _analyses.c.model,
+                _analyses.c.signal,
+                func.substring(_analyses.c.final_decision, 1, 240).label("snippet"),
+                _analyses.c.duration_ms,
+                _analyses.c.created_at,
+            )
+            .order_by(_analyses.c.created_at.desc())
+            .limit(limit)
         )
-        params: dict[str, Any] = {"limit": limit}
         if symbol:
-            query += "WHERE symbol = %(symbol)s "
-            params["symbol"] = symbol.upper()
-        query += "ORDER BY created_at DESC LIMIT %(limit)s"
+            stmt = stmt.where(_analyses.c.symbol == symbol.upper())
 
-        result = client.query(query, parameters=params)
-        rows = []
-        for r in result.result_rows:
-            rows.append({
-                "id": r[0],
-                "symbol": r[1],
-                "trade_date": r[2],
-                "provider": r[3],
-                "model": r[4],
-                "signal": r[5],
-                "snippet": r[6],
-                "duration_ms": r[7],
-                "created_at": r[8].isoformat() if r[8] is not None else "",
-            })
-        return rows
+        with engine.connect() as conn:
+            rows = conn.execute(stmt).all()
+
+        return [
+            {
+                "id": r.id,
+                "symbol": r.symbol,
+                "trade_date": r.trade_date,
+                "provider": r.provider,
+                "model": r.model,
+                "signal": r.signal,
+                "snippet": r.snippet or "",
+                "duration_ms": r.duration_ms,
+                "created_at": _iso(r.created_at),
+            }
+            for r in rows
+        ]
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to list analyses: {!r}", exc)
         return []
-    finally:
-        client.close()
 
 
 def list_prior_decisions(
@@ -145,77 +177,117 @@ def list_prior_decisions(
     * The cutoff is on ``trade_date``, not ``created_at`` — a run replayed over
       history must not read analyses of *later* sessions, however recently they
       were computed.
-    * ``LIMIT 1 BY trade_date`` keeps only the newest run per session, so
-      re-running the same ticker+date does not spend the budget on duplicates.
+    * Only the newest run per session is kept, so re-running the same
+      ticker+date does not spend the budget on duplicates. ClickHouse expressed
+      this as ``LIMIT 1 BY trade_date``; MySQL has no equivalent, so it is a
+      join against the latest ``created_at`` per ``trade_date``. That is written
+      without window functions so it holds on MySQL 5.7 as well as 8+, and the
+      result is de-duplicated again in Python to stay exact if two runs ever
+      land on the same millisecond.
 
     Returns [] on any failure — prior context is an enrichment, never a
     precondition for the next run.
     """
-    client = _client()
     try:
-        _ensure_table(client)
-        query = (
-            "SELECT trade_date, signal, substring(final_decision, 1, 4000), created_at "
-            f"FROM {settings.clickhouse_db}.{_TABLE} "
-            "WHERE symbol = %(symbol)s AND trade_date < %(before)s "
-            "ORDER BY trade_date DESC, created_at DESC "
-            "LIMIT 1 BY trade_date "
-            "LIMIT %(limit)s"
+        engine = _engine()
+        sym = symbol.upper()
+        scope = and_(
+            _analyses.c.symbol == sym,
+            _analyses.c.trade_date < before_trade_date,
         )
-        result = client.query(
-            query,
-            parameters={
-                "symbol": symbol.upper(),
-                "before": before_trade_date,
-                "limit": limit,
-            },
+
+        # Latest run per session, within the cutoff.
+        latest = (
+            select(
+                _analyses.c.trade_date.label("trade_date"),
+                func.max(_analyses.c.created_at).label("mx"),
+            )
+            .where(scope)
+            .group_by(_analyses.c.trade_date)
+            .subquery()
         )
-        return [
-            {
-                "trade_date": r[0],
-                "signal": r[1],
-                "final_decision": r[2],
-                "created_at": r[3].isoformat() if r[3] is not None else "",
-            }
-            for r in result.result_rows
-        ]
+
+        stmt = (
+            select(
+                _analyses.c.trade_date,
+                _analyses.c.signal,
+                func.substring(_analyses.c.final_decision, 1, 4000).label("final_decision"),
+                _analyses.c.created_at,
+            )
+            .join(
+                latest,
+                and_(
+                    _analyses.c.trade_date == latest.c.trade_date,
+                    _analyses.c.created_at == latest.c.mx,
+                ),
+            )
+            .where(scope)
+            .order_by(_analyses.c.trade_date.desc(), _analyses.c.created_at.desc())
+            # Room for same-millisecond ties before the Python de-dup trims back.
+            .limit(limit * 2)
+        )
+
+        with engine.connect() as conn:
+            rows = conn.execute(stmt).all()
+
+        out: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for r in rows:
+            if r.trade_date in seen:
+                continue
+            seen.add(r.trade_date)
+            out.append(
+                {
+                    "trade_date": r.trade_date,
+                    "signal": r.signal,
+                    "final_decision": r.final_decision or "",
+                    "created_at": _iso(r.created_at),
+                }
+            )
+            if len(out) >= limit:
+                break
+        return out
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to list prior decisions for {}: {!r}", symbol, exc)
         return []
-    finally:
-        client.close()
 
 
 def get_analysis(analysis_id: str) -> Optional[dict[str, Any]]:
     """Fetch one saved analysis with its full per-agent sections."""
-    client = _client()
     try:
-        _ensure_table(client)
-        query = (
-            "SELECT id, symbol, trade_date, provider, model, signal, analysts, "
-            "sections, final_decision, duration_ms, created_at "
-            f"FROM {settings.clickhouse_db}.{_TABLE} "
-            "WHERE id = %(id)s LIMIT 1"
-        )
-        result = client.query(query, parameters={"id": analysis_id})
-        if not result.result_rows:
+        engine = _engine()
+        stmt = select(
+            _analyses.c.id,
+            _analyses.c.symbol,
+            _analyses.c.trade_date,
+            _analyses.c.provider,
+            _analyses.c.model,
+            _analyses.c.signal,
+            _analyses.c.analysts,
+            _analyses.c.sections,
+            _analyses.c.final_decision,
+            _analyses.c.duration_ms,
+            _analyses.c.created_at,
+        ).where(_analyses.c.id == analysis_id).limit(1)
+
+        with engine.connect() as conn:
+            r = conn.execute(stmt).first()
+        if r is None:
             return None
-        r = result.result_rows[0]
+
         return {
-            "id": r[0],
-            "symbol": r[1],
-            "trade_date": r[2],
-            "provider": r[3],
-            "model": r[4],
-            "signal": r[5],
-            "analysts": json.loads(r[6]) if r[6] else [],
-            "sections": json.loads(r[7]) if r[7] else {},
-            "final_decision": r[8],
-            "duration_ms": r[9],
-            "created_at": r[10].isoformat() if r[10] is not None else "",
+            "id": r.id,
+            "symbol": r.symbol,
+            "trade_date": r.trade_date,
+            "provider": r.provider,
+            "model": r.model,
+            "signal": r.signal,
+            "analysts": json.loads(r.analysts) if r.analysts else [],
+            "sections": json.loads(r.sections) if r.sections else {},
+            "final_decision": r.final_decision or "",
+            "duration_ms": r.duration_ms,
+            "created_at": _iso(r.created_at),
         }
     except Exception as exc:  # noqa: BLE001
         logger.warning("Failed to get analysis {}: {!r}", analysis_id, exc)
         return None
-    finally:
-        client.close()

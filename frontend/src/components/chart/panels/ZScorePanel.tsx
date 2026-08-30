@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react';
+import { alpha } from '@mui/material/styles';
+import { useChartTheme } from '../../../theme';
 import { LineSeries } from 'lightweight-charts';
 import type { IChartApi, ISeriesApi, UTCTimestamp } from 'lightweight-charts';
 import type { FutureOhlcResponse } from '../../../lib/services/future';
@@ -10,6 +12,7 @@ type ZScorePanelProps = {
 };
 
 export default function ZScorePanel({ chart, data, threshold = 2.0 }: ZScorePanelProps) {
+    const ct = useChartTheme();
     const bsiNormSeriesRef = useRef<ISeriesApi<"Line"> | null>(null);
     const upperThresholdLineRef = useRef<ISeriesApi<"Line"> | null>(null);
     const lowerThresholdLineRef = useRef<ISeriesApi<"Line"> | null>(null);
@@ -19,7 +22,7 @@ export default function ZScorePanel({ chart, data, threshold = 2.0 }: ZScorePane
         if (!chart) return;
 
         const bsiNormSeries = chart.addSeries(LineSeries, {
-            color: '#f59e0b',
+            color: ct.accent,
             lineWidth: 2,
             priceFormat: {
                 type: 'custom',
@@ -38,21 +41,21 @@ export default function ZScorePanel({ chart, data, threshold = 2.0 }: ZScorePane
         } as const;
 
         const upperThresholdLine = chart.addSeries(LineSeries, {
-            color: 'rgba(239, 68, 68, 0.6)',
+            color: alpha(ct.down, 0.6),
             lineWidth: 1,
             ...defaultFixedLineConfig,
         }, 2);
         upperThresholdLineRef.current = upperThresholdLine;
 
         const lowerThresholdLine = chart.addSeries(LineSeries, {
-            color: 'rgba(34, 197, 94, 0.6)',
+            color: alpha(ct.up, 0.6),
             lineWidth: 1,
             ...defaultFixedLineConfig,
         }, 2);
         lowerThresholdLineRef.current = lowerThresholdLine;
 
         const zeroLine = chart.addSeries(LineSeries, {
-            color: 'rgba(156, 163, 175, 0.3)',
+            color: alpha(ct.axis, 0.4),
             lineWidth: 1,
             ...defaultFixedLineConfig,
         }, 2);

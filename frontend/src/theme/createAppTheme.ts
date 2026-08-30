@@ -2,6 +2,7 @@ import { createTheme, alpha, type Theme } from '@mui/material/styles';
 import type {} from '@mui/x-data-grid/themeAugmentation';
 import {
   colorsByMode,
+  primitives,
   shadowsByMode,
   componentTokens,
   fontFamily,
@@ -275,11 +276,12 @@ export function createAppTheme(mode: ColorMode): Theme {
       },
       MuiDrawer: {
         styleOverrides: {
-          paper: {
-            backgroundColor: c.bgChrome,
-            backgroundImage: 'none',
-            borderRight: `1px solid ${c.borderSubtle}`,
-          },
+          paper: { backgroundColor: c.bgChrome, backgroundImage: 'none' },
+          // The divider belongs on whichever edge faces the page content.
+          paperAnchorLeft: { borderRight: `1px solid ${c.borderSubtle}` },
+          paperAnchorRight: { borderLeft: `1px solid ${c.borderSubtle}` },
+          paperAnchorTop: { borderBottom: `1px solid ${c.borderSubtle}` },
+          paperAnchorBottom: { borderTop: `1px solid ${c.borderSubtle}` },
         },
       },
       MuiDivider: { styleOverrides: { root: { borderColor: c.borderSubtle } } },
@@ -563,7 +565,7 @@ export function createAppTheme(mode: ColorMode): Theme {
         },
       },
       MuiBackdrop: {
-        styleOverrides: { root: { backgroundColor: alpha(isDark ? '#000000' : '#0D1117', 0.6) } },
+        styleOverrides: { root: { backgroundColor: alpha(isDark ? primitives.neutral[1000] : primitives.neutral[950], 0.6) } },
       },
     },
   });

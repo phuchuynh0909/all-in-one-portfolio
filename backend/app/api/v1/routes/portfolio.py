@@ -142,4 +142,9 @@ def optimize_portfolio(
     body: OptimizationRequest,
     db: Session = Depends(get_db),
 ) -> OptimizationResult:
-    return optimization_service.optimize_portfolio(db, body)
+    try:
+        return optimization_service.optimize_portfolio(db, body)
+    except ValueError as e:
+        # An infeasible universe or a missing method parameter is bad input, not
+        # a server fault -- both used to surface as an unhandled 500.
+        raise HTTPException(status_code=400, detail=str(e))

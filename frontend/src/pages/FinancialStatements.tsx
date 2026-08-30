@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { PageContainer, PageHeader } from '../components/ui';
 import { 
   Box, 
   Typography, 
@@ -123,10 +124,11 @@ export const FinancialStatements: React.FC = () => {
   };
 
   return (
-    <Box sx={{ p: 3 }}>
-      <Typography variant="h4" gutterBottom>
-        Báo cáo tài chính
-      </Typography>
+    <PageContainer>
+      <PageHeader
+        title="Financials"
+        description="Báo cáo tài chính — statement data, ratios, and the crawler that keeps them current."
+      />
 
       {/* Data Crawler Section */}
       <DataCrawler onDataCrawled={handleDataCrawled} />
@@ -254,6 +256,6 @@ export const FinancialStatements: React.FC = () => {
       {financialData && !loading && selectedCompany && (
         <FinancialStatementsTable data={financialData} />
       )}
-    </Box>
+    </PageContainer>
   );
 };

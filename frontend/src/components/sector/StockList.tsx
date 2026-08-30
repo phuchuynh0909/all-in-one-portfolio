@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { DataGrid } from '@mui/x-data-grid';
 import type { GridColDef, GridValueFormatterParams } from '@mui/x-data-grid';
-import { Box, Typography } from '@mui/material';
+import { Box } from '@mui/material';
 import { apiGet } from '../../lib/api';
 
 type Stock = {
@@ -61,12 +61,9 @@ export default function StockList({
   }, [sectorId, level]);
 
   return (
-    <Box sx={{ height: 500, width: '100%' }}>
-      <Typography variant="h6" gutterBottom>
-        Stocks in Sector
-      </Typography>
+    <Box sx={{ height: 500, width: '100%', p: 1 }}>
       <DataGrid
-        sx={{ mt: 10 }}
+        sx={{ border: 0 }}
         rows={stocks}
         columns={columns}
         loading={loading}

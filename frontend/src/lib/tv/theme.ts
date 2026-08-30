@@ -14,6 +14,15 @@ import { colorsByMode, primitives, type ColorMode } from '../../theme/tokens';
  * on both a near-black and a near-white pane.
  */
 
+/** Hex primitive + alpha → rgba(), so translucent study colours track the ramp. */
+function withAlpha(hex: string, alpha: number): string {
+  const h = hex.replace('#', '');
+  const r = parseInt(h.slice(0, 2), 16);
+  const g = parseInt(h.slice(2, 4), 16);
+  const b = parseInt(h.slice(4, 6), 16);
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 export function tvOverrides(mode: ColorMode): Record<string, string | number | boolean> {
   const c = colorsByMode[mode];
   return {
@@ -34,7 +43,6 @@ export function tvOverrides(mode: ColorMode): Record<string, string | number | b
     'mainSeriesProperties.candleStyle.wickDownColor': c.short,
     'mainSeriesProperties.candleStyle.borderUpColor': c.long,
     'mainSeriesProperties.candleStyle.borderDownColor': c.short,
-    'mainSeriesProperties.candleStyle.borderVisible': false,
 
     'mainSeriesProperties.hollowCandleStyle.upColor': c.long,
     'mainSeriesProperties.hollowCandleStyle.downColor': c.short,
@@ -58,7 +66,7 @@ export function tvSideColor(mode: ColorMode, side: 'buy' | 'sell'): string {
 export const studyPalette = {
   bull: primitives.cyan[400],
   bear: primitives.pink[500],
-  transparent: 'rgba(0,0,0,0)',
+  transparent: 'rgba(0, 0, 0, 0)',
 
   violet: primitives.violet[500],
   cyan: primitives.cyan[500],
@@ -74,17 +82,36 @@ export const studyPalette = {
   white: primitives.neutral[50],
 
   /** Zero / reference lines. */
-  zeroLine: 'rgba(138, 147, 163, 0.4)',
-  overbought: 'rgba(239, 68, 68, 0.4)',
-  oversold: 'rgba(52, 211, 153, 0.4)',
-  overboughtStrong: 'rgba(239, 68, 68, 0.6)',
-  oversoldStrong: 'rgba(52, 211, 153, 0.6)',
+  zeroLine: withAlpha(primitives.neutral[400], 0.4),
+  overbought: withAlpha(primitives.red[500], 0.4),
+  oversold: withAlpha(primitives.green[400], 0.4),
+  overboughtStrong: withAlpha(primitives.red[500], 0.6),
+  oversoldStrong: withAlpha(primitives.green[400], 0.6),
 
-  greenFill: 'rgba(52, 211, 153, 0.5)',
-  redFill: 'rgba(248, 113, 113, 0.5)',
-  greenBar: 'rgba(52, 211, 153, 0.7)',
-  redBar: 'rgba(248, 113, 113, 0.7)',
-  neutralBar: 'rgba(244, 245, 244, 0.7)',
-  yellowBar: 'rgba(251, 191, 36, 0.7)',
-  rangeFill: 'rgba(139, 92, 246, 0.12)',
+  greenFill: withAlpha(primitives.green[400], 0.5),
+  redFill: withAlpha(primitives.red[400], 0.5),
+  greenBar: withAlpha(primitives.green[400], 0.7),
+  redBar: withAlpha(primitives.red[400], 0.7),
+  neutralBar: withAlpha(primitives.neutral[50], 0.7),
+  yellowBar: withAlpha(primitives.amber[400], 0.7),
+  rangeFill: withAlpha(primitives.violet[500], 0.12),
+
+  /** Chandelier exit / trend-flip pairs. */
+  trendUp: primitives.cyan[400],
+  trendDown: primitives.red[500],
+
+  /** Linear-regression channel. */
+  regression: primitives.blue[400],
+  regressionBand: primitives.pink[500],
+  regressionFill: withAlpha(primitives.blue[400], 0.08),
+
+  /** G-FRAMA cloud. */
+  cloudFill: withAlpha(primitives.violet[500], 0.08),
+  neutralFill: withAlpha(primitives.neutral[400], 0.6),
+
+  /** RSI study. */
+  rsi: primitives.violet[400],
+  rsiSignal: primitives.amber[500],
+  rsiUpper: withAlpha(primitives.red[500], 0.5),
+  rsiLower: withAlpha(primitives.green[400], 0.5),
 } as const;

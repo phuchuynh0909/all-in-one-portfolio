@@ -5,11 +5,13 @@ import {
   XAxis,
   YAxis,
   CartesianGrid,
+  Cell,
   Tooltip,
   ResponsiveContainer,
   Label,
   LabelList,
 } from 'recharts';
+import { useChartTheme } from '../../theme';
 
 type Position = {
   id: number;
@@ -36,6 +38,7 @@ type PerformanceChartsProps = {
 };
 
 export default function PerformanceCharts({ positions }: PerformanceChartsProps) {
+  const ct = useChartTheme();
   // Aggregate positions by ticker
   const aggregatedPositions = positions.reduce<Record<string, AggregatedPosition>>((acc, pos) => {
     if (!acc[pos.ticker]) {
@@ -90,7 +93,7 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
               data={topPerformers}
               margin={{ top: 20, right: 30, left: 30, bottom: 5 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
+              <CartesianGrid {...ct.recharts.grid} />
               <XAxis 
                 dataKey="ticker"
                 axisLine={false}
@@ -99,8 +102,8 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
               />
               <YAxis 
                 tickFormatter={formatYAxis}
-                stroke="#fff"
-                tick={{ fill: '#fff' }}
+                stroke={ct.axis}
+                tick={ct.recharts.axis.tick}
               >
                 <Label
                   value="Return (%)"
@@ -109,28 +112,22 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
                   offset={15}
                 />
               </YAxis>
-              <Tooltip 
+              <Tooltip
                 formatter={formatTooltip}
-                labelStyle={{ color: '#666' }}
-                contentStyle={{ 
-                  backgroundColor: '#fff',
-                  border: '1px solid #ccc',
-                  borderRadius: '4px',
-                  padding: '10px',
-                  whiteSpace: 'pre-line'
-                }}
+                labelStyle={ct.recharts.tooltip.labelStyle}
+                itemStyle={ct.recharts.tooltip.itemStyle}
+                cursor={ct.recharts.tooltip.cursor}
+                contentStyle={{ ...ct.recharts.tooltip.contentStyle, whiteSpace: 'pre-line' }}
               />
-              <Bar
-                dataKey="return_pct"
-                fill="#4CAF50"
-                name="Return"
-                radius={[4, 4, 0, 0]}
-              >
+              <Bar dataKey="return_pct" name="Return" radius={[4, 4, 0, 0]}>
+                {topPerformers.map((p) => (
+                  <Cell key={p.ticker} fill={ct.pnlColor(p.return_pct)} />
+                ))}
                 <LabelList
                   dataKey="ticker"
                   position="bottom"
                   offset={5}
-                  fill="#fff"
+                  fill={ct.text}
                   angle={0}
                   style={{ fontWeight: 'bold' }}
                 />
@@ -147,7 +144,7 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
               data={bottomPerformers}
               margin={{ top: 20, right: 30, left: 30, bottom: 5 }}
             >
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255, 255, 255, 0.1)" />
+              <CartesianGrid {...ct.recharts.grid} />
               <XAxis 
                 dataKey="ticker"
                 axisLine={false}
@@ -156,8 +153,8 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
               />
               <YAxis 
                 tickFormatter={formatYAxis}
-                stroke="#fff"
-                tick={{ fill: '#fff' }}
+                stroke={ct.axis}
+                tick={ct.recharts.axis.tick}
               >
                 <Label
                   value="Return (%)"
@@ -166,20 +163,16 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
                   offset={15}
                 />
               </YAxis>
-              <Tooltip 
+              <Tooltip
                 formatter={formatTooltip}
-                labelStyle={{ color: '#666' }}
-                contentStyle={{ 
-                  backgroundColor: '#fff',
-                  border: '1px solid #ccc',
-                  borderRadius: '4px',
-                  padding: '10px',
-                  whiteSpace: 'pre-line'
-                }}
+                labelStyle={ct.recharts.tooltip.labelStyle}
+                itemStyle={ct.recharts.tooltip.itemStyle}
+                cursor={ct.recharts.tooltip.cursor}
+                contentStyle={{ ...ct.recharts.tooltip.contentStyle, whiteSpace: 'pre-line' }}
               />
               <Bar
                 dataKey="return_pct"
-                fill="#F44336"
+                fill={ct.down}
                 name="Return %"
                 radius={[4, 4, 0, 0]}
               >
@@ -187,7 +180,7 @@ export default function PerformanceCharts({ positions }: PerformanceChartsProps)
                   dataKey="ticker"
                   position="bottom"
                   offset={5}
-                  fill="#fff"
+                  fill={ct.text}
                   angle={0}
                   style={{ fontWeight: 'bold' }}
                 />

@@ -136,6 +136,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_prefix = "APP_"
+        extra = "ignore"
 
 
 settings = Settings()

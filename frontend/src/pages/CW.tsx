@@ -5,7 +5,6 @@ import {
   Button,
   Chip,
   CircularProgress,
-  Container,
   Divider,
   Grid,
   Link,
@@ -19,6 +18,8 @@ import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import { LineChart } from '@mui/x-charts/LineChart';
 
 import { fetchCoveredWarrant, type CoveredWarrantResponse } from '../lib/services/cw';
+import { useChartTheme } from '../theme';
+import { PageContainer, PageHeader } from '../components/ui';
 
 
 type Inputs = {
@@ -492,8 +493,9 @@ function StatCard(props: { title: React.ReactNode; value: string; subtitle?: str
       sx={{
         p: 2,
         height: '100%',
-        background: 'linear-gradient(160deg, rgba(19, 26, 34, 0.96) 0%, rgba(16, 23, 31, 0.96) 100%)',
-        border: '1px solid rgba(96, 165, 250, 0.18)',
+        bgcolor: 'surface.default',
+        border: 1,
+        borderColor: 'line.subtle',
       }}
     >
       <Box sx={{ mb: 1 }}>
@@ -622,6 +624,7 @@ function buildPayoffCurve(data: CoveredWarrantResponse | null, inputs: Inputs): 
 }
 
 export default function CWPage() {
+  const ct = useChartTheme();
   const [symbolInput, setSymbolInput] = useState(DEFAULT_SYMBOL);
   const [currentSymbol, setCurrentSymbol] = useState(DEFAULT_SYMBOL);
   const [data, setData] = useState<CoveredWarrantResponse | null>(null);
@@ -702,26 +705,12 @@ export default function CWPage() {
   };
 
   return (
-    <Container maxWidth="xl" sx={{ py: 3 }}>
-      <Stack spacing={3}>
-        <Paper
-          sx={{
-            p: 3,
-            background: 'radial-gradient(circle at top left, rgba(34, 197, 94, 0.16) 0%, rgba(16, 23, 31, 0.96) 42%), linear-gradient(160deg, rgba(21, 28, 38, 0.96) 0%, rgba(16, 23, 31, 0.98) 100%)',
-            border: '1px solid rgba(34, 197, 94, 0.18)',
-          }}
-        >
-          <Stack direction={{ xs: 'column', md: 'row' }} spacing={2} justifyContent="space-between">
-            <Box>
-              <Typography variant="h4" sx={{ fontWeight: 700 }}>
-                Covered Warrant Analyzer
-              </Typography>
-              <Typography variant="body1" sx={{ color: 'text.secondary', mt: 1, maxWidth: 880 }}>
-                Fetch CW contract details from DNSE, pull the underlying stock close from the backend, estimate realized volatility,
-                then calculate Black-Scholes Greeks and key warrant metrics with editable assumptions.
-              </Typography>
-            </Box>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'stretch', sm: 'center' }}>
+    <PageContainer>
+      <PageHeader
+        title="Warrants"
+        description="Fetch CW contract details from DNSE, pull the underlying close from the backend, estimate realized volatility, then compute Black-Scholes greeks and warrant metrics under editable assumptions."
+        actions={
+          <Stack direction={{ xs: 'column', sm: 'row' }} spacing={1.5} alignItems={{ xs: 'stretch', sm: 'center' }}>
               <TextField
                 label="CW Symbol"
                 value={symbolInput}
@@ -736,10 +725,11 @@ export default function CWPage() {
               <Button variant="contained" onClick={handleAnalyze} sx={{ minWidth: 140 }}>
                 Analyze
               </Button>
-            </Stack>
           </Stack>
-        </Paper>
+        }
+      />
 
+      <Stack spacing={2}>
         {loading ? (
           <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
             <CircularProgress />
@@ -957,8 +947,9 @@ export default function CWPage() {
                       sx={{
                         px: 2,
                         py: 1.5,
-                        background: 'linear-gradient(160deg, rgba(19, 26, 34, 0.96) 0%, rgba(16, 23, 31, 0.96) 100%)',
-                        border: '1px solid rgba(96, 165, 250, 0.14)',
+                        bgcolor: 'surface.default',
+                        border: 1,
+                        borderColor: 'line.subtle',
                       }}
                     >
                       <Stack
@@ -1017,6 +1008,7 @@ export default function CWPage() {
                 </Typography>
                 <Box sx={{ width: '100%', overflowX: 'auto' }}>
                   <LineChart
+              sx={ct.xChartsSx}
                     height={360}
                     xAxis={[
                       {
@@ -1035,14 +1027,14 @@ export default function CWPage() {
                         id: 'payoff',
                         label: 'CW payoff',
                         data: payoffCurve.map((point) => point.payoffPerWarrant),
-                        color: '#60a5fa',
+                        color: ct.seriesColor(5),
                         showMark: false,
                       },
                       {
                         id: 'pnl',
                         label: 'PnL',
                         data: payoffCurve.map((point) => point.pnlPerWarrant),
-                        color: '#f59e0b',
+                        color: ct.accent,
                         showMark: false,
                       },
                     ]}
@@ -1060,6 +1052,6 @@ export default function CWPage() {
           </>
         ) : null}
       </Stack>
-    </Container>
+    </PageContainer>
   );
 }

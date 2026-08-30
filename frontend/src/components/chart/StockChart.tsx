@@ -12,6 +12,8 @@ import type {
   StudyInputId,
 } from '../../lib/tv';
 import { createDatafeed } from '../../lib/tv/datafeed';
+import { tvOverrides, tvSideColor } from '../../lib/tv/theme';
+import { useColorMode } from '../../theme';
 import { tvStore, HISTORY_YEARS } from '../../lib/tv/store';
 import {
   DEFAULT_WATCHLIST_SYMBOLS,
@@ -274,6 +276,11 @@ export default function StockChart({
   syncing = false,
   onWatchListResolved,
 }: StockChartProps) {
+  const { mode } = useColorMode();
+  const modeRef = useRef(mode);
+  useEffect(() => {
+    modeRef.current = mode;
+  }, [mode]);
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<IChartingLibraryWidget | null>(null);
   const studyEntitiesRef = useRef<Map<string, EntityId>>(new Map());
@@ -441,8 +448,8 @@ export default function StockChart({
           .setDirection(side)
           .setText(text)
           .setTooltip(tooltip)
-          .setArrowColor(side === 'buy' ? '#22c55e' : '#ef4444')
-          .setTextColor(side === 'buy' ? '#22c55e' : '#ef4444');
+          .setArrowColor(tvSideColor(modeRef.current, side))
+          .setTextColor(tvSideColor(modeRef.current, side));
       } catch (e) {
         console.warn('Failed to create execution shape:', e);
       }
@@ -496,7 +503,7 @@ export default function StockChart({
       timeframe: `${HISTORY_YEARS * 12}M`,
       locale: 'en' as LanguageCode,
       autosize: true,
-      theme: 'dark',
+      theme: mode,
       timezone: 'Asia/Ho_Chi_Minh',
       custom_indicators_getter: customIndicatorsGetter,
       // Trading Terminal only: asks for the widget bar's Watch List. The
@@ -507,15 +514,7 @@ export default function StockChart({
         watchlist_settings: { default_symbols: DEFAULT_WATCHLIST_SYMBOLS },
       },
       disabled_features: [],
-      overrides: {
-        'paneProperties.background': '#0a0a0f',
-        'paneProperties.backgroundType': 'solid',
-        'mainSeriesProperties.candleStyle.upColor': '#22c55e',
-        'mainSeriesProperties.candleStyle.downColor': '#ef4444',
-        'mainSeriesProperties.candleStyle.wickUpColor': '#22c55e',
-        'mainSeriesProperties.candleStyle.wickDownColor': '#ef4444',
-        'mainSeriesProperties.candleStyle.borderVisible': false,
-      },
+      overrides: tvOverrides(mode),
     }).then((widget) => {
       if (disposed) { widget.remove(); return; }
       widgetRef.current = widget;
@@ -676,13 +675,31 @@ export default function StockChart({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [visibilityKey, ready]);
 
+  // Follow the app colour mode without remounting the widget: changeTheme()
+  // swaps the library chrome, applyOverrides() restores our token colours on
+  // top of it (the library resets overrides as part of a theme change).
+  useEffect(() => {
+    const widget = widgetRef.current;
+    if (!widget || !ready) return;
+    let cancelled = false;
+    void widget
+      .changeTheme(mode, { disableUndo: true })
+      .then(() => {
+        if (!cancelled) widget.applyOverrides(tvOverrides(mode));
+      })
+      .catch((e) => console.warn('Failed to apply chart theme:', e));
+    return () => {
+      cancelled = true;
+    };
+  }, [mode, ready]);
+
   return (
     <Box sx={{
       width: '100%',
       height: resolvedHeight,
       position: 'relative',
-      bgcolor: '#0a0a0f',
-      borderRadius: 2,
+      bgcolor: 'surface.inset',
+      borderRadius: 1,
       overflow: 'hidden',
     }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />

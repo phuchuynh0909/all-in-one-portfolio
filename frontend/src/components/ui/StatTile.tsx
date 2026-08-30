@@ -15,6 +15,7 @@ export interface StatTileProps {
   loading?: boolean;
   /** Formatting passed through to <Numeric>. */
   format?: NumericProps['format'];
+  /** Leave unset to use the per-format default (0 for VND currency, 2 otherwise). */
   decimals?: number;
   currency?: string;
   signed?: boolean;
@@ -40,7 +41,7 @@ export default function StatTile({
   help,
   loading = false,
   format = 'number',
-  decimals = 2,
+  decimals,
   currency,
   signed = false,
   showSign = false,

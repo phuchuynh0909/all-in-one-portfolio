@@ -561,14 +561,42 @@ def _optimize_black_litterman(mu: pd.Series, S: pd.DataFrame, req: OptimizationR
         ef = EfficientFrontier(implied_returns, S)
     
     # Optimize for maximum Sharpe ratio with Black-Litterman inputs
+    # Posterior returns, not mu -- the views can move an asset either side of the rate.
+    _require_an_asset_above_the_risk_free_rate(
+        pd.Series(ef.expected_returns, index=ef.tickers), req.risk_free_rate or 0.0
+    )
     ef.max_sharpe(risk_free_rate=req.risk_free_rate or 0.0)
     weights = ef.clean_weights()
     ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
     return weights, ret, vol, sharpe
 
 
+def _require_an_asset_above_the_risk_free_rate(mu: pd.Series, risk_free_rate: float) -> None:
+    """Guard the tangency portfolio, which is undefined when cash wins.
+
+    pypfopt raises here too, but its message names neither the rate nor the
+    closest asset, so the caller cannot tell whether to lower the rate, move the
+    window, or switch method. A universe of holdings that all fell over the
+    period reaches this legitimately -- it is bad input, not a server fault.
+
+    Note the window advice cuts both ways: these holdings are all negative over
+    5y and over 1y, but PAN and YEG are positive over 3y. A longer window is not
+    the fix, a better-matched one is.
+    """
+    best = mu.max()
+    if best > risk_free_rate:
+        return
+    raise ValueError(
+        f"max_sharpe is undefined for these assets: none of the {len(mu)} has an "
+        f"expected return above the risk-free rate of {risk_free_rate:.2%}. "
+        f"The closest is {mu.idxmax()} at {best:.2%}. Lower the risk-free rate, "
+        f"try a different date range, or optimise with min_volatility or hrp instead."
+    )
+
+
 def _optimize_max_sharpe(mu: pd.Series, S: pd.DataFrame, risk_free_rate: float):
     """Maximum Sharpe ratio optimization."""
+    _require_an_asset_above_the_risk_free_rate(mu, risk_free_rate)
     ef = EfficientFrontier(mu, S)
     ef.max_sharpe(risk_free_rate=risk_free_rate)
     weights = ef.clean_weights()

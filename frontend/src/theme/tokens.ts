@@ -156,11 +156,17 @@ export const radius = {
   full: '9999px',
 } as const;
 
+/**
+ * Stacking order. Follows MUI's convention: the app bar sits BELOW drawers and
+ * modals, so a temporary drawer covers it rather than being clipped by it.
+ * The permanent sidebar opts above the app bar explicitly (appBar + 1) — they
+ * never overlap horizontally, so that only settles their shared edge.
+ */
 export const zIndex = {
   base: 0,
   sticky: 100,
+  appBar: 1100,
   drawer: 1200,
-  appBar: 1250,
   modal: 1300,
   tooltip: 1500,
 } as const;

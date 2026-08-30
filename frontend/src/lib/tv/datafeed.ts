@@ -31,6 +31,7 @@ import { formatChartTime, formatReportDateForChart } from '../services/timeserie
 import { fetchReports, type Report } from '../services/report';
 import { fetchLatestQuote, isVnMarketSession, type LatestQuote } from '../services/quote';
 import type { BarsPage, LoadedSeries, TvDataStore } from './store';
+import { studyPalette } from './theme';
 
 const SUPPORTED_RESOLUTIONS = ['1D', '1W', '1M'] as ResolutionString[];
 
@@ -276,10 +277,10 @@ export function createDatafeed(store: TvDataStore): IBasicDataFeed {
         marks.push({
           id: report.id ?? `report-${i}`,
           time: snapped, // milliseconds (Mark.time convention)
-          color: { border: '#a855f7', background: '#a855f7' },
+          color: { border: studyPalette.violet, background: studyPalette.violet },
           text: `${report.tenbaocao}\n\n${report.nguon}`,
           label: 'R',
-          labelFontColor: '#ffffff',
+          labelFontColor: studyPalette.white,
           minSize: 18,
         });
       });

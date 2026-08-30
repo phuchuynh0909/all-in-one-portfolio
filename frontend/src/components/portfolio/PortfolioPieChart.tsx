@@ -21,6 +21,7 @@ import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
 import { PieChart } from '@mui/x-charts/PieChart';
 import { optimizePortfolio, getAllStockSymbols } from '../../lib/services/portfolio';
 import type { OptimizationMethod, RiskModel, OptimizationResult, StockSymbol, ReturnPredictionMethod } from '../../lib/services/portfolio';
+import { useChartTheme } from '../../theme';
 
 interface PortfolioPieChartProps {
   tickers: string[];
@@ -182,6 +183,7 @@ const getRiskModelInfo = (riskModel: RiskModel) => {
 };
 
 export default function PortfolioPieChart({ tickers }: PortfolioPieChartProps) {
+  const ct = useChartTheme();
   const [method, setMethod] = useState<OptimizationMethod>('ef');
   const [riskModel, setRiskModel] = useState<RiskModel>('sample_cov');
   const [riskFreeRate, setRiskFreeRate] = useState<number>(0.0);
@@ -296,7 +298,7 @@ export default function PortfolioPieChart({ tickers }: PortfolioPieChartProps) {
     <Card>
       <CardContent>
         <Typography variant="h6" gutterBottom>
-          Portfolio Optimization Weights
+          Optimization inputs
         </Typography>
 
         <Box sx={{ mb: 2 }}>
@@ -759,6 +761,7 @@ export default function PortfolioPieChart({ tickers }: PortfolioPieChartProps) {
 
             <Box sx={{ width: '100%', height: 300 }}>
               <PieChart
+              sx={ct.xChartsSx}
                 series={[
                   {
                     data: pieData,

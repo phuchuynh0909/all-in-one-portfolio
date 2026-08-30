@@ -28,6 +28,7 @@ import type {
 } from './charting_library';
 import type { FutureOhlcResponse } from '../services/future';
 import { isVnMarketSession } from '../services/quote';
+import { studyPalette } from './theme';
 
 /** How often the datafeed polls the backend for a fresh series while live. */
 const REALTIME_POLL_MS = 10_000;
@@ -310,7 +311,7 @@ function buildKamaStudy(pine: PineJS, store: FutureStore): CustomIndicator {
       styles: {
         kama: {
           linestyle: LINE_SOLID, linewidth: 2, plottype: PLOT_LINE,
-          trackPrice: false, transparency: 0, visible: true, color: '#f97316',
+          trackPrice: false, transparency: 0, visible: true, color: studyPalette.orange,
         },
       },
       precision: 2,
@@ -359,12 +360,12 @@ function buildBsiStudy(pine: PineJS, store: FutureStore): CustomIndicator {
     inputs: [],
     defaults: {
       styles: {
-        bsi: { linestyle: LINE_SOLID, linewidth: 2, plottype: PLOT_LINE, trackPrice: false, transparency: 0, visible: true, color: '#10a4f4' },
-        qhi: { linestyle: LINE_DASHED, linewidth: 2, plottype: PLOT_LINE, trackPrice: false, transparency: 0, visible: true, color: '#ef5350' },
-        qlo: { linestyle: LINE_DASHED, linewidth: 2, plottype: PLOT_LINE, trackPrice: false, transparency: 0, visible: true, color: '#26a69a' },
+        bsi: { linestyle: LINE_SOLID, linewidth: 2, plottype: PLOT_LINE, trackPrice: false, transparency: 0, visible: true, color: studyPalette.blue },
+        qhi: { linestyle: LINE_DASHED, linewidth: 2, plottype: PLOT_LINE, trackPrice: false, transparency: 0, visible: true, color: studyPalette.red },
+        qlo: { linestyle: LINE_DASHED, linewidth: 2, plottype: PLOT_LINE, trackPrice: false, transparency: 0, visible: true, color: studyPalette.teal },
       },
       bands: [
-        { color: 'rgba(156, 163, 175, 0.4)', linestyle: LINE_SOLID, linewidth: 1, value: 0, visible: true },
+        { color: studyPalette.zeroLine, linestyle: LINE_SOLID, linewidth: 1, value: 0, visible: true },
       ],
       precision: 0,
       inputs: {},

@@ -35,12 +35,9 @@ const PERIODS: { value: TimePeriod; label: string }[] = [
   { value: 'CUSTOM', label: 'Custom' },
 ];
 
-const COLORS = [
-  '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf',
-];
 
 import { type SectorTimeseries, fetchSectorTimeseries } from '../../lib/services/timeseries';
+import { useChartTheme } from '../../theme';
 
 // Helper function to calculate date range based on period
 const getStartDateForPeriod = (period: TimePeriod): string => {
@@ -87,6 +84,7 @@ export default function SectorChart({
 }: {
   level: number;
 }) {
+  const ct = useChartTheme();
   const [data, setData] = useState<SectorTimeseries | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -250,7 +248,7 @@ export default function SectorChart({
       return {
         data: [],
         label: sector,
-        color: COLORS[index % COLORS.length],
+        color: ct.seriesColor(index),
         // curve: 'linear' as const,
         showMark: false,
       };
@@ -267,7 +265,7 @@ export default function SectorChart({
     return {
       data: normalizedData,
       label: sector,
-      color: COLORS[index % COLORS.length],
+      color: ct.seriesColor(index),
       // curve: 'linear' as const,
       showMark: false,
     };
@@ -401,6 +399,7 @@ export default function SectorChart({
         <Box sx={{ width: '100%', height: 500 }}>
           {chartSeries.length > 0 ? (
             <LineChart
+              sx={ct.xChartsSx}
               xAxis={[{
                 data: filteredTimestamps.map((_, index) => index),
                 valueFormatter: (value: number) => {

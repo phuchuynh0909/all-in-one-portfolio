@@ -17,6 +17,7 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { fetchTimeseries } from '../../lib/services/timeseries';
+import { useChartTheme } from '../../theme';
 
 type TimePeriod = 'YTD' | '1M' | '3M' | '6M' | '1Y' | '3Y' | '5Y' | '10Y' | 'ALL' | 'CUSTOM';
 
@@ -41,12 +42,9 @@ const PERIODS: { value: TimePeriod; label: string }[] = [
   { value: 'CUSTOM', label: 'Custom' },
 ];
 
-const COLORS = [
-  '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-  '#8c564b', '#e377c2', '#7f7f7f', '#bcbd22', '#17becf'
-];
 
 export default function StockComparisonChart() {
+  const ct = useChartTheme();
   const [stocksData, setStocksData] = useState<StockData[]>([]);
   const [newSymbol, setNewSymbol] = useState<string>('');
   const [period, setPeriod] = useState<TimePeriod>('6M');
@@ -230,7 +228,7 @@ export default function StockComparisonChart() {
         return {
           data: [],
           label: stock.symbol,
-          color: COLORS[index % COLORS.length],
+          color: ct.seriesColor(index),
           showMark: false,
         };
       }
@@ -247,7 +245,7 @@ export default function StockComparisonChart() {
       return {
         data: normalizedData,
         label: stock.symbol,
-        color: COLORS[index % COLORS.length],
+        color: ct.seriesColor(index),
         showMark: false,
       };
     });
@@ -395,6 +393,7 @@ export default function StockComparisonChart() {
             </Box>
           ) : (
             <LineChart
+              sx={ct.xChartsSx}
               series={chartData.series}
               xAxis={[{
                 data: chartData.timestamps.map(timestamp => new Date(timestamp)),

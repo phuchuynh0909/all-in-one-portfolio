@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   Box,
   Container,
@@ -8,23 +8,20 @@ import {
   DialogContent,
   Typography,
   Link,
-  Button,
   Snackbar,
   Alert,
   Stack,
   Chip,
-  Divider,
-  Drawer,
-  Fab,
 } from '@mui/material';
-import { Notes, ViewList } from '@mui/icons-material';
+import { Article, Notes, Radar, SmartToy, ViewList } from '@mui/icons-material';
 import { syncStock } from '../lib/services/workflows';
 import type { Report } from '../lib/services/report';
-import { getChatNotes, type ChatNoteItem } from '../lib/services/chat';
-import { MarkdownContent } from '../components/chat/MarkdownContent';
 import StockChart from '../components/chart/StockChart';
 import Watchlist from '../components/chart/Watchlist';
 import AnomalyPanel from '../components/chart/AnomalyPanel';
+import NotesPanel from '../components/chart/NotesPanel';
+import ReportsPanel from '../components/chart/ReportsPanel';
+import AgentDecisionsPanel from '../components/chart/AgentDecisionsPanel';
 import ChartSideRail from '../components/chart/ChartSideRail';
 import type { ResolvedWatchList } from '../lib/tv/watchlist';
 
@@ -34,6 +31,10 @@ const SIDE_PANEL_DEFAULT = 320;
 /** Leave the chart at least this much room, whatever the viewport. */
 const CHART_MIN_WIDTH = 480;
 const SIDE_PANEL_WIDTH_KEY = 'chartSidePanelWidth';
+const SIDE_PANEL_KEY = 'chartSidePanel';
+
+/** Which panel the right-hand column is showing, or null when it is closed. */
+type SidePanel = 'watchlist' | 'anomalies' | 'notes' | 'reports' | 'agents';
 
 export default function ChartPage() {
   const [currentSymbol, setCurrentSymbol] = useState('VNINDEX');
@@ -43,9 +44,16 @@ export default function ChartPage() {
   const [snackbar, setSnackbar] = useState<{ open: boolean; message: string; severity: 'success' | 'error' }>({ open: false, message: '', severity: 'success' });
   const chartPaperRef = useRef<HTMLDivElement | null>(null);
   const [chartHeight, setChartHeight] = useState(800);
-  const [notesOpen, setNotesOpen] = useState(false);
-  const [watchlistOpen, setWatchlistOpen] = useState(() => {
-    try { return localStorage.getItem('chartWatchlistOpen') !== '0'; } catch { return true; }
+  const [sidePanel, setSidePanel] = useState<SidePanel | null>(() => {
+    try {
+      const stored = localStorage.getItem(SIDE_PANEL_KEY);
+      const known: SidePanel[] = ['watchlist', 'anomalies', 'notes', 'reports', 'agents'];
+      if (known.includes(stored as SidePanel)) return stored as SidePanel;
+      if (stored === 'none') return null;
+    } catch {
+      /* ignore */
+    }
+    return 'watchlist';
   });
   // Resolved by StockChart once the widget exists: the library's own Watch List
   // when this is a Trading Terminal build, the app-side list otherwise.
@@ -58,28 +66,6 @@ export default function ChartPage() {
       return SIDE_PANEL_DEFAULT;
     }
   });
-  const [notesLoading, setNotesLoading] = useState(false);
-  const [notesError, setNotesError] = useState<string | null>(null);
-  const [notes, setNotes] = useState<ChatNoteItem[]>([]);
-  const [drawerWidth, setDrawerWidth] = useState(560);
-
-  const loadNotes = useCallback(async () => {
-    const sym = currentSymbol.trim().toUpperCase();
-    if (!sym) {
-      setNotes([]);
-      return;
-    }
-    setNotesLoading(true);
-    setNotesError(null);
-    try {
-      const response = await getChatNotes(sym);
-      setNotes(response.notes);
-    } catch (error) {
-      setNotesError(error instanceof Error ? error.message : 'Failed to load notes');
-    } finally {
-      setNotesLoading(false);
-    }
-  }, [currentSymbol]);
 
   useEffect(() => {
     const updateChartHeight = () => {
@@ -109,17 +95,14 @@ export default function ChartPage() {
     }
   };
 
-  const handleToggleWatchlist = () => {
-    setWatchlistOpen((prev) => {
-      const next = !prev;
-      try { localStorage.setItem('chartWatchlistOpen', next ? '1' : '0'); } catch { /* ignore */ }
+  /** Rail items are radio-like: picking one swaps the panel, picking the open
+   *  one closes the column entirely. */
+  const handleSelectSidePanel = (panel: SidePanel) => {
+    setSidePanel((prev) => {
+      const next = prev === panel ? null : panel;
+      try { localStorage.setItem(SIDE_PANEL_KEY, next ?? 'none'); } catch { /* ignore */ }
       return next;
     });
-  };
-
-  const handleOpenNotes = async () => {
-    setNotesOpen(true);
-    await loadNotes();
   };
 
   /** Drag the side panel's left edge. Dragging left widens it, so the delta is
@@ -159,26 +142,9 @@ export default function ChartPage() {
     }
   }, [sidePanelWidth]);
 
-  const handleStartResize = (event: React.MouseEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    const startX = event.clientX;
-    const startWidth = drawerWidth;
-
-    const handleMouseMove = (moveEvent: MouseEvent) => {
-      const delta = moveEvent.clientX - startX;
-      const maxWidth = Math.max(420, window.innerWidth - 32);
-      const nextWidth = Math.min(maxWidth, Math.max(360, startWidth + delta));
-      setDrawerWidth(nextWidth);
-    };
-
-    const handleMouseUp = () => {
-      window.removeEventListener('mousemove', handleMouseMove);
-      window.removeEventListener('mouseup', handleMouseUp);
-    };
-
-    window.addEventListener('mousemove', handleMouseMove);
-    window.addEventListener('mouseup', handleMouseUp);
-  };
+  const canShowWatchlist = Boolean(watchList && !watchList.native);
+  const activePanel: SidePanel | null =
+    sidePanel === 'watchlist' && !canShowWatchlist ? null : sidePanel;
 
   return (
     <Container
@@ -204,8 +170,8 @@ export default function ChartPage() {
             minWidth: 0,
             minHeight: 0,
             position: 'relative',
-            background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
-            border: '1px solid rgba(99, 102, 241, 0.2)',
+            background: 'var(--color-bg-surface)',
+            border: '1px solid var(--color-border-subtle)',
             borderRadius: 2,
           }}
         >
@@ -221,24 +187,23 @@ export default function ChartPage() {
           />
         </Paper>
 
-        {watchlistOpen && watchList && !watchList.native && (
+        {activePanel && (
           <Paper
             sx={{
               width: sidePanelWidth,
               flexShrink: 0,
               p: 1,
               pl: 0,
-              // Match StockChart's measured height instead of stretching to the
-              // row. This also makes the inner 60/40 split resolve properly: a
-              // percentage maxHeight needs a definite height to resolve against,
-              // and a stretched flex item does not reliably provide one.
+              // Match StockChart's measured height rather than stretching to the
+              // row, so the panel's own internal scrolling has a definite height
+              // to resolve against.
               height: chartHeight,
               alignSelf: 'flex-start',
               overflow: 'hidden',
               display: 'flex',
               minHeight: 0,
-              background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
-              border: '1px solid rgba(99, 102, 241, 0.2)',
+              background: 'var(--color-bg-surface)',
+              border: '1px solid var(--color-border-subtle)',
               borderRadius: 2,
             }}
           >
@@ -251,151 +216,76 @@ export default function ChartPage() {
                 cursor: 'col-resize',
                 borderRadius: 1,
                 transition: 'background 120ms',
-                '&:hover': { background: 'rgba(99,102,241,0.45)' },
+                '&:hover': { background: 'var(--color-border-default)' },
               }}
             />
 
-            <Box
-              sx={{
-                flex: 1,
-                minWidth: 0,
-                minHeight: 0,
-                display: 'flex',
-                flexDirection: 'column',
-                gap: 0.5,
-              }}
-            >
-              {/* Content-sized, capped at 60% so a long list scrolls instead of
-                  pushing the anomalies panel out of view. Not `1 1 auto`: that
-                  stretches a short list and leaves dead space beneath it. */}
-              <Box
-                sx={{
-                  flex: '0 1 auto',
-                  minHeight: 0,
-                  maxHeight: '60%',
-                  display: 'flex',
-                  minWidth: 0,
-                }}
-              >
+            {/* One panel at a time — the rail decides which. Both bring their
+                own header, so nothing is added around them here. */}
+            <Box sx={{ flex: 1, minWidth: 0, minHeight: 0, display: 'flex' }}>
+              {activePanel === 'watchlist' && watchList ? (
                 <Watchlist
                   api={watchList.api}
                   activeSymbol={currentSymbol}
                   onSelect={setCurrentSymbol}
                 />
-              </Box>
-
-              <Divider sx={{ borderColor: 'rgba(255,255,255,0.08)', flexShrink: 0 }} />
-
-              {/* Absorbs everything the watchlist does not use. */}
-              <Box sx={{ flex: '1 1 auto', minHeight: 120, display: 'flex', minWidth: 0 }}>
+              ) : null}
+              {activePanel === 'anomalies' ? (
                 <AnomalyPanel symbol={currentSymbol} days={5} />
-              </Box>
+              ) : null}
+              {activePanel === 'notes' ? <NotesPanel symbol={currentSymbol} /> : null}
+              {activePanel === 'reports' ? (
+                <ReportsPanel symbol={currentSymbol} onSelect={setSelectedReport} />
+              ) : null}
+              {activePanel === 'agents' ? <AgentDecisionsPanel symbol={currentSymbol} /> : null}
             </Box>
           </Paper>
         )}
 
         {/* Right-edge rail: one icon per side panel, highlighted while open.
-            The watchlist toggle is dropped when the library shows its own. */}
+            The watchlist toggle is dropped when the library shows its own list. */}
         <ChartSideRail
-          items={watchList && !watchList.native ? [{
-            id: 'watchlist',
-            label: watchlistOpen ? 'Hide watchlist' : 'Show watchlist',
-            icon: <ViewList sx={{ fontSize: 19 }} />,
-            active: watchlistOpen,
-            onClick: handleToggleWatchlist,
-          }] : []}
+          items={[
+            ...(canShowWatchlist
+              ? [{
+                  id: 'watchlist',
+                  label: activePanel === 'watchlist' ? 'Hide watchlist' : 'Watchlist',
+                  icon: <ViewList sx={{ fontSize: 19 }} />,
+                  active: activePanel === 'watchlist',
+                  onClick: () => handleSelectSidePanel('watchlist'),
+                }]
+              : []),
+            {
+              id: 'anomalies',
+              label: activePanel === 'anomalies' ? 'Hide anomalies' : `Anomalies for ${currentSymbol}`,
+              icon: <Radar sx={{ fontSize: 19 }} />,
+              active: activePanel === 'anomalies',
+              onClick: () => handleSelectSidePanel('anomalies'),
+            },
+            {
+              id: 'notes',
+              label: activePanel === 'notes' ? 'Hide notes' : `Notes for ${currentSymbol}`,
+              icon: <Notes sx={{ fontSize: 19 }} />,
+              active: activePanel === 'notes',
+              onClick: () => handleSelectSidePanel('notes'),
+            },
+            {
+              id: 'reports',
+              label: activePanel === 'reports' ? 'Hide reports' : `Reports for ${currentSymbol}`,
+              icon: <Article sx={{ fontSize: 19 }} />,
+              active: activePanel === 'reports',
+              onClick: () => handleSelectSidePanel('reports'),
+            },
+            {
+              id: 'agents',
+              label: activePanel === 'agents' ? 'Hide agent calls' : `Agent calls for ${currentSymbol}`,
+              icon: <SmartToy sx={{ fontSize: 19 }} />,
+              active: activePanel === 'agents',
+              onClick: () => handleSelectSidePanel('agents'),
+            },
+          ]}
         />
       </Box>
-
-      <Fab
-        color="primary"
-        onClick={handleOpenNotes}
-        size="large"
-        sx={{
-          position: 'fixed',
-          right: 24,
-          bottom: 24,
-          zIndex: 1200,
-          width: 50,
-          height: 50,
-        }}
-      >
-        <Notes sx={{ fontSize: 34 }} />
-      </Fab>
-
-      <Drawer
-        anchor="right"
-        open={notesOpen}
-        onClose={() => setNotesOpen(false)}
-        PaperProps={{ sx: { width: { xs: '100%', sm: drawerWidth }, p: 3, position: 'relative' } }}
-      >
-        <Box
-          onMouseDown={handleStartResize}
-          sx={{
-            position: 'absolute',
-            top: 0,
-            bottom: 0,
-            right: 0,
-            width: 10,
-            cursor: 'col-resize',
-            zIndex: 2,
-            display: { xs: 'none', sm: 'block' },
-          }}
-        />
-        <Stack spacing={2} sx={{ height: '100%' }}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Typography variant="h5">Notes ({currentSymbol})</Typography>
-            <Button size="small" onClick={loadNotes} disabled={notesLoading}>
-              {notesLoading ? 'Loading...' : 'Refresh'}
-            </Button>
-          </Stack>
-
-          {notesError ? <Alert severity="error">{notesError}</Alert> : null}
-
-          <Box sx={{ overflowY: 'auto', flex: 1, pr: 0.5 }}>
-            <Stack spacing={1.5}>
-              {!notesLoading && notes.length === 0 ? (
-                <Typography variant="body2" color="text.secondary">
-                  No notes found for this symbol.
-                </Typography>
-              ) : null}
-              {notes.map((note, idx) => (
-                <Paper
-                  key={`${note.created_at}-${idx}`}
-                  sx={{
-                    p: 2,
-                    border: '1px solid',
-                    borderColor: 'rgba(99, 102, 241, 0.25)',
-                    background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.9) 0%, rgba(30, 30, 40, 0.95) 100%)',
-                  }}
-                >
-                  <Typography
-                    variant="body2"
-                    sx={{
-                      color: '#a5b4fc',
-                      fontFamily: "'SF Mono', 'Fira Code', 'Monaco', monospace",
-                      letterSpacing: 0.2,
-                    }}
-                  >
-                    {note.created_at ? new Date(note.created_at).toLocaleString() : 'N/A'}
-                  </Typography>
-                  <Box
-                    sx={{
-                      mt: 1,
-                      color: '#f1f5f9',
-                      fontWeight: 500,
-                      fontSize: '1rem',
-                      lineHeight: 1.75,
-                    }}
-                  >
-                    <MarkdownContent content={note.message} />
-                  </Box>
-                </Paper>
-              ))}
-            </Stack>
-          </Box>
-        </Stack>
-      </Drawer>
 
       {/* Report Dialog */}
       <Dialog
@@ -405,8 +295,8 @@ export default function ChartPage() {
         fullWidth
         PaperProps={{
           sx: {
-            background: 'linear-gradient(135deg, rgba(30, 30, 46, 0.98) 0%, rgba(30, 30, 40, 0.98) 100%)',
-            border: '1px solid rgba(99, 102, 241, 0.3)',
+            background: 'var(--color-bg-surface)',
+            border: '1px solid var(--color-border-default)',
             borderRadius: 2,
           },
         }}
@@ -415,54 +305,54 @@ export default function ChartPage() {
           <>
             <DialogTitle
               sx={{
-                borderBottom: '1px solid rgba(99, 102, 241, 0.2)',
+                borderBottom: '1px solid var(--color-border-subtle)',
                 fontWeight: 600,
-                color: '#e2e8f0',
+                color: 'var(--color-text-primary)',
               }}
             >
               Research Report
             </DialogTitle>
             <DialogContent>
               <Box sx={{ py: 3 }}>
-                <Typography variant="h6" gutterBottom sx={{ color: '#f1f5f9', fontWeight: 600 }}>
+                <Typography variant="h6" gutterBottom sx={{ color: 'var(--color-text-primary)', fontWeight: 600 }}>
                   {selectedReport.tenbaocao}
                 </Typography>
                 <Stack spacing={1.5} sx={{ mt: 2 }}>
                   <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Typography variant="body2" sx={{ color: '#6b7280', minWidth: 80 }}>
+                    <Typography variant="body2" sx={{ color: 'var(--color-text-tertiary)', minWidth: 80 }}>
                       Symbol:
                     </Typography>
                     <Chip
                       label={selectedReport.mack}
                       size="small"
                       sx={{
-                        bgcolor: 'rgba(99, 102, 241, 0.15)',
-                        color: '#a5b4fc',
+                        bgcolor: 'var(--color-border-subtle)',
+                        color: 'var(--color-accent)',
                         fontWeight: 500,
                       }}
                     />
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Typography variant="body2" sx={{ color: '#6b7280', minWidth: 80 }}>
+                    <Typography variant="body2" sx={{ color: 'var(--color-text-tertiary)', minWidth: 80 }}>
                       Source:
                     </Typography>
-                    <Typography variant="body2" sx={{ color: '#e2e8f0' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--color-text-primary)' }}>
                       {selectedReport.nguon}
                     </Typography>
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Typography variant="body2" sx={{ color: '#6b7280', minWidth: 80 }}>
+                    <Typography variant="body2" sx={{ color: 'var(--color-text-tertiary)', minWidth: 80 }}>
                       Date:
                     </Typography>
-                    <Typography variant="body2" sx={{ color: '#e2e8f0' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--color-text-primary)' }}>
                       {selectedReport.ngaykn ? new Date(selectedReport.ngaykn).toLocaleDateString() : 'N/A'}
                     </Typography>
                   </Box>
                   <Box sx={{ display: 'flex', gap: 1 }}>
-                    <Typography variant="body2" sx={{ color: '#6b7280', minWidth: 80 }}>
+                    <Typography variant="body2" sx={{ color: 'var(--color-text-tertiary)', minWidth: 80 }}>
                       Sector:
                     </Typography>
-                    <Typography variant="body2" sx={{ color: '#e2e8f0' }}>
+                    <Typography variant="body2" sx={{ color: 'var(--color-text-primary)' }}>
                       {selectedReport.rsnganh || 'N/A'}
                     </Typography>
                   </Box>
@@ -473,12 +363,12 @@ export default function ChartPage() {
                     target="_blank"
                     rel="noopener noreferrer"
                     sx={{
-                      color: '#6366f1',
+                      color: 'var(--color-accent)',
                       fontWeight: 500,
                       textDecoration: 'none',
                       '&:hover': {
                         textDecoration: 'underline',
-                        color: '#818cf8',
+                        color: 'var(--color-accent)',
                       },
                     }}
                   >
@@ -501,9 +391,9 @@ export default function ChartPage() {
           onClose={() => setSnackbar({ ...snackbar, open: false })}
           severity={snackbar.severity}
           sx={{
-            bgcolor: snackbar.severity === 'success' ? 'rgba(34, 197, 94, 0.15)' : 'rgba(239, 68, 68, 0.15)',
-            color: snackbar.severity === 'success' ? '#22c55e' : '#ef4444',
-            border: `1px solid ${snackbar.severity === 'success' ? 'rgba(34, 197, 94, 0.3)' : 'rgba(239, 68, 68, 0.3)'}`,
+            bgcolor: snackbar.severity === 'success' ? 'var(--color-long-subtle)' : 'var(--color-short-subtle)',
+            color: snackbar.severity === 'success' ? 'var(--color-long)' : 'var(--color-short)',
+            border: `1px solid ${snackbar.severity === 'success' ? 'var(--color-long)' : 'var(--color-short)'}`,
           }}
         >
           {snackbar.message}

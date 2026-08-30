@@ -718,8 +718,8 @@ export default function BacktestChart({
             {crosshairData && (
               <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center', ml: 1 }}>
                 <OHLCLabel label="O" value={crosshairData.open} />
-                <OHLCLabel label="H" value={crosshairData.high} color="#22c55e" />
-                <OHLCLabel label="L" value={crosshairData.low} color="#ef4444" />
+                <OHLCLabel label="H" value={crosshairData.high} color={ct.up} />
+                <OHLCLabel label="L" value={crosshairData.low} color={ct.down} />
                 <OHLCLabel label="C" value={crosshairData.close} />
                 <Box
                   sx={{
@@ -779,33 +779,33 @@ export default function BacktestChart({
           </Box>
           <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap' }}>
             <LegendItem
-              color="#3b82f6"
+              color={ct.seriesColor(5)}
               label="SMA(10)"
               visible={seriesVisibility.sma10}
               onClick={() => toggleSeries('sma10')}
             />
             <LegendItem
-              color="#f59e0b"
+              color={ct.seriesColor(0)}
               label="SMA(20)"
               visible={seriesVisibility.sma20}
               onClick={() => toggleSeries('sma20')}
             />
             <LegendItem
-              color="#10b981"
+              color={ct.seriesColor(3)}
               label="ATR Stop"
               dashed
               visible={seriesVisibility.atrTrailing}
               onClick={() => toggleSeries('atrTrailing')}
             />
             <LegendItem
-              color="#f472b6"
+              color={ct.seriesColor(4)}
               label="VWAP High"
               dashed
               visible={seriesVisibility.vwapHighest}
               onClick={() => toggleSeries('vwapHighest')}
             />
             <LegendItem
-              color="#38bdf8"
+              color={ct.seriesColor(1)}
               label="VWAP Low"
               dashed
               visible={seriesVisibility.vwapLowest}

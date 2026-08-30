@@ -40,15 +40,15 @@ import {
   type TradeFlowWindow,
 } from '../../lib/services/tradeFlow';
 
-const BUY = '#26a69a';
-const SELL = '#ef5350';
-const NEUTRAL = '#9e9e9e';
+const BUY = 'var(--color-long)';
+const SELL = 'var(--color-short)';
+const NEUTRAL = 'var(--color-flat)';
 
 // Default cell colour. Explicit white rather than `inherit`, because the app
 // theme is `mode: 'light'` while this panel sits on a dark gradient Paper — an
 // inherited `text.primary` resolves to near-black and disappears. Columns that
 // carry direction (Vol, Imbal, the returns) override this with BUY/SELL.
-const TEXT = '#ffffff';
+const TEXT = 'var(--color-text-primary)';
 
 /** How often to re-score while the panel is mounted. */
 const POLL_MS = 30_000;
@@ -100,7 +100,7 @@ function isoDaysAgo(days: number): string {
 const cellSx = {
   py: 0.35,
   px: 0.75,
-  borderColor: 'rgba(255,255,255,0.06)',
+  borderColor: 'var(--color-border-subtle)',
   fontSize: 11,
   whiteSpace: 'nowrap',
 } as const;
@@ -333,8 +333,8 @@ export default function AnomalyPanel({
                 height: 15,
                 fontSize: 9,
                 '& .MuiChip-label': { px: 0.5 },
-                bgcolor: 'rgba(99,102,241,0.25)',
-                color: '#a5b4fc',
+                bgcolor: 'action.selected',
+                color: 'primary.main',
               }}
             />
           </Tooltip>
