@@ -2,5 +2,6 @@
 from __future__ import annotations
 
 from app.services.experiments.schema import SCHEMA_VERSION
+from app.services.experiments.store import ExperimentStore, RunHandle
 
-__all__ = ["SCHEMA_VERSION"]
+__all__ = ["SCHEMA_VERSION", "ExperimentStore", "RunHandle"]
