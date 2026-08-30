@@ -1,3 +1,4 @@
+import { API_BASE_URL } from '../api';
 export interface MarkovKamaData {
   regime_code: number[];
   low_var_prob: (number | null)[];
@@ -43,7 +44,7 @@ export const fetchRegime = async (
   params: RegimeRequest = {},
 ): Promise<RegimeResponse> => {
   const response = await fetch(
-    `${import.meta.env.VITE_API_BASE_URL}/regime/${symbol}`,
+    `${API_BASE_URL}/regime/${symbol}`,
     {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

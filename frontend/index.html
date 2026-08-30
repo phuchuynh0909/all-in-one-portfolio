@@ -1,9 +1,33 @@
-<html lang="en">
+<!doctype html>
+<html lang="en" data-theme="dark">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Investment Tracker</title>
+    <meta name="description" content="Quantitative research terminal: portfolio tracking, strategy backtesting, market regime detection and multi-agent trade analysis." />
+    <meta name="theme-color" content="#0D1117" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap"
+      rel="stylesheet"
+    />
+
+    <title>Quant Terminal</title>
+
+    <script>
+      // Set the stored colour mode before first paint to avoid a flash of the
+      // wrong theme. Mirrors resolveInitialMode() in src/theme/ColorModeContext.
+      (function () {
+        try {
+          var m = localStorage.getItem('aiop.color-mode');
+          document.documentElement.setAttribute('data-theme', m === 'light' ? 'light' : 'dark');
+        } catch (e) {
+          /* storage blocked — keep the dark default */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

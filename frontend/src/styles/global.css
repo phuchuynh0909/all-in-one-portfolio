@@ -1,0 +1,59 @@
+/**
+ * Global base styles.
+ *
+ * The design system lives in `src/theme/tokens.ts` and reaches the DOM as CSS
+ * custom properties via `applyCssVars()`. This file only holds the handful of
+ * rules that must exist before React mounts, plus resets MUI's CssBaseline
+ * does not cover. Use `var(--color-*)` here — never a literal colour.
+ */
+
+:root {
+  /* Pre-boot fallbacks so the first paint is not white. applyCssVars()
+     overwrites these with the full token set as soon as React mounts. */
+  --color-bg-canvas: #0d1117;
+  --color-text-primary: #e6e9ef;
+  color-scheme: dark;
+}
+
+:root[data-theme='light'] {
+  --color-bg-canvas: #f5f6f8;
+  --color-text-primary: #0d1117;
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-bg-canvas);
+  color: var(--color-text-primary);
+}
+
+#root {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+}
+
+/* Tabular numerics for anything that lines up in a column. */
+.mono,
+[data-numeric] {
+  font-family: var(--font-family-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Respect reduced-motion for every animation in the app. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

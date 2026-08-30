@@ -12,15 +12,12 @@ import {
   Typography,
   Tabs,
   Tab,
-  Collapse,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
   ExpandLess as ExpandLessIcon,
-  ChevronRight as ChevronRightIcon,
 } from '@mui/icons-material';
-import { FinancialStatementResponse, FinancialStatementItem } from '../../lib/services/financial';
-
+import type { FinancialStatementResponse, FinancialStatementItem } from '../../lib/services/financial';
 interface FinancialStatementsTableProps {
   data: FinancialStatementResponse;
 }
@@ -179,7 +176,7 @@ export const FinancialStatementsTable: React.FC<FinancialStatementsTableProps> =
           variant="scrollable"
           scrollButtons="auto"
         >
-          {statements.map((statement, index) => (
+          {statements.map((statement) => (
             <Tab 
               key={statement.statement_type} 
               label={statement.title} 

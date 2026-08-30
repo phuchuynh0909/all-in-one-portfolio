@@ -8,7 +8,7 @@ import {
   Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import {
-  DEFAULT_QUANTILES, getFeatureDiscrimination, getOutcomeBuckets,
+  DEFAULT_QUANTILES, getFeatureDiscrimination, getOutcomeBuckets, hasFeatures,
 } from '../../lib/experiments/queries';
 import type { DiscriminationRow, RunMeta, TradeRow } from '../../lib/experiments/types';
 
@@ -36,10 +36,11 @@ export default function AttributionTab({ runs }: { runs: RunMeta[] }) {
     queryFn: () => getOutcomeBuckets(runs, DEFAULT_QUANTILES),
     enabled: runs.length > 0,
   });
+  const featured = hasFeatures(runs);
   const disc = useQuery({
     queryKey: ['experiments', 'pooled-discrimination', key],
     queryFn: () => getFeatureDiscrimination(runs, DEFAULT_QUANTILES),
-    enabled: runs.length > 0,
+    enabled: runs.length > 0 && featured,
   });
 
   const bucketCounts = useMemo(() => {
@@ -82,21 +83,31 @@ export default function AttributionTab({ runs }: { runs: RunMeta[] }) {
 
       <Card><CardContent>
         <Typography variant="subtitle2" gutterBottom>Feature discrimination</Typography>
-        {lowCoverage.length > 0 && (
+        {!featured && (
+          <Alert severity="info">
+            No entry features were logged for {runs.length === 1 ? 'this run' : 'these runs'}.
+            Pass <code>features=</code> to <code>log_experiment</code> — a DataFrame keyed on
+            (<code>symbol</code>, <code>entry_dt</code>) with one column per indicator value at
+            entry — to rank which of them separates the worst trades from the best.
+          </Alert>
+        )}
+        {featured && lowCoverage.length > 0 && (
           <Alert severity="warning" sx={{ mb: 1 }}>
             {lowCoverage.length} feature(s) are present on under half the pooled trades;
             read their separation with care.
           </Alert>
         )}
         {disc.error && <Alert severity="error">{(disc.error as Error).message}</Alert>}
-        <Box sx={{ height: 420 }}>
-          <DataGrid
-            rows={((disc.data ?? []) as DiscriminationRow[]).map((r, i) => ({ id: i, ...r }))}
-            columns={DISC_COLUMNS}
-            loading={disc.isLoading}
-            density="compact"
-          />
-        </Box>
+        {featured && (
+          <Box sx={{ height: 420 }}>
+            <DataGrid
+              rows={((disc.data ?? []) as DiscriminationRow[]).map((r, i) => ({ id: i, ...r }))}
+              columns={DISC_COLUMNS}
+              loading={disc.isLoading}
+              density="compact"
+            />
+          </Box>
+        )}
       </CardContent></Card>
     </Stack>
   );

@@ -8,7 +8,18 @@ import {
   BaselineSeries,
   createSeriesMarkers,
 } from 'lightweight-charts';
-import type { SeriesMarker, UTCTimestamp, IChartApi, ISeriesApi } from 'lightweight-charts';
+import { alpha } from '@mui/material/styles';
+import { useChartTheme } from '../../theme';
+import { StatRow, StatTile } from '../ui';
+import type {
+  SeriesMarker,
+  UTCTimestamp,
+  IChartApi,
+  ISeriesApi,
+  ISeriesMarkersPluginApi,
+  MouseEventParams,
+  Time,
+} from 'lightweight-charts';
 import {
   fetchTimeseries,
   formatIndicatorData,
@@ -159,6 +170,7 @@ export default function BacktestChart({
   trades,
   initialCash = 100,
 }: BacktestChartProps) {
+  const ct = useChartTheme();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
@@ -172,7 +184,7 @@ export default function BacktestChart({
   const atrTrailingSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const vwapHighestSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const vwapLowestSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
-  const markersRef = useRef<ReturnType<typeof createSeriesMarkers> | null>(null);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -246,40 +258,15 @@ export default function BacktestChart({
     const chart = createChart(chartContainerRef.current, {
       height: chartConfig.totalHeight,
       width: chartContainerRef.current.clientWidth,
-      layout: {
-        background: { color: '#0a0a0f' },
-        textColor: '#9ca3af',
-        fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      },
-      grid: {
-        vertLines: { color: 'rgba(42, 46, 57, 0.3)' },
-        horzLines: { color: 'rgba(42, 46, 57, 0.3)' },
-      },
-      crosshair: {
-        mode: 0,
-        vertLine: {
-          color: '#6366f1',
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#6366f1',
-        },
-        horzLine: {
-          color: '#6366f1',
-          width: 1,
-          style: 2,
-          labelBackgroundColor: '#6366f1',
-        },
-      },
+      ...ct.lightweightChartOptions,
+      crosshair: { ...ct.lightweightChartOptions.crosshair, mode: 0 },
       rightPriceScale: {
-        borderColor: 'rgba(42, 46, 57, 0.5)',
+        borderColor: ct.border,
         scaleMargins: { top: 0.05, bottom: 0.15 },
       },
-      leftPriceScale: {
-        visible: false,
-        borderColor: 'rgba(42, 46, 57, 0.5)',
-      },
+      leftPriceScale: { visible: false, borderColor: ct.border },
       timeScale: {
-        borderColor: 'rgba(42, 46, 57, 0.5)',
+        ...ct.lightweightChartOptions.timeScale,
         timeVisible: true,
         secondsVisible: false,
       },
@@ -289,18 +276,15 @@ export default function BacktestChart({
     // PANE 0: Main OHLC Chart (largest panel)
     // ═══════════════════════════════════════════════════════════════════════
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
+      ...ct.candlestick,
       borderVisible: false,
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
       priceScaleId: 'right',
       priceLineVisible: false,
     });
 
     // SMA lines on main chart
     const sma10Series = chart.addSeries(LineSeries, {
-      color: '#3b82f6',
+      color: ct.seriesColor(5),
       lineWidth: 1,
       title: 'SMA(10)',
       priceScaleId: 'right',
@@ -310,7 +294,7 @@ export default function BacktestChart({
     });
 
     const sma20Series = chart.addSeries(LineSeries, {
-      color: '#f59e0b',
+      color: ct.seriesColor(0),
       lineWidth: 1,
       title: 'SMA(20)',
       priceScaleId: 'right',
@@ -321,7 +305,7 @@ export default function BacktestChart({
 
     // ATR Trailing Stop line on main chart
     const atrTrailingSeries = chart.addSeries(LineSeries, {
-      color: '#10b981',
+      color: ct.seriesColor(3),
       lineWidth: 2,
       lineStyle: 2, // Dashed
       title: 'ATR Stop',
@@ -333,7 +317,7 @@ export default function BacktestChart({
 
     // VWAP Highest line (resistance)
     const vwapHighestSeries = chart.addSeries(LineSeries, {
-      color: '#f472b6', // Pink
+      color: ct.seriesColor(4),
       lineWidth: 1,
       lineStyle: 2, // Dashed
       title: 'VWAP High',
@@ -345,7 +329,7 @@ export default function BacktestChart({
 
     // VWAP Lowest line (support)
     const vwapLowestSeries = chart.addSeries(LineSeries, {
-      color: '#38bdf8', // Light blue
+      color: ct.seriesColor(1),
       lineWidth: 1,
       lineStyle: 2, // Dashed
       title: 'VWAP Low',
@@ -357,7 +341,7 @@ export default function BacktestChart({
 
     // Volume overlay on main chart (bottom portion)
     const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: '#6366f1',
+      color: ct.accent,
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     });
@@ -372,12 +356,12 @@ export default function BacktestChart({
     // ═══════════════════════════════════════════════════════════════════════
     const equitySeries = chart.addSeries(BaselineSeries, {
       baseValue: { type: 'price', price: 0 },
-      topLineColor: '#22c55e',
-      topFillColor1: 'rgba(34, 197, 94, 0.28)',
-      topFillColor2: 'rgba(34, 197, 94, 0.05)',
-      bottomLineColor: '#ef4444',
-      bottomFillColor1: 'rgba(239, 68, 68, 0.05)',
-      bottomFillColor2: 'rgba(239, 68, 68, 0.28)',
+      topLineColor: ct.up,
+      topFillColor1: alpha(ct.up, 0.28),
+      topFillColor2: alpha(ct.up, 0.05),
+      bottomLineColor: ct.down,
+      bottomFillColor1: alpha(ct.down, 0.05),
+      bottomFillColor2: alpha(ct.down, 0.28),
       lineWidth: 2,
       priceScaleId: 'right',
       title: 'Equity %',
@@ -388,7 +372,7 @@ export default function BacktestChart({
     }, 1); // Pane 1
 
     const peakSeries = chart.addSeries(LineSeries, {
-      color: '#06b6d4',
+      color: ct.seriesColor(1),
       lineWidth: 1,
       lineStyle: 2,
       priceScaleId: 'right',
@@ -409,10 +393,7 @@ export default function BacktestChart({
     vwapLowestSeriesRef.current = vwapLowestSeries;
 
     // Subscribe to crosshair move for OHLC display
-    const handleCrosshairMove = (param: {
-      time?: UTCTimestamp;
-      seriesData: Map<unknown, unknown>;
-    }) => {
+    const handleCrosshairMove = (param: MouseEventParams<Time>) => {
       if (!param.time || !param.seriesData) {
         setCrosshairData(null);
         return;
@@ -459,6 +440,38 @@ export default function BacktestChart({
       }
     };
   }, []);
+
+  // Re-theme in place when the colour mode flips. Rebuilding the chart here
+  // would drop the loaded series data, so options are applied instead.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+
+    chart.applyOptions({
+      ...ct.lightweightChartOptions,
+      crosshair: { ...ct.lightweightChartOptions.crosshair, mode: 0 },
+      rightPriceScale: { borderColor: ct.border },
+      leftPriceScale: { visible: false, borderColor: ct.border },
+      timeScale: { ...ct.lightweightChartOptions.timeScale, timeVisible: true },
+    });
+
+    candlestickSeriesRef.current?.applyOptions(ct.candlestick);
+    volumeSeriesRef.current?.applyOptions({ color: ct.accent });
+    sma10SeriesRef.current?.applyOptions({ color: ct.seriesColor(5) });
+    sma20SeriesRef.current?.applyOptions({ color: ct.seriesColor(0) });
+    atrTrailingSeriesRef.current?.applyOptions({ color: ct.seriesColor(3) });
+    vwapHighestSeriesRef.current?.applyOptions({ color: ct.seriesColor(4) });
+    vwapLowestSeriesRef.current?.applyOptions({ color: ct.seriesColor(1) });
+    peakSeriesRef.current?.applyOptions({ color: ct.seriesColor(1) });
+    equitySeriesRef.current?.applyOptions({
+      topLineColor: ct.up,
+      topFillColor1: alpha(ct.up, 0.28),
+      topFillColor2: alpha(ct.up, 0.05),
+      bottomLineColor: ct.down,
+      bottomFillColor1: alpha(ct.down, 0.05),
+      bottomFillColor2: alpha(ct.down, 0.28),
+    });
+  }, [ct]);
 
   // Load data and update chart
   useEffect(() => {
@@ -521,8 +534,8 @@ export default function BacktestChart({
           value: result.timeseries.volume[i],
           color:
             result.timeseries.close[i] >= result.timeseries.open[i]
-              ? 'rgba(34, 197, 94, 0.5)'
-              : 'rgba(239, 68, 68, 0.5)',
+              ? alpha(ct.up, 0.5)
+              : alpha(ct.down, 0.5),
         }));
 
         // Calculate SMAs client-side (API only supports one SMA per call)
@@ -575,7 +588,7 @@ export default function BacktestChart({
           const entryMarker: SeriesMarker<UTCTimestamp> = {
             time: formatChartTime(trade.entryTimestamp),
             position: 'belowBar',
-            color: trade.direction === 'Long' ? '#22c55e' : '#ef4444',
+            color: trade.direction === 'Long' ? ct.up : ct.down,
             shape: 'arrowUp',
             text: `BUY @${trade.avgEntryPrice.toFixed(2)}`,
           };
@@ -583,7 +596,7 @@ export default function BacktestChart({
           const exitMarker: SeriesMarker<UTCTimestamp> = {
             time: formatChartTime(trade.exitTimestamp),
             position: 'aboveBar',
-            color: trade.return_pct >= 0 ? '#22c55e' : '#ef4444',
+            color: trade.return_pct >= 0 ? ct.up : ct.down,
             shape: 'arrowDown',
             text: `SELL ${trade.return_pct >= 0 ? '+' : ''}${(trade.return_pct * 100).toFixed(1)}%`,
           };
@@ -626,58 +639,38 @@ export default function BacktestChart({
   return (
     <Box sx={{ width: '100%', position: 'relative' }}>
       {/* Stats Header */}
-      <Box
-        sx={{
-          display: 'flex',
-          gap: 3,
-          mb: 2,
-          p: 2,
-          background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(139, 92, 246, 0.05) 100%)',
-          borderRadius: 2,
-          border: '1px solid rgba(99, 102, 241, 0.2)',
-          flexWrap: 'wrap',
-        }}
-      >
-        <StatBox
-          label="Total Return"
-          value={`${stats.totalReturn >= 0 ? '+' : ''}${stats.totalReturn.toFixed(1)}%`}
-          color={stats.totalReturn >= 0 ? '#22c55e' : '#ef4444'}
-        />
-        <StatBox
-          label="Peak"
-          value={`${stats.peakReturn.toFixed(1)}%`}
-          color="#06b6d4"
-        />
-        <StatBox
-          label="Max Drawdown"
-          value={`-${stats.maxDrawdown.toFixed(1)}%`}
-          color="#ef4444"
-        />
-        <StatBox
-          label="Win Rate"
-          value={`${stats.winRate.toFixed(1)}%`}
-          color={stats.winRate >= 50 ? '#22c55e' : '#f59e0b'}
-        />
-        <StatBox
-          label="Trades"
-          value={stats.totalTrades.toString()}
-          color="#9ca3af"
-        />
-        <StatBox
-          label="Avg Trade"
-          value={`${stats.avgTrade >= 0 ? '+' : ''}${stats.avgTrade.toFixed(2)}%`}
-          color={stats.avgTrade >= 0 ? '#22c55e' : '#ef4444'}
-        />
-        <StatBox
-          label="Best Trade"
-          value={`+${stats.bestTrade.toFixed(1)}%`}
-          color="#22c55e"
-        />
-        <StatBox
-          label="Worst Trade"
-          value={`${stats.worstTrade.toFixed(1)}%`}
-          color="#ef4444"
-        />
+      <Box sx={{ mb: 2 }}>
+        <StatRow min={130}>
+        <StatTile
+            label="Total return"
+            value={stats.totalReturn}
+            format="percent"
+            decimals={1}
+            signed
+            showSign
+            accent={stats.totalReturn >= 0 ? 'long' : 'short'}
+          />
+        <StatTile label="Peak" value={stats.peakReturn} format="percent" decimals={1} />
+        <StatTile
+            label="Max drawdown"
+            value={-Math.abs(stats.maxDrawdown)}
+            format="percent"
+            decimals={1}
+            signed
+            accent="short"
+          />
+        <StatTile
+            label="Win rate"
+            value={stats.winRate}
+            format="percent"
+            decimals={1}
+            accent={stats.winRate >= 50 ? 'long' : 'warning'}
+          />
+        <StatTile label="Trades" value={stats.totalTrades} decimals={0} />
+        <StatTile label="Avg trade" value={stats.avgTrade} format="percent" signed showSign />
+        <StatTile label="Best trade" value={stats.bestTrade} format="percent" decimals={1} signed showSign />
+        <StatTile label="Worst trade" value={stats.worstTrade} format="percent" decimals={1} signed showSign />
+        </StatRow>
       </Box>
 
       {/* Chart Container */}
@@ -685,10 +678,11 @@ export default function BacktestChart({
         sx={{
           height: chartConfig.totalHeight,
           position: 'relative',
-          bgcolor: '#0a0a0f',
+          bgcolor: 'surface.inset',
           borderRadius: 2,
           overflow: 'hidden',
-          border: '1px solid rgba(42, 46, 57, 0.5)',
+          border: 1,
+          borderColor: 'line.subtle',
         }}
       >
         {/* Legend */}
@@ -701,7 +695,9 @@ export default function BacktestChart({
             display: 'flex',
             flexDirection: 'column',
             gap: 1,
-            bgcolor: 'rgba(10, 10, 15, 0.85)',
+            bgcolor: 'surface.overlay',
+            border: 1,
+            borderColor: 'line.subtle',
             p: 1.5,
             borderRadius: 1,
           }}
@@ -711,8 +707,8 @@ export default function BacktestChart({
             sx={{
               fontSize: 18,
               fontWeight: 600,
-              color: '#fff',
-              fontFamily: "'JetBrains Mono', monospace",
+              color: 'text.primary',
+              fontFamily: 'var(--font-family-mono)',
             }}
           >
             {symbol}
@@ -734,18 +730,18 @@ export default function BacktestChart({
                     py: 0.25,
                     borderRadius: 0.5,
                     bgcolor: crosshairData.changePercent !== null && crosshairData.changePercent >= 0
-                      ? 'rgba(34, 197, 94, 0.2)'
-                      : 'rgba(239, 68, 68, 0.2)',
+                      ? 'market.longSubtle'
+                      : 'market.shortSubtle',
                   }}
                 >
                   <Typography
                     sx={{
                       fontSize: 12,
                       fontWeight: 600,
-                      fontFamily: "'JetBrains Mono', monospace",
+                      fontFamily: 'var(--font-family-mono)',
                       color: crosshairData.changePercent !== null && crosshairData.changePercent >= 0
-                        ? '#22c55e'
-                        : '#ef4444',
+                        ? 'market.long'
+                        : 'market.short',
                     }}
                   >
                     {crosshairData.change !== null
@@ -756,10 +752,10 @@ export default function BacktestChart({
                     sx={{
                       fontSize: 12,
                       fontWeight: 600,
-                      fontFamily: "'JetBrains Mono', monospace",
+                      fontFamily: 'var(--font-family-mono)',
                       color: crosshairData.changePercent !== null && crosshairData.changePercent >= 0
-                        ? '#22c55e'
-                        : '#ef4444',
+                        ? 'market.long'
+                        : 'market.short',
                     }}
                   >
                     ({crosshairData.changePercent !== null
@@ -771,8 +767,8 @@ export default function BacktestChart({
                   <Typography
                     sx={{
                       fontSize: 11,
-                      color: '#6b7280',
-                      fontFamily: "'JetBrains Mono', monospace",
+                      color: 'text.tertiary',
+                      fontFamily: 'var(--font-family-mono)',
                     }}
                   >
                     Vol: {formatVolume(crosshairData.volume)}
@@ -816,7 +812,7 @@ export default function BacktestChart({
               onClick={() => toggleSeries('vwapLowest')}
             />
           </Box>
-          <Typography sx={{ fontSize: 10, color: '#6b7280', mt: 0.5 }}>
+          <Typography sx={{ fontSize: 10, color: 'text.tertiary', mt: 0.5 }}>
             Panel 1: Equity Curve
           </Typography>
         </Box>
@@ -833,7 +829,7 @@ export default function BacktestChart({
               top: '50%',
               left: '50%',
               transform: 'translate(-50%, -50%)',
-              bgcolor: 'rgba(10, 10, 15, 0.9)',
+              bgcolor: 'surface.overlay',
               p: 3,
               borderRadius: 2,
               display: 'flex',
@@ -841,8 +837,8 @@ export default function BacktestChart({
               gap: 2,
             }}
           >
-            <CircularProgress size={24} sx={{ color: '#6366f1' }} />
-            <Typography sx={{ color: '#9ca3af' }}>Loading chart...</Typography>
+            <CircularProgress size={24} />
+            <Typography sx={{ color: 'text.secondary' }}>Loading chart…</Typography>
           </Box>
         )}
 
@@ -853,7 +849,7 @@ export default function BacktestChart({
               top: '50%',
               left: '50%',
               transform: 'translate(-50%, -50%)',
-              bgcolor: 'rgba(239, 68, 68, 0.1)',
+              bgcolor: 'error.main',
               border: '1px solid #ef4444',
               p: 3,
               borderRadius: 2,
@@ -868,42 +864,6 @@ export default function BacktestChart({
 }
 
 // Helper component for stat boxes
-function StatBox({
-  label,
-  value,
-  color,
-}: {
-  label: string;
-  value: string;
-  color: string;
-}) {
-  return (
-    <Box sx={{ textAlign: 'center', minWidth: 80 }}>
-      <Typography
-        sx={{
-          fontSize: 11,
-          color: '#6b7280',
-          textTransform: 'uppercase',
-          letterSpacing: 0.5,
-          mb: 0.5,
-        }}
-      >
-        {label}
-      </Typography>
-      <Typography
-        sx={{
-          fontSize: 16,
-          fontWeight: 600,
-          color,
-          fontFamily: "'JetBrains Mono', monospace",
-        }}
-      >
-        {value}
-      </Typography>
-    </Box>
-  );
-}
-
 // Helper component for legend items with toggle functionality
 function LegendItem({
   color,
@@ -946,7 +906,7 @@ function LegendItem({
       <Typography
         sx={{
           fontSize: 11,
-          color: visible ? '#9ca3af' : '#6b7280',
+          color: visible ? 'text.secondary' : 'text.tertiary',
           textDecoration: visible ? 'none' : 'line-through',
         }}
       >
@@ -960,7 +920,7 @@ function LegendItem({
 function OHLCLabel({
   label,
   value,
-  color = '#9ca3af',
+  color = 'text.secondary',
 }: {
   label: string;
   value: number | null;
@@ -971,8 +931,8 @@ function OHLCLabel({
       <Typography
         sx={{
           fontSize: 11,
-          color: '#6b7280',
-          fontFamily: "'JetBrains Mono', monospace",
+          color: 'text.tertiary',
+          fontFamily: 'var(--font-family-mono)',
         }}
       >
         {label}:
@@ -982,7 +942,7 @@ function OHLCLabel({
           fontSize: 12,
           fontWeight: 500,
           color,
-          fontFamily: "'JetBrains Mono', monospace",
+          fontFamily: 'var(--font-family-mono)',
         }}
       >
         {value !== null ? value.toFixed(2) : '-'}

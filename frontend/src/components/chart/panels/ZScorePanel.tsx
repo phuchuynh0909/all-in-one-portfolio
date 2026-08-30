@@ -89,7 +89,8 @@ export default function ZScorePanel({ chart, data, threshold = 2.0 }: ZScorePane
 
         const bsiNormData = data.timestamps
             .map((ts, i) => {
-                const value = data.indicators.bsi_norm[i];
+                // The API exposes `bsi`; there is no `bsi_norm` field.
+                const value = data.indicators.bsi[i];
                 if (value === null || value === undefined) return null;
                 return {
                     time: (new Date(ts).getTime() / 1000) as UTCTimestamp,

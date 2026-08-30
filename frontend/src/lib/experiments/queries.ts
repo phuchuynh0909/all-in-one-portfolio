@@ -82,9 +82,19 @@ export function getOutcomeBuckets(
   return run<TradeRow>(sql, runs);
 }
 
+/** True when at least one pooled run logged entry features. */
+export function hasFeatures(runs: RunMeta[]): boolean {
+  return runs.some((r) => (r.feature_columns ?? []).length > 0);
+}
+
 export function getFeatureDiscrimination(
   runs: RunMeta[], quantiles: number[] = DEFAULT_QUANTILES,
 ): Promise<DiscriminationRow[]> {
+  // UNPIVOT ... ON COLUMNS('^feat_') is a hard Binder Error when nothing
+  // matches, so a run logged without features must skip the query rather than
+  // surface a SQL error. Runs that mix featured and unfeatured pool fine:
+  // union_by_name fills NULLs and the coverage column reports the shortfall.
+  if (!hasFeatures(runs)) return Promise.resolve([]);
   const sql = withQuantiles(
     featureDiscriminationSql.replace(/trades_src/g, parquetList(runs, 'trades')), quantiles,
   );

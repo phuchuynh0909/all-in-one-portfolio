@@ -8,15 +8,14 @@ import {
   InputLabel, 
   Select, 
   MenuItem, 
-  Chip,
   Autocomplete,
   TextField,
   Paper
 } from '@mui/material';
 import { FinancialStatementsTable } from '../components/financial/FinancialStatementsTable';
 import { DataCrawler } from '../components/financial/DataCrawler';
-import { financialApi, CompanyWithFinancialData } from '../lib/services/financial';
-
+import { financialApi } from '../lib/services/financial';
+import type { CompanyWithFinancialData } from '../lib/services/financial';
 interface FinancialStatementData {
   company_ticker: string;
   company_name: string;

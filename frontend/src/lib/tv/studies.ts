@@ -19,6 +19,7 @@
  */
 import { tvStore, indexAtTimeMs } from './store';
 import type { CustomIndicator, IContext, PineJS, StudyInputValue } from './charting_library';
+import { studyPalette } from './theme';
 
 // LineStudyPlotStyle
 const PLOT_LINE = 0;
@@ -138,12 +139,11 @@ function num(v: number | null | undefined): number {
 // The bands themselves are invisible in Pine (100% transparent) — only their
 // fill against price is drawn.
 
-const SMF_BULL = '#00C8FF';
-const SMF_BEAR = '#FF005D';
+const SMF_BULL = studyPalette.bull;
+const SMF_BEAR = studyPalette.bear;
 /** Palette slot for "don't draw this fill on this bar". */
-const SMF_OFF = 'rgba(0,0,0,0)';
+const SMF_OFF = studyPalette.transparent;
 /** Buy/Sell label text — dark, since the label itself is filled with a bright regime color. */
-const SMF_LABEL_TEXT = '#0b0e11';
 
 const smf = (d: Record<string, any>) => d.smart_money_flow;
 /** Regime palette index: 0 = bull (last_signal +1), 1 = bear (-1). */
@@ -244,28 +244,28 @@ export const STUDY_SPECS: StudySpec[] = [
   // (RSI lives in COMPUTED_STUDY_SPECS — it is calculated in-browser.)
   {
     id: 'bvc', name: 'BVC (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'bvc', title: 'BVC', color: '#a855f7', width: 2, get: (d, i) => d.bvc?.[i] }],
-    bands: [{ value: 0, color: 'rgba(156, 163, 175, 0.4)' }],
+    plots: [{ id: 'bvc', title: 'BVC', color: studyPalette.violet, width: 2, get: (d, i) => d.bvc?.[i] }],
+    bands: [{ value: 0, color: studyPalette.zeroLine }],
   },
   {
     id: 'kalman_zscore', name: 'Kalman Z-Score (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'z', title: 'Kalman Z-Score', color: '#06b6d4', width: 2, get: (d, i) => d.kalman_zscore?.[i] }],
+    plots: [{ id: 'z', title: 'Kalman Z-Score', color: studyPalette.cyan, width: 2, get: (d, i) => d.kalman_zscore?.[i] }],
     bands: [
-      { value: 2, color: 'rgba(239, 68, 68, 0.4)' },
-      { value: -2, color: 'rgba(34, 197, 94, 0.4)' },
-      { value: 0, color: 'rgba(156, 163, 175, 0.4)' },
+      { value: 2, color: studyPalette.overbought },
+      { value: -2, color: studyPalette.oversold },
+      { value: 0, color: studyPalette.zeroLine },
     ],
   },
   {
     id: 'yz_volatility', name: 'YZ Volatility (bridged)', priceStudy: false, precision: 4,
-    plots: [{ id: 'yz', title: 'YZ Volatility', color: '#ec4899', width: 2, get: (d, i) => d.yz_volatility?.[i] }],
+    plots: [{ id: 'yz', title: 'YZ Volatility', color: studyPalette.pink, width: 2, get: (d, i) => d.yz_volatility?.[i] }],
   },
   {
     id: 'gkyz_volatility', name: 'GKYZ Volatility (bridged)', priceStudy: false, precision: 3,
-    plots: [{ id: 'gkyz', title: 'GKYZ', color: '#f97316', width: 2, get: (d, i) => d.gkyz_volatility?.[i] }],
+    plots: [{ id: 'gkyz', title: 'GKYZ', color: studyPalette.orange, width: 2, get: (d, i) => d.gkyz_volatility?.[i] }],
     bands: [
-      { value: 0.8, color: 'rgba(239, 68, 68, 0.6)' },
-      { value: 0.2, color: 'rgba(34, 197, 94, 0.6)' },
+      { value: 0.8, color: studyPalette.overboughtStrong },
+      { value: 0.2, color: studyPalette.oversoldStrong },
     ],
   },
   {
@@ -274,14 +274,14 @@ export const STUDY_SPECS: StudySpec[] = [
       { id: 'showDot', name: 'Show Watch/Warning Point', defval: true },
     ],
     plots: [
-      { id: 'sup', title: 'MS Support', color: '#ef4444', width: 2, get: (d, i) => d.matrix_series?.support_line?.[i] },
-      { id: 'res', title: 'MS Resistance', color: '#22c55e', width: 2, get: (d, i) => d.matrix_series?.resistance_line?.[i] },
-      { id: 'up', title: 'MS Up', color: '#00bcd4', width: 1, get: (d, i) => d.matrix_series?.up_line?.[i] },
-      { id: 'down', title: 'MS Down', color: '#eab308', width: 1, get: (d, i) => d.matrix_series?.down_line?.[i] },
-      { id: 'hh', title: 'MS HH', color: 'rgba(34,197,94,0.5)', width: 1, get: (d, i) => d.matrix_series?.hh?.[i] },
-      { id: 'll', title: 'MS LL', color: 'rgba(239,68,68,0.5)', width: 1, get: (d, i) => d.matrix_series?.ll?.[i] },
+      { id: 'sup', title: 'MS Support', color: studyPalette.red, width: 2, get: (d, i) => d.matrix_series?.support_line?.[i] },
+      { id: 'res', title: 'MS Resistance', color: studyPalette.green, width: 2, get: (d, i) => d.matrix_series?.resistance_line?.[i] },
+      { id: 'up', title: 'MS Up', color: studyPalette.teal, width: 1, get: (d, i) => d.matrix_series?.up_line?.[i] },
+      { id: 'down', title: 'MS Down', color: studyPalette.yellow, width: 1, get: (d, i) => d.matrix_series?.down_line?.[i] },
+      { id: 'hh', title: 'MS HH', color: studyPalette.greenFill, width: 1, get: (d, i) => d.matrix_series?.hh?.[i] },
+      { id: 'll', title: 'MS LL', color: studyPalette.redFill, width: 1, get: (d, i) => d.matrix_series?.ll?.[i] },
     ],
-    fills: [{ a: 'hh', b: 'll', color: 'rgba(99,102,241,0.12)', title: 'MS Range' }],
+    fills: [{ a: 'hh', b: 'll', color: studyPalette.rangeFill, title: 'MS Range' }],
     // Amber circles marking overbought/oversold watch points (Pine's UP/DOWN
     // Shape plots). UPshape is non-na iff `up > ob`; DOWNshape iff `down < os`
     // (the h01/h02/l01/l02 split only sets the y-level), so we anchor each dot
@@ -289,7 +289,7 @@ export const STUDY_SPECS: StudySpec[] = [
     shapes: [
       {
         id: 'upDot', title: 'UP Shape', shape: 'shape_circle', location: 'Absolute',
-        color: '#FFBF00', size: 'tiny',
+        color: studyPalette.amber, size: 'tiny',
         get: (d, i, o) => {
           if (!o.showDot) return null;
           const up = d.matrix_series?.up_line?.[i];
@@ -298,7 +298,7 @@ export const STUDY_SPECS: StudySpec[] = [
       },
       {
         id: 'downDot', title: 'DOWN Shape', shape: 'shape_circle', location: 'Absolute',
-        color: '#FFBF00', size: 'tiny',
+        color: studyPalette.amber, size: 'tiny',
         get: (d, i, o) => {
           if (!o.showDot) return null;
           const down = d.matrix_series?.down_line?.[i];
@@ -309,24 +309,24 @@ export const STUDY_SPECS: StudySpec[] = [
   },
   {
     id: 'squeeze_ttm', name: 'Squeeze TTM (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'hist', title: 'Squeeze TTM', color: '#9ca3af', histogram: true, get: (d, i) => d.squeeze_ttm?.histogram?.[i] }],
+    plots: [{ id: 'hist', title: 'Squeeze TTM', color: studyPalette.neutral, histogram: true, get: (d, i) => d.squeeze_ttm?.histogram?.[i] }],
     palettes: [{
       target: 'hist',
-      colors: ['rgba(244,245,244,0.7)', 'rgba(239,68,68,0.7)', 'rgba(34,197,94,0.7)'],
+      colors: [studyPalette.neutralBar, studyPalette.redBar, studyPalette.greenBar],
       index: (d, i) => d.squeeze_ttm?.squeeze_state?.[i],
     }],
   },
   {
     id: 'williams_vix_fix', name: 'Williams VIX Fix (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'wvf', title: 'WVF', color: 'rgba(34,197,94,0.7)', histogram: true, get: (d, i) => d.williams_vix_fix?.wvf?.[i] }],
+    plots: [{ id: 'wvf', title: 'WVF', color: studyPalette.greenBar, histogram: true, get: (d, i) => d.williams_vix_fix?.wvf?.[i] }],
     palettes: [{
       target: 'wvf',
-      colors: ['rgba(34,197,94,0.7)', 'rgba(255,255,0,0.7)'],
+      colors: [studyPalette.greenBar, studyPalette.yellowBar],
       index: (d, i) => (d.williams_vix_fix?.filtered?.[i] ? 1 : 0),
     }],
     // Blue dot just below the histogram baseline on filtered-entry (cond_fe) bars.
     shapes: [{
-      id: 'fe', title: 'FE', shape: 'shape_circle', location: 'Absolute', color: '#3b82f6',
+      id: 'fe', title: 'FE', shape: 'shape_circle', location: 'Absolute', color: studyPalette.blue,
       get: (d, i) => (d.williams_vix_fix?.cond_fe?.[i] ? 1 : null),
     }],
   },
@@ -334,18 +334,18 @@ export const STUDY_SPECS: StudySpec[] = [
   // ── Price-pane overlays ─────────────────────────────────────────────────────
   {
     id: 'atr_trailing', name: 'ATR Trailing Stop (bridged)', priceStudy: true,
-    plots: [{ id: 'atr', title: 'Trailing Stop', color: '#22c55e', width: 2, dashed: true, get: (d, i) => d.atr_trailing?.[i] }],
+    plots: [{ id: 'atr', title: 'Trailing Stop', color: studyPalette.green, width: 2, dashed: true, get: (d, i) => d.atr_trailing?.[i] }],
   },
   {
     id: 'vwap', name: 'VWAP Bands (bridged)', priceStudy: true,
     plots: [
-      { id: 'high', title: 'VWAP High', color: '#3b82f6', width: 2, get: (d, i) => d.vwap_highest?.[i] },
-      { id: 'low', title: 'VWAP Low', color: '#f97316', width: 2, get: (d, i) => d.vwap_lowest?.[i] },
+      { id: 'high', title: 'VWAP High', color: studyPalette.blue, width: 2, get: (d, i) => d.vwap_highest?.[i] },
+      { id: 'low', title: 'VWAP Low', color: studyPalette.orange, width: 2, get: (d, i) => d.vwap_lowest?.[i] },
     ],
   },
   {
     id: 'kama', name: 'KAMA (bridged)', priceStudy: true,
-    plots: [{ id: 'kama', title: 'KAMA', color: '#eab308', width: 2, get: (d, i) => d.kama?.[i] }],
+    plots: [{ id: 'kama', title: 'KAMA', color: studyPalette.yellow, width: 2, get: (d, i) => d.kama?.[i] }],
   },
   {
     id: 'chandelier_exit', name: 'Chandelier Exit (bridged)', priceStudy: true,
@@ -368,25 +368,25 @@ export const STUDY_SPECS: StudySpec[] = [
   {
     id: 'gaussian_frama', name: 'Gaussian FRAMA (bridged)', priceStudy: true,
     plots: [
-      { id: 'frama', title: 'G-FRAMA', color: '#9ca3af', width: 2, get: (d, i) => d.gaussian_frama?.frama?.[i] },
-      { id: 'longV', title: 'G-FRAMA Long', color: '#3b82f6', width: 1, dashed: true, get: (d, i) => d.gaussian_frama?.long_v?.[i] },
-      { id: 'shortV', title: 'G-FRAMA Short', color: '#ef4444', width: 1, dashed: true, get: (d, i) => d.gaussian_frama?.short_v?.[i] },
+      { id: 'frama', title: 'G-FRAMA', color: studyPalette.neutral, width: 2, get: (d, i) => d.gaussian_frama?.frama?.[i] },
+      { id: 'longV', title: 'G-FRAMA Long', color: studyPalette.blue, width: 1, dashed: true, get: (d, i) => d.gaussian_frama?.long_v?.[i] },
+      { id: 'shortV', title: 'G-FRAMA Short', color: studyPalette.red, width: 1, dashed: true, get: (d, i) => d.gaussian_frama?.short_v?.[i] },
     ],
     // Regime coloring: blue (qb=+1, bullish) / red (qb=-1, bearish) / gray (neutral).
     palettes: [{
       target: 'frama',
-      colors: ['#3b82f6', '#ef4444', '#9ca3af'],
+      colors: [studyPalette.blue, studyPalette.red, studyPalette.neutral],
       index: (d, i) => (d.gaussian_frama?.qb?.[i] === 1 ? 0 : d.gaussian_frama?.qb?.[i] === -1 ? 1 : 2),
     }],
     fills: [{ a: 'longV', b: 'shortV', color: 'rgba(99,102,241,0.08)', title: 'G-FRAMA Cloud' }],
   },
   {
     id: 'hull_butterfly', name: 'Hull Butterfly Oscillator (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'hso', title: 'HBO', color: '#9ca3af', histogram: true, get: (d, i) => d.hull_butterfly?.hso?.[i] }],
+    plots: [{ id: 'hso', title: 'HBO', color: studyPalette.neutral, histogram: true, get: (d, i) => d.hull_butterfly?.hso?.[i] }],
     // Bullish/bearish/neutral state coloring driven by the discrete `os` signal.
     palettes: [{
       target: 'hso',
-      colors: ['#22c55e', '#ef4444', 'rgba(156,163,175,0.6)'],
+      colors: [studyPalette.green, studyPalette.red, 'rgba(156,163,175,0.6)'],
       index: (d, i) => (d.hull_butterfly?.os?.[i] === 1 ? 0 : d.hull_butterfly?.os?.[i] === -1 ? 1 : 2),
     }],
   },

@@ -1,3 +1,4 @@
+import { API_BASE_URL } from '../api';
 /**
  * Real-time quote service.
  *
@@ -44,7 +45,7 @@ export interface QuoteBatch {
 
 export const fetchLatestQuote = async (symbol: string): Promise<LatestQuote> => {
   const response = await fetch(
-    `${import.meta.env.VITE_API_BASE_URL}/quote/${symbol}/latest`,
+    `${API_BASE_URL}/quote/${symbol}/latest`,
   );
 
   if (!response.ok) {
@@ -56,7 +57,7 @@ export const fetchLatestQuote = async (symbol: string): Promise<LatestQuote> => 
 
 /** Quotes for a list of symbols, in the order requested (watchlist rows). */
 export const fetchQuotes = async (symbols: string[]): Promise<QuoteBatch> => {
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/quote/batch`, {
+  const response = await fetch(`${API_BASE_URL}/quote/batch`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

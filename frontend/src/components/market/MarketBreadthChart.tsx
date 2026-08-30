@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
-import { Box, CircularProgress, Typography, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import { Box, Typography, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import { alpha } from '@mui/material/styles';
 import { createChart, LineSeries, HistogramSeries, CandlestickSeries } from 'lightweight-charts';
 import { fetchMarketBreadth, fetchTimeseries, formatChartTime, getDateRange } from '../../lib/services/timeseries';
 import type { MarketBreadthResponse, TimeseriesResponse } from '../../lib/services/timeseries';
+import { useChartTheme } from '../../theme';
+import { Numeric, LoadingState, ErrorState } from '../ui';
 
 type ChartView = 'ad_line' | 'mcclellan' | 'breadth';
 
@@ -24,6 +27,7 @@ export default function MarketBreadthChart() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<ChartView>('mcclellan');
+  const ct = useChartTheme();
 
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<any>(null);
@@ -84,49 +88,22 @@ export default function MarketBreadthChart() {
     const chart = createChart(chartContainerRef.current, {
       height: CHART_HEIGHT,
       width: chartContainerRef.current.clientWidth,
-      layout: {
-        background: { color: '#0a0a0f' },
-        textColor: '#9ca3af',
-        fontFamily: "'SF Mono', 'Fira Code', 'Monaco', monospace",
-      },
-      grid: {
-        vertLines: { color: 'rgba(99, 102, 241, 0.05)' },
-        horzLines: { color: 'rgba(99, 102, 241, 0.05)' },
-      },
-      crosshair: {
-        mode: 1,
-        vertLine: {
-          color: 'rgba(99, 102, 241, 0.4)',
-          labelBackgroundColor: '#6366f1',
-        },
-        horzLine: {
-          color: 'rgba(99, 102, 241, 0.4)',
-          labelBackgroundColor: '#6366f1',
-        },
-      },
-      rightPriceScale: {
-        borderColor: 'rgba(99, 102, 241, 0.2)',
-      },
-      timeScale: {
-        borderColor: 'rgba(99, 102, 241, 0.2)',
-        timeVisible: true,
-      },
+      ...ct.lightweightChartOptions,
+      crosshair: { ...ct.lightweightChartOptions.crosshair, mode: 1 },
+      timeScale: { ...ct.lightweightChartOptions.timeScale, timeVisible: true },
     });
 
     chartRef.current = chart;
 
     // ===== PANE 0: VNINDEX Price =====
     const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
+      ...ct.candlestick,
       borderVisible: false,
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
       title: 'VNINDEX',
     });
 
     const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: '#6366f1',
+      color: ct.accent,
       priceFormat: { type: 'volume' },
       priceScaleId: 'volume',
     });
@@ -147,8 +124,8 @@ export default function MarketBreadthChart() {
       time: formatChartTime(ts),
       value: vnindexData.timeseries.volume[i],
       color: vnindexData.timeseries.close[i] >= vnindexData.timeseries.open[i] 
-        ? 'rgba(34, 197, 94, 0.5)' 
-        : 'rgba(239, 68, 68, 0.5)',
+        ? alpha(ct.up, 0.5)
+        : alpha(ct.down, 0.5),
     }));
 
     candlestickSeries.setData(candleData);
@@ -165,7 +142,7 @@ export default function MarketBreadthChart() {
       return {
         time: formatChartTime(ts),
         value,
-        color: value >= 0 ? 'rgba(34, 197, 94, 0.8)' : 'rgba(239, 68, 68, 0.8)',
+        color: value >= 0 ? alpha(ct.up, 0.8) : alpha(ct.down, 0.8),
       };
     });
 
@@ -173,7 +150,7 @@ export default function MarketBreadthChart() {
 
     // Zero line for McClellan
     const zeroLine = chart.addSeries(LineSeries, {
-      color: 'rgba(156, 163, 175, 0.4)',
+      color: alpha(ct.axis, 0.5),
       lineWidth: 1,
       lineStyle: 2,
       priceLineVisible: false,
@@ -191,7 +168,7 @@ export default function MarketBreadthChart() {
     if (view === 'ad_line') {
       // A/D Line
       const adLineSeries = chart.addSeries(LineSeries, {
-        color: '#6366f1',
+        color: ct.accent,
         lineWidth: 2,
         title: 'A/D Line',
         priceScaleId: 'right',
@@ -206,7 +183,7 @@ export default function MarketBreadthChart() {
 
       const adSMA20 = calcSMA(data.ad_line, 20);
       const adSMASeries = chart.addSeries(LineSeries, {
-        color: '#f97316',
+        color: ct.seriesColor(1),
         lineWidth: 1,
         lineStyle: 0,
         title: 'SMA 20',
@@ -223,7 +200,7 @@ export default function MarketBreadthChart() {
     } else if (view === 'mcclellan') {
       // Summation Index
       const summationSeries = chart.addSeries(LineSeries, {
-        color: '#f59e0b',
+        color: ct.accent,
         lineWidth: 2,
         title: 'Summation Index',
         priceScaleId: 'right',
@@ -238,7 +215,7 @@ export default function MarketBreadthChart() {
 
       const summSMA20 = calcSMA(data.mcclellan_summation, 20);
       const summSMASeries = chart.addSeries(LineSeries, {
-        color: '#f97316',
+        color: ct.seriesColor(1),
         lineWidth: 1,
         lineStyle: 0,
         title: 'SMA 20',
@@ -254,7 +231,7 @@ export default function MarketBreadthChart() {
 
       // Zero line for Summation
       const summationZeroLine = chart.addSeries(LineSeries, {
-        color: 'rgba(156, 163, 175, 0.4)',
+        color: alpha(ct.axis, 0.5),
         lineWidth: 1,
         lineStyle: 2,
         priceLineVisible: false,
@@ -271,13 +248,13 @@ export default function MarketBreadthChart() {
     } else if (view === 'breadth') {
       // Advances/Declines
       const advancesSeries = chart.addSeries(HistogramSeries, {
-        color: 'rgba(34, 197, 94, 0.7)',
+        color: alpha(ct.up, 0.7),
         title: 'Advances',
         priceScaleId: 'right',
       }, 2);
 
       const declinesSeries = chart.addSeries(HistogramSeries, {
-        color: 'rgba(239, 68, 68, 0.7)',
+        color: alpha(ct.down, 0.7),
         title: 'Declines',
         priceScaleId: 'right',
       }, 2);
@@ -285,13 +262,13 @@ export default function MarketBreadthChart() {
       const advancesData = data.timestamps.map((ts, i) => ({
         time: formatChartTime(ts),
         value: data.advances[i],
-        color: 'rgba(34, 197, 94, 0.7)',
+        color: alpha(ct.up, 0.7),
       }));
 
       const declinesData = data.timestamps.map((ts, i) => ({
         time: formatChartTime(ts),
         value: -data.declines[i],
-        color: 'rgba(239, 68, 68, 0.7)',
+        color: alpha(ct.down, 0.7),
       }));
 
       advancesSeries.setData(advancesData);
@@ -319,7 +296,8 @@ export default function MarketBreadthChart() {
         chartRef.current = null;
       }
     };
-  }, [vnindexData, data, loading, view]);
+    // `ct` is in the deps so the chart is rebuilt when the colour mode flips.
+  }, [vnindexData, data, loading, view, ct]);
 
   const handleViewChange = (_: React.MouseEvent<HTMLElement>, newView: ChartView | null) => {
     if (newView) setView(newView);
@@ -327,18 +305,14 @@ export default function MarketBreadthChart() {
 
   if (loading) {
     return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: CHART_HEIGHT }}>
-        <CircularProgress sx={{ color: '#6366f1' }} />
+      <Box sx={{ height: CHART_HEIGHT, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <LoadingState label="Loading market breadth" />
       </Box>
     );
   }
 
   if (error) {
-    return (
-      <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', height: CHART_HEIGHT }}>
-        <Typography color="error">⚠️ {error}</Typography>
-      </Box>
-    );
+    return <ErrorState error={error} title="Could not load market breadth" />;
   }
 
   // Get latest values for display
@@ -355,128 +329,65 @@ export default function MarketBreadthChart() {
   const vnChange = vnClose - vnPrevClose;
   const vnChangePercent = vnPrevClose ? ((vnChange / vnPrevClose) * 100) : 0;
 
+  const readings = [
+    { label: 'Advances', value: latestAdvances, decimals: 0, signed: false, color: 'market.long' },
+    { label: 'Declines', value: latestDeclines, decimals: 0, signed: false, color: 'market.short' },
+    { label: 'McClellan Osc', value: latestOscillator, decimals: 1, signed: true, color: undefined },
+    { label: 'Summation', value: latestSummation, decimals: 0, signed: true, color: undefined },
+  ];
+
   return (
     <Box>
-      {/* Header with stats and toggle */}
-      <Box sx={{ 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center', 
-        mb: 2,
-        flexWrap: 'wrap',
-        gap: 2,
-      }}>
-        {/* VNINDEX info */}
-        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 2 }}>
-          <Typography variant="h5" sx={{ color: '#e2e8f0', fontWeight: 700 }}>
+      {/* Header: index quote, breadth readings, pane selector */}
+      <Box
+        sx={{
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center',
+          mb: 1.5,
+          flexWrap: 'wrap',
+          gap: 2,
+        }}
+      >
+        <Box sx={{ display: 'flex', alignItems: 'baseline', gap: 1.5 }}>
+          <Typography variant="h5" sx={{ color: 'text.primary' }}>
             VNINDEX
           </Typography>
-          <Typography 
-            variant="h5" 
-            sx={{ 
-              color: vnChange >= 0 ? '#22c55e' : '#ef4444',
-              fontFamily: 'monospace',
-              fontWeight: 600,
-            }}
-          >
-            {vnClose.toFixed(2)}
-          </Typography>
-          <Typography 
-            variant="body1" 
-            sx={{ 
-              color: vnChange >= 0 ? '#22c55e' : '#ef4444',
-              fontFamily: 'monospace',
-            }}
-          >
-            {vnChange >= 0 ? '+' : ''}{vnChange.toFixed(2)} ({vnChangePercent >= 0 ? '+' : ''}{vnChangePercent.toFixed(2)}%)
-          </Typography>
+          <Numeric
+            value={vnClose}
+            sx={{ fontSize: '1.375rem', fontWeight: 600, color: vnChange >= 0 ? 'market.long' : 'market.short' }}
+          />
+          <Numeric value={vnChange} signed showSign sx={{ fontSize: '0.8125rem' }} />
+          <Numeric value={vnChangePercent} format="percent" signed showSign sx={{ fontSize: '0.8125rem' }} />
         </Box>
 
-        {/* Stats cards */}
-        <Box sx={{ display: 'flex', gap: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-          <Box sx={{ 
-            px: 2, 
-            py: 1, 
-            bgcolor: 'rgba(34, 197, 94, 0.1)', 
-            borderRadius: 1,
-            border: '1px solid rgba(34, 197, 94, 0.2)',
-          }}>
-            <Typography variant="caption" sx={{ color: '#6b7280' }}>Advances</Typography>
-            <Typography variant="h6" sx={{ color: '#22c55e', fontFamily: 'monospace', fontWeight: 600 }}>
-              {latestAdvances}
-            </Typography>
-          </Box>
-          <Box sx={{ 
-            px: 2, 
-            py: 1, 
-            bgcolor: 'rgba(239, 68, 68, 0.1)', 
-            borderRadius: 1,
-            border: '1px solid rgba(239, 68, 68, 0.2)',
-          }}>
-            <Typography variant="caption" sx={{ color: '#6b7280' }}>Declines</Typography>
-            <Typography variant="h6" sx={{ color: '#ef4444', fontFamily: 'monospace', fontWeight: 600 }}>
-              {latestDeclines}
-            </Typography>
-          </Box>
-          <Box sx={{ 
-            px: 2, 
-            py: 1, 
-            bgcolor: 'rgba(99, 102, 241, 0.1)', 
-            borderRadius: 1,
-            border: '1px solid rgba(99, 102, 241, 0.2)',
-          }}>
-            <Typography variant="caption" sx={{ color: '#6b7280' }}>McClellan Osc</Typography>
-            <Typography 
-              variant="h6" 
-              sx={{ 
-                color: latestOscillator >= 0 ? '#22c55e' : '#ef4444',
-                fontFamily: 'monospace',
-                fontWeight: 600,
+        <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+          {readings.map((r) => (
+            <Box
+              key={r.label}
+              sx={{
+                px: 1.5,
+                py: 0.75,
+                minWidth: 96,
+                borderRadius: 1,
+                bgcolor: 'surface.inset',
+                border: 1,
+                borderColor: 'line.subtle',
               }}
             >
-              {latestOscillator?.toFixed(1)}
-            </Typography>
-          </Box>
-          <Box sx={{ 
-            px: 2, 
-            py: 1, 
-            bgcolor: 'rgba(245, 158, 11, 0.1)', 
-            borderRadius: 1,
-            border: '1px solid rgba(245, 158, 11, 0.2)',
-          }}>
-            <Typography variant="caption" sx={{ color: '#6b7280' }}>Summation Index</Typography>
-            <Typography 
-              variant="h6" 
-              sx={{ 
-                color: latestSummation >= 0 ? '#22c55e' : '#ef4444',
-                fontFamily: 'monospace',
-                fontWeight: 600,
-              }}
-            >
-              {latestSummation?.toFixed(0)}
-            </Typography>
-          </Box>
+              <Typography variant="overline2" sx={{ fontSize: '0.5625rem' }}>
+                {r.label}
+              </Typography>
+              <Numeric
+                value={r.value}
+                decimals={r.decimals}
+                signed={r.signed}
+                sx={{ fontSize: '1rem', fontWeight: 600, color: r.color }}
+              />
+            </Box>
+          ))}
 
-          <ToggleButtonGroup
-            value={view}
-            exclusive
-            onChange={handleViewChange}
-            size="small"
-            sx={{
-              ml: 2,
-              '& .MuiToggleButton-root': {
-                color: '#9ca3af',
-                borderColor: 'rgba(99, 102, 241, 0.3)',
-                '&.Mui-selected': {
-                  color: '#fff',
-                  bgcolor: 'rgba(99, 102, 241, 0.3)',
-                },
-                '&:hover': {
-                  bgcolor: 'rgba(99, 102, 241, 0.1)',
-                },
-              },
-            }}
-          >
+          <ToggleButtonGroup value={view} exclusive onChange={handleViewChange} size="small" sx={{ ml: 1 }}>
             <ToggleButton value="mcclellan">Summation</ToggleButton>
             <ToggleButton value="ad_line">A/D Line</ToggleButton>
             <ToggleButton value="breadth">Adv/Dec</ToggleButton>
@@ -490,10 +401,11 @@ export default function MarketBreadthChart() {
         sx={{
           width: '100%',
           height: CHART_HEIGHT,
-          borderRadius: 2,
+          borderRadius: 1,
           overflow: 'hidden',
-          bgcolor: '#0a0a0f',
-          border: '1px solid rgba(99, 102, 241, 0.2)',
+          bgcolor: 'surface.inset',
+          border: 1,
+          borderColor: 'line.subtle',
         }}
       />
     </Box>

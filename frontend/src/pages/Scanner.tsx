@@ -1,28 +1,12 @@
 import { useEffect, useMemo, useState } from 'react';
-import {
-  Box,
-  Button,
-  Card,
-  CardContent,
-  Divider,
-  FormControl,
-  Grid,
-  IconButton,
-  InputLabel,
-  MenuItem,
-  Select,
-  SelectChangeEvent,
-  Stack,
-  TextField,
-  Typography,
-  Checkbox,
-  FormControlLabel,
-} from '@mui/material';
+import { Box, Button, Card, CardContent, Divider, FormControl, Grid, IconButton, InputLabel, MenuItem, Select, Stack, TextField, Typography, Checkbox, FormControlLabel } from '@mui/material';
+import type { SelectChangeEvent } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import DeleteIcon from '@mui/icons-material/Delete';
 import { format } from 'date-fns';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
-import { getScannerColumns, scanFeatures, ConditionOperator } from '../lib/services/scanner';
+import { getScannerColumns, scanFeatures } from '../lib/services/scanner';
+import type { ConditionOperator } from '../lib/services/scanner';
 
 type ConditionRow = {
   id: string;

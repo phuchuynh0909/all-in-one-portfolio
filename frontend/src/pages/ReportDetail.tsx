@@ -1,7 +1,7 @@
 import React from 'react';
+import { PageContainer, Panel, LoadingState, EmptyState } from '../components/ui';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Container,
   Typography,
   Box,
   Paper,
@@ -80,32 +80,33 @@ const ReportDetail: React.FC = () => {
 
   if (isLoading) {
     return (
-      <Container maxWidth="lg">
-        <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh' }}>
-          <CircularProgress />
-        </Box>
-      </Container>
+      <PageContainer maxWidth="1100px">
+        <LoadingState label="Loading report" />
+      </PageContainer>
     );
   }
 
   if (!report) {
     return (
-      <Container maxWidth="lg">
-        <Box sx={{ py: 3 }}>
-          <Alert severity="error">Report not found</Alert>
-          <Button startIcon={<ArrowBackIcon />} onClick={handleBack} sx={{ mt: 2 }}>
-            Back to Reports
-          </Button>
-        </Box>
-      </Container>
+      <PageContainer maxWidth="1100px">
+        <EmptyState
+          title="Report not found"
+          description="It may have been removed, or the link is out of date."
+          action={
+            <Button startIcon={<ArrowBackIcon />} onClick={handleBack} variant="outlined" size="small">
+              Back to reports
+            </Button>
+          }
+        />
+      </PageContainer>
     );
   }
 
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ py: 3 }}>
-        <Button startIcon={<ArrowBackIcon />} onClick={handleBack} sx={{ mb: 3 }}>
-          Back to Reports
+    <PageContainer maxWidth="1100px">
+      <>
+        <Button startIcon={<ArrowBackIcon />} onClick={handleBack} size="small" sx={{ mb: 2 }}>
+          Back to reports
         </Button>
 
         {error && (
@@ -120,10 +121,7 @@ const ReportDetail: React.FC = () => {
           </Alert>
         )}
 
-        <Paper sx={{ p: 3 }}>
-          <Typography variant="h5" gutterBottom sx={{ fontWeight: 600 }}>
-            {report.tenbaocao}
-          </Typography>
+        <Panel title={report.tenbaocao}>
 
           <Stack direction="row" spacing={1} sx={{ mb: 3, flexWrap: 'wrap', gap: 1 }}>
             <Chip label={report.mack || 'N/A'} color="primary" />
@@ -239,9 +237,9 @@ const ReportDetail: React.FC = () => {
               {isSaving ? 'Saving...' : 'Save Summary'}
             </Button>
           </Box>
-        </Paper>
-      </Box>
-    </Container>
+        </Panel>
+      </>
+    </PageContainer>
   );
 };
 

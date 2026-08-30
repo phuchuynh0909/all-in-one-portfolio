@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
-import { IChartApi, ISeriesApi, LineSeries } from 'lightweight-charts';
+import { LineSeries } from 'lightweight-charts';
+import type { IChartApi, ISeriesApi } from 'lightweight-charts';
 import { formatIndicatorData } from '../../../lib/services/timeseries';
 
 type RsRatingPanelProps = {

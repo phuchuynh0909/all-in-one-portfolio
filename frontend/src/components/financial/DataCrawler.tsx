@@ -22,8 +22,8 @@ import {
   CheckCircle as CompletedIcon,
   Schedule as PendingIcon
 } from '@mui/icons-material';
-import { crawlerApi, CrawlableSymbol, CrawlStatus } from '../../lib/services/crawler';
-
+import { crawlerApi } from '../../lib/services/crawler';
+import type { CrawlableSymbol, CrawlStatus } from '../../lib/services/crawler';
 interface DataCrawlerProps {
   onDataCrawled?: (symbol: string) => void;
 }

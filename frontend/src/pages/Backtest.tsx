@@ -1,17 +1,13 @@
 import { useState } from 'react';
 import {
   Box,
-  Container,
   FormControl,
   FormControlLabel,
   InputLabel,
   MenuItem,
-  Paper,
   Select,
   Switch,
   Typography,
-  CircularProgress,
-  Alert,
   Button,
   Chip,
   Stack,
@@ -26,6 +22,7 @@ import type {
 } from '@mui/x-data-grid';
 import { useBacktest, type Trade } from '../lib/services/backtest';
 import { format } from 'date-fns';
+import { PageContainer, PageHeader, Panel, StatRow, StatTile, QueryState } from '../components/ui';
 
 const STRATEGIES = [
   "Breakout TTM 005C",
@@ -124,9 +121,10 @@ const columns: GridColDef[] = [
             label={v ? 'Risk-On' : 'Risk-Off'}
             size="small"
             sx={{
-              bgcolor: v ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
-              color: v ? '#ef4444' : '#22c55e',
-              border: `1px solid ${v ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.4)'}`,
+              bgcolor: v ? 'market.shortSubtle' : 'market.longSubtle',
+              color: v ? 'market.short' : 'market.long',
+              border: 1,
+              borderColor: v ? 'market.short' : 'market.long',
               fontWeight: 600,
               fontSize: '0.7rem',
             }}
@@ -148,9 +146,10 @@ const columns: GridColDef[] = [
             label={v ? 'Risk-On' : 'Risk-Off'}
             size="small"
             sx={{
-              bgcolor: v ? 'rgba(239,68,68,0.15)' : 'rgba(34,197,94,0.15)',
-              color: v ? '#ef4444' : '#22c55e',
-              border: `1px solid ${v ? 'rgba(239,68,68,0.4)' : 'rgba(34,197,94,0.4)'}`,
+              bgcolor: v ? 'market.shortSubtle' : 'market.longSubtle',
+              color: v ? 'market.short' : 'market.long',
+              border: 1,
+              borderColor: v ? 'market.short' : 'market.long',
               fontWeight: 600,
               fontSize: '0.7rem',
             }}
@@ -172,9 +171,10 @@ const columns: GridColDef[] = [
             label={v ? 'Bullish' : 'Bearish'}
             size="small"
             sx={{
-              bgcolor: v ? 'rgba(34,197,94,0.15)' : 'rgba(239,68,68,0.15)',
-              color: v ? '#22c55e' : '#ef4444',
-              border: `1px solid ${v ? 'rgba(34,197,94,0.4)' : 'rgba(239,68,68,0.4)'}`,
+              bgcolor: v ? 'market.longSubtle' : 'market.shortSubtle',
+              color: v ? 'market.long' : 'market.short',
+              border: 1,
+              borderColor: v ? 'market.long' : 'market.short',
               fontWeight: 600,
               fontSize: '0.7rem',
             }}
@@ -244,168 +244,132 @@ export default function BacktestPage() {
       };
     });
 
+  const data = rawData as BacktestData | undefined;
+  const hasResults =
+    !!data &&
+    typeof data === 'object' &&
+    'execution_time' in data &&
+    Array.isArray(data.open_trades) &&
+    Array.isArray(data.closed_trades);
+
+  /** Toolbar + sorting config shared by both trade grids. */
+  const gridProps = {
+    columns,
+    disableSelectionOnClick: true,
+    hideFooter: true,
+    autoHeight: true,
+    components: { Toolbar: GridToolbar },
+    componentsProps: {
+      toolbar: { showQuickFilter: true, quickFilterProps: { debounceMs: 500 } },
+    },
+    sx: {
+      border: 0,
+      '& .MuiDataGrid-toolbarContainer': {
+        p: 1.5,
+        borderBottom: 1,
+        borderColor: 'line.subtle',
+      },
+    },
+  } as const;
+
+  const timing = data?.execution_time;
+
   return (
-    <Container maxWidth="xl">
-      <Box sx={{ py: 4 }}>
-        <Typography variant="h4" gutterBottom>
-          Backtest Results
-        </Typography>
+    <PageContainer>
+      <PageHeader
+        title="Backtest"
+        description="Run a strategy over historical data and inspect the resulting open and closed trades."
+        actions={
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={() => refetch()}
+            disabled={loading}
+          >
+            {loading ? 'Running…' : 'Re-run'}
+          </Button>
+        }
+      />
 
-        <Paper sx={{ p: 2, mb: 3 }}>
-          <Stack direction="row" spacing={3} alignItems="center">
-            <FormControl sx={{ minWidth: 300 }}>
-              <InputLabel>Strategy</InputLabel>
-              <Select
-                value={strategy}
-                label="Strategy"
-                onChange={(e) => handleStrategyChange(e.target.value as typeof STRATEGIES[number])}
+      <Panel dense sx={{ mb: 2.5 }}>
+        <Stack direction="row" spacing={3} alignItems="center" flexWrap="wrap" useFlexGap>
+          <FormControl sx={{ minWidth: 280 }} size="small">
+            <InputLabel>Strategy</InputLabel>
+            <Select
+              value={strategy}
+              label="Strategy"
+              onChange={(e) => handleStrategyChange(e.target.value as typeof STRATEGIES[number])}
+              disabled={loading}
+            >
+              {STRATEGIES.map((s) => (
+                <MenuItem key={s} value={s}>
+                  {s}
+                </MenuItem>
+              ))}
+            </Select>
+          </FormControl>
+          <FormControlLabel
+            control={
+              <Switch
+                checked={applyML}
+                onChange={(e) => setApplyML(e.target.checked)}
                 disabled={loading}
-              >
-                {STRATEGIES.map((s) => (
-                  <MenuItem key={s} value={s}>{s}</MenuItem>
-                ))}
-              </Select>
-            </FormControl>
-            <FormControlLabel
-              control={
-                <Switch
-                  checked={applyML}
-                  onChange={(e) => setApplyML(e.target.checked)}
-                  disabled={loading}
-                  color="primary"
-                />
-              }
-              label="Apply ML Predictions"
-            />
-          </Stack>
-        </Paper>
+              />
+            }
+            label="Apply ML predictions"
+          />
+        </Stack>
+      </Panel>
 
-        {loading && (
-          <Box sx={{ display: 'flex', justifyContent: 'center', my: 4 }}>
-            <CircularProgress />
+      <QueryState
+        isLoading={loading}
+        error={error}
+        isEmpty={!loading && !error && !hasResults}
+        onRetry={() => refetch()}
+        loadingLabel="Running backtest"
+        emptyTitle="No results"
+        emptyDescription="Pick a strategy above and re-run to produce trades."
+      >
+        {hasResults && data && timing && (
+          <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <StatRow min={140}>
+              <StatTile
+                label="Total"
+                value={timing.total_seconds}
+                decimals={2}
+                accent="primary"
+                hint="seconds"
+              />
+              <StatTile label="Data loading" value={timing.data_loading_seconds} decimals={2} hint="seconds" />
+              <StatTile label="Strategy" value={timing.strategy_seconds} decimals={2} hint="seconds" />
+              <StatTile label="Features" value={timing.feature_building_seconds} decimals={2} hint="seconds" />
+              <StatTile label="Predictions" value={timing.prediction_seconds} decimals={2} hint="seconds" />
+              <StatTile
+                label="Trades"
+                value={data.open_trades.length + data.closed_trades.length}
+                decimals={0}
+                hint={`${data.open_trades.length} open · ${data.closed_trades.length} closed`}
+              />
+            </StatRow>
+
+            <Panel title="Open trades" subtitle={`${data.open_trades.length} positions still running`} flush>
+              <DataGrid<Trade>
+                {...gridProps}
+                rows={addIdAndDaysToTrades(data.open_trades, true)}
+                initialState={{ sorting: { sortModel: [{ field: 'date', sort: 'desc' }] } }}
+              />
+            </Panel>
+
+            <Panel title="Closed trades" subtitle={`${data.closed_trades.length} completed round trips`} flush>
+              <DataGrid<Trade>
+                {...gridProps}
+                rows={addIdAndDaysToTrades(data.closed_trades, false)}
+                initialState={{ sorting: { sortModel: [{ field: 'close_date', sort: 'desc' }] } }}
+              />
+            </Panel>
           </Box>
         )}
-
-        {error && (
-          <Alert 
-            severity="error" 
-            sx={{ mb: 3 }}
-            action={
-              <Button color="inherit" size="small" onClick={() => refetch()}>
-                Retry
-              </Button>
-            }
-          >
-            {error instanceof Error ? error.message : 'An error occurred'}
-          </Alert>
-        )}
-
-        {rawData && typeof rawData === 'object' && 'execution_time' in rawData && 'open_trades' in rawData && 'closed_trades' in rawData && Array.isArray(rawData.open_trades) && Array.isArray(rawData.closed_trades) ? (
-          <>
-            <Paper sx={{ p: 2, mb: 3 }}>
-              <Typography variant="h6" gutterBottom>
-                Execution Time
-              </Typography>
-              <Stack direction="row" spacing={2}>
-                <Chip 
-                  label={`Total: ${(rawData as BacktestData).execution_time.total_seconds}s`}
-                  color="primary"
-                />
-                <Chip 
-                  label={`Data Loading: ${(rawData as BacktestData).execution_time.data_loading_seconds}s`}
-                  variant="outlined"
-                />
-                <Chip 
-                  label={`Strategy: ${(rawData as BacktestData).execution_time.strategy_seconds}s`}
-                  variant="outlined"
-                />
-                <Chip 
-                  label={`Features: ${(rawData as BacktestData).execution_time.feature_building_seconds}s`}
-                  variant="outlined"
-                />
-                <Chip 
-                  label={`Predictions: ${(rawData as BacktestData).execution_time.prediction_seconds}s`}
-                  variant="outlined"
-                />
-              </Stack>
-            </Paper>
-
-            <Paper sx={{ p: 2, mb: 3 }}>
-              <Typography variant="h6" gutterBottom>
-                Open Trades ({(rawData as BacktestData).open_trades.length})
-              </Typography>
-              <Box sx={{ width: '100%' }}>
-                <DataGrid<Trade>
-                  rows={addIdAndDaysToTrades((rawData as BacktestData).open_trades, true)}
-                  columns={columns}
-                  disableSelectionOnClick
-                  hideFooter
-                  autoHeight
-                  initialState={{
-                    sorting: {
-                      sortModel: [{ field: 'date', sort: 'desc' }],
-                    },
-                  }}
-                  components={{
-                    Toolbar: GridToolbar,
-                  }}
-                  componentsProps={{
-                    toolbar: {
-                      showQuickFilter: true,
-                      quickFilterProps: { debounceMs: 500 },
-                    },
-                  }}
-                  sx={{
-                    '& .MuiDataGrid-toolbarContainer': {
-                      padding: 2,
-                      backgroundColor: 'background.paper',
-                      borderBottom: 1,
-                      borderColor: 'divider',
-                    },
-                  }}
-                />
-              </Box>
-            </Paper>
-
-            <Paper sx={{ p: 2 }}>
-              <Typography variant="h6" gutterBottom>
-                Closed Trades ({(rawData as BacktestData).closed_trades.length})
-              </Typography>
-              <Box sx={{ width: '100%' }}>
-                <DataGrid<Trade>
-                  rows={addIdAndDaysToTrades((rawData as BacktestData).closed_trades, false)}
-                  columns={columns}
-                  disableSelectionOnClick
-                  hideFooter
-                  autoHeight
-                  initialState={{
-                    sorting: {
-                      sortModel: [{ field: 'close_date', sort: 'desc' }],
-                    },
-                  }}
-                  components={{
-                    Toolbar: GridToolbar,
-                  }}
-                  componentsProps={{
-                    toolbar: {
-                      showQuickFilter: true,
-                      quickFilterProps: { debounceMs: 500 },
-                    },
-                  }}
-                  sx={{
-                    '& .MuiDataGrid-toolbarContainer': {
-                      padding: 2,
-                      backgroundColor: 'background.paper',
-                      borderBottom: 1,
-                      borderColor: 'divider',
-                    },
-                  }}
-                />
-              </Box>
-            </Paper>
-          </>
-        ) : null}
-      </Box>
-    </Container>
+      </QueryState>
+    </PageContainer>
   );
 }

@@ -13,18 +13,7 @@ import {
   FormControl,
 } from '@mui/material';
 import { API_BASE_URL } from '../../lib/api';
-
-type Transaction = {
-  ticker: string;
-  // Dividend rows share the transactions ledger; buy|sell alone was false.
-  transaction_type: 'buy' | 'sell' | 'dividend_cash' | 'dividend_stock';
-  quantity: number;
-  price: number;
-  close_price?: number;
-  transaction_date: string;
-  fees?: number;
-  notes?: string;
-};
+import type { Transaction } from '../../lib/services/portfolio';
 
 type TransactionFormProps = {
   open: boolean;

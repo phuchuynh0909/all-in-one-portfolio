@@ -1,3 +1,4 @@
+import { API_BASE_URL } from '../api';
 export interface FutureOhlcResponse {
   symbol: string;
   timestamps: string[];
@@ -35,7 +36,7 @@ export async function fetchFutureOhlc(
   if (params?.q_lo_pct !== undefined) query.set('q_lo_pct', String(params.q_lo_pct));
   if (params?.q_hi_pct !== undefined) query.set('q_hi_pct', String(params.q_hi_pct));
   if (params?.kama_period !== undefined) query.set('kama_period', String(params.kama_period));
-  const url = `${import.meta.env.VITE_API_BASE_URL}/future/ohlc-5m/${symbol}?${query}`;
+  const url = `${API_BASE_URL}/future/ohlc-5m/${symbol}?${query}`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
@@ -86,7 +87,7 @@ export async function fetchRlExits(
   if (params?.max_hold !== undefined) query.set('max_hold', String(params.max_hold));
   if (params?.avwap_short !== undefined) query.set('avwap_short', String(params.avwap_short));
   if (params?.avwap_long !== undefined) query.set('avwap_long', String(params.avwap_long));
-  const url = `${import.meta.env.VITE_API_BASE_URL}/future/rl-exits/${symbol}?${query}`;
+  const url = `${API_BASE_URL}/future/rl-exits/${symbol}?${query}`;
   const res = await fetch(url);
   if (!res.ok) {
     const detail = await res.json().catch(() => ({}));

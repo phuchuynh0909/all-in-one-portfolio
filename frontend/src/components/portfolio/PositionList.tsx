@@ -4,17 +4,10 @@ import Button from '@mui/material/Button';
 import { DataGrid } from '@mui/x-data-grid';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { apiGet } from '../../lib/api';
+import { API_BASE_URL, apiGet } from '../../lib/api';
 import PositionForm from './PositionForm';
-
-type Position = {
-  id: number;
-  ticker: string;
-  quantity: number;
-  purchase_price: number;
-  purchase_date: string;
-  notes: string | null;
-};
+import type { Position } from '../../lib/services/portfolio';
+import { ErrorState } from '../ui';
 
 type PositionListProps = {
   /** Called after a position is created, edited, or deleted here — lets a
@@ -27,6 +20,7 @@ export default function PositionList({ onDataChanged }: PositionListProps) {
   const [positions, setPositions] = useState<Position[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(10);
   const [formOpen, setFormOpen] = useState(false);
   const [editPosition, setEditPosition] = useState<Position | undefined>();
 
@@ -54,7 +48,7 @@ export default function PositionList({ onDataChanged }: PositionListProps) {
 
     try {
       const res = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL}/portfolio/positions/${id}`,
+        `${API_BASE_URL}/portfolio/positions/${id}`,
         { method: 'DELETE' }
       );
       if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -124,14 +118,14 @@ export default function PositionList({ onDataChanged }: PositionListProps) {
 
   return (
     <Box sx={{ height: 400, width: '100%', margin: '0 auto' }}>
+      {error && <ErrorState error={error} title="Could not load positions" onRetry={loadPositions} />}
       <DataGrid
         rows={positions}
         columns={columns}
         loading={loading}
-        initialState={{
-          pagination: { pageSize: 10 },
-        }}
-        pageSizeOptions={[10, 25, 50]}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
+        rowsPerPageOptions={[10, 25, 50]}
       />
 
       <Box sx={{ mt: 2 }}>

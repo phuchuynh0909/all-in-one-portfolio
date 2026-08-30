@@ -14,7 +14,6 @@ import type {
   IChartingLibraryWidget,
   IExecutionLineAdapter,
   LanguageCode,
-  ResolutionString,
 } from '../lib/tv';
 import {
   futureStore,

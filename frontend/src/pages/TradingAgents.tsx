@@ -1,6 +1,6 @@
 import React from 'react';
+import { PageContainer, PageHeader, Panel, EmptyState } from '../components/ui';
 import {
-  Container,
   Box,
   Typography,
   TextField,
@@ -69,11 +69,11 @@ const AGENT_META: Record<string, AgentMeta> = {
 };
 
 const PIPELINE: { group: string; tint: string; items: string[] }[] = [
-  { group: 'Data Analysis', tint: '#3b82f6', items: ['market', 'news', 'fundamentals'] },
-  { group: 'Research Debate', tint: '#f59e0b', items: ['research_debate', 'research_manager'] },
-  { group: 'Action', tint: '#8b5cf6', items: ['trader'] },
-  { group: 'Risk Check', tint: '#ef4444', items: ['risk_debate'] },
-  { group: 'Decision', tint: '#22c55e', items: ['final'] },
+  { group: 'Data Analysis', tint: 'var(--color-chart-series-6)', items: ['market', 'news', 'fundamentals'] },
+  { group: 'Research Debate', tint: 'var(--color-accent)', items: ['research_debate', 'research_manager'] },
+  { group: 'Action', tint: 'var(--color-chart-series-3)', items: ['trader'] },
+  { group: 'Risk Check', tint: 'var(--color-short)', items: ['risk_debate'] },
+  { group: 'Decision', tint: 'var(--color-long)', items: ['final'] },
 ];
 
 const FLAT_ORDER = PIPELINE.flatMap((s) => s.items);
@@ -89,12 +89,12 @@ const signalColor = (signal: string): 'success' | 'error' | 'warning' | 'default
 };
 
 const signalHex = (signal?: string): string => {
-  if (!signal) return '#64748b';
+  if (!signal) return 'var(--color-text-tertiary)';
   const s = signal.toUpperCase();
-  if (s.includes('BUY')) return '#22c55e';
-  if (s.includes('SELL')) return '#ef4444';
-  if (s.includes('HOLD')) return '#f59e0b';
-  return '#64748b';
+  if (s.includes('BUY')) return 'var(--color-long)';
+  if (s.includes('SELL')) return 'var(--color-short)';
+  if (s.includes('HOLD')) return 'var(--color-warning)';
+  return 'var(--color-text-tertiary)';
 };
 
 const formatWhen = (iso: string): string => {
@@ -368,36 +368,30 @@ const TradingAgents: React.FC = () => {
   ];
 
   return (
-    <Container maxWidth="lg">
-      <Box sx={{ py: 3 }}>
-        {/* Header */}
-        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 2 }}>
-          <Box>
-            <Typography variant="h4" component="h1" sx={{ fontWeight: 700 }}>
-              🤝 AI Trading Council
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Multi-agent analysis over Vietnamese-market data — analysts debate, a trader acts, a
-              risk team checks, and a portfolio manager decides.
-            </Typography>
-          </Box>
-          {health && (
-            <Tooltip title={health.message}>
-              <Chip
-                size="small"
-                label={
-                  health.ollama_reachable
-                    ? `${(health.providers ?? [health.provider]).join(' + ')} · ${
-                        health.deep_think_llm
-                      }`
-                    : `${(health.providers ?? [health.provider]).join(' + ')} not ready`
-                }
-                color={health.ollama_reachable ? 'success' : 'error'}
-                variant="outlined"
-              />
-            </Tooltip>
-          )}
-        </Box>
+    <PageContainer>
+      <>
+        <PageHeader
+          title="Trading Agents"
+          description="Multi-agent analysis over Vietnamese-market data — analysts debate, a trader acts, a risk team checks, and a portfolio manager decides."
+          actions={
+            health && (
+              <Tooltip title={health.message}>
+                <Chip
+                  size="small"
+                  label={
+                    health.ollama_reachable
+                      ? `${(health.providers ?? [health.provider]).join(' + ')} · ${
+                          health.deep_think_llm
+                        }`
+                      : `${(health.providers ?? [health.provider]).join(' + ')} not ready`
+                  }
+                  color={health.ollama_reachable ? 'success' : 'error'}
+                  variant="outlined"
+                />
+              </Tooltip>
+            )
+          }
+        />
 
         {/* Controls */}
         <Paper sx={{ p: 2, mb: 3 }}>
@@ -579,15 +573,12 @@ const TradingAgents: React.FC = () => {
         )}
 
         {!hasRun && !error && (
-          <Paper variant="outlined" sx={{ p: 6, textAlign: 'center', borderStyle: 'dashed' }}>
-            <Typography variant="h6" color="text.secondary" gutterBottom>
-              Convene the council
-            </Typography>
-            <Typography variant="body2" color="text.secondary">
-              Enter a symbol (e.g. FPT) and run an analysis to watch the agents work through their
-              pipeline and reach a decision.
-            </Typography>
-          </Paper>
+          <Panel>
+            <EmptyState
+              title="Convene the council"
+              description="Enter a symbol (e.g. FPT) and run an analysis to watch the agents work through their pipeline and reach a decision."
+            />
+          </Panel>
         )}
 
         {hasRun && (
@@ -598,9 +589,19 @@ const TradingAgents: React.FC = () => {
               sx={{
                 p: 3,
                 mb: 3,
-                borderRadius: 3,
-                color: '#fff',
-                background: 'linear-gradient(135deg, #1e3a5f 0%, #2d1b4e 100%)',
+                position: 'relative',
+                overflow: 'hidden',
+                bgcolor: 'surface.raised',
+                borderColor: 'line.default',
+                // Signal-coloured spine: the decision is the headline of this card.
+                '&::before': {
+                  content: '\'\'',
+                  position: 'absolute',
+                  insetBlock: 0,
+                  left: 0,
+                  width: 3,
+                  bgcolor: signalHex(decision?.signal),
+                },
               }}
             >
               <Box
@@ -632,7 +633,7 @@ const TradingAgents: React.FC = () => {
                       fontSize: '1rem',
                       py: 2.2,
                       px: 1,
-                      color: '#fff',
+                      color: 'surface.canvas',
                       bgcolor: signalHex(decision?.signal),
                     }}
                   />
@@ -654,8 +655,9 @@ const TradingAgents: React.FC = () => {
                     sx={{
                       p: 1.5,
                       borderRadius: 2,
-                      bgcolor: 'rgba(255,255,255,0.08)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      bgcolor: 'surface.inset',
+                      border: 1,
+                      borderColor: 'line.subtle',
                     }}
                   >
                     <Typography variant="caption" sx={{ opacity: 0.7, textTransform: 'uppercase' }}>
@@ -663,7 +665,7 @@ const TradingAgents: React.FC = () => {
                     </Typography>
                     <Typography
                       variant="h6"
-                      sx={{ fontWeight: 700, color: s.accent ?? '#fff', wordBreak: 'break-word' }}
+                      sx={{ fontWeight: 700, color: s.accent ?? 'text.primary', wordBreak: 'break-word' }}
                     >
                       {s.value}
                     </Typography>
@@ -801,8 +803,8 @@ const TradingAgents: React.FC = () => {
             </Alert>
           </>
         )}
-      </Box>
-    </Container>
+      </>
+    </PageContainer>
   );
 };
 

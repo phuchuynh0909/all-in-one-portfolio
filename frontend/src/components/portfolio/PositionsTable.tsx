@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { Box, Button, Chip } from '@mui/material';
-import { DataGrid, GridColDef } from '@mui/x-data-grid';
+import { DataGrid } from '@mui/x-data-grid';
+import type { GridColDef } from '@mui/x-data-grid';
 import ClosePositionDialog from './ClosePositionDialog';
 
 type Position = {
@@ -20,6 +21,7 @@ type PositionsTableProps = {
 };
 
 export default function PositionsTable({ positions, onPositionUpdate }: PositionsTableProps) {
+  const [pageSize, setPageSize] = useState(10);
   const [closeDialogOpen, setCloseDialogOpen] = useState(false);
   const [selectedPosition, setSelectedPosition] = useState<Position | null>(null);
 
@@ -145,13 +147,14 @@ export default function PositionsTable({ positions, onPositionUpdate }: Position
           rows={positionsWithPL}
           columns={columns}
           initialState={{
-            pagination: { pageSize: 10 },
             sorting: {
               sortModel: [{ field: 'purchase_date', sort: 'desc' }],
             },
           }}
-          pageSizeOptions={[10, 25, 50]}
-          disableRowSelectionOnClick
+          pageSize={pageSize}
+          onPageSizeChange={setPageSize}
+          rowsPerPageOptions={[10, 25, 50]}
+          disableSelectionOnClick
         />
       </Box>
 

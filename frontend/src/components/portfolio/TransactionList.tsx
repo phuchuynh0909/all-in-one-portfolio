@@ -6,21 +6,10 @@ import { DataGrid } from '@mui/x-data-grid';
 import type { GridColDef } from '@mui/x-data-grid';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { apiGet } from '../../lib/api';
+import { API_BASE_URL, apiGet } from '../../lib/api';
 import TransactionForm from './TransactionForm';
-
-interface Transaction {
-  id: number;
-  ticker: string;
-  // Dividend rows share the transactions ledger; buy|sell alone was false.
-  transaction_type: 'buy' | 'sell' | 'dividend_cash' | 'dividend_stock';
-  quantity: number;
-  price: number;
-  close_price?: number;
-  transaction_date: string;
-  fees: number;
-  notes?: string;
-}
+import type { Transaction } from '../../lib/services/portfolio';
+import { ErrorState } from '../ui';
 
 interface TransactionWithPL extends Transaction {
   realized_pl?: number;
@@ -87,7 +76,7 @@ export default function TransactionList() {
 
     try {
       const res = await fetch(
-        `${import.meta.env.VITE_API_BASE_URL}/portfolio/transactions/${id}`,
+        `${API_BASE_URL}/portfolio/transactions/${id}`,
         { method: 'DELETE' }
       );
       if (!res.ok) throw new Error(`Error ${res.status}`);
@@ -194,6 +183,9 @@ export default function TransactionList() {
 
   return (
     <Box sx={{ width: '100%' }}>
+      {error && (
+        <ErrorState error={error} title="Could not load transactions" onRetry={loadTransactions} />
+      )}
       <DataGrid
         rows={transactions}
         columns={columns}
@@ -206,9 +198,6 @@ export default function TransactionList() {
         }}
         rowsPerPageOptions={[10, 25, 50, 100]}
         pageSize={25}
-        onPageChange={(page) => {
-          console.log('Page changed:', page);
-        }}
       />
 
       <Box sx={{ mt: 2 }}>

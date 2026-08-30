@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { API_BASE_URL } from '../api';
 
 // ============================================================================
 // Strategy Backtest Types (original)
@@ -47,7 +48,7 @@ export interface BacktestRequest {
 }
 
 export const fetchBacktest = async (params: BacktestRequest): Promise<BacktestResponse> => {
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/backtest`, {
+  const response = await fetch(`${API_BASE_URL}/backtest`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -155,7 +156,7 @@ export interface BacktestPlotResponse {
 
 // Fetch available symbols from watchlist
 export const fetchWatchlistSymbols = async (): Promise<string[]> => {
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/backtest/watchlist`);
+  const response = await fetch(`${API_BASE_URL}/backtest/watchlist`);
 
   if (!response.ok) {
     throw new Error(`Error ${response.status}: ${await response.text()}`);
@@ -166,7 +167,7 @@ export const fetchWatchlistSymbols = async (): Promise<string[]> => {
 
 // Fetch H5 backtest results (optionally filtered by symbol)
 export const fetchH5BacktestResults = async (symbol?: string): Promise<H5BacktestResultsResponse> => {
-  const url = new URL(`${import.meta.env.VITE_API_BASE_URL}/backtest/h5/results`);
+  const url = new URL(`${API_BASE_URL}/backtest/h5/results`);
   if (symbol) {
     url.searchParams.set('symbol', symbol);
   }
@@ -205,7 +206,7 @@ export const fetchBacktestPlot = async (
   startDate?: string,
   strategy?: string,
 ): Promise<BacktestPlotResponse> => {
-  const url = new URL(`${import.meta.env.VITE_API_BASE_URL}/backtest/plot`);
+  const url = new URL(`${API_BASE_URL}/backtest/plot`);
   url.searchParams.set('symbol', symbol);
   if (startDate) {
     url.searchParams.set('start_date', startDate);
@@ -234,7 +235,7 @@ export const useBacktestPlot = (symbol: string, startDate?: string, strategy?: s
 
 // Fetch the ordered list of strategies available on the visualisation page
 export const fetchBacktestPlotStrategies = async (): Promise<string[]> => {
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/backtest/plot/strategies`);
+  const response = await fetch(`${API_BASE_URL}/backtest/plot/strategies`);
 
   if (!response.ok) {
     throw new Error(`Error ${response.status}: ${await response.text()}`);

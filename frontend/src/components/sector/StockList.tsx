@@ -1,9 +1,6 @@
 import { useEffect, useState } from 'react';
-import {
-  DataGrid,
-  GridColDef,
-  GridValueFormatterParams,
-} from '@mui/x-data-grid';
+import { DataGrid } from '@mui/x-data-grid';
+import type { GridColDef, GridValueFormatterParams } from '@mui/x-data-grid';
 import { Box, Typography } from '@mui/material';
 import { apiGet } from '../../lib/api';
 
@@ -39,6 +36,7 @@ export default function StockList({
   const [stocks, setStocks] = useState<Stock[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [pageSize, setPageSize] = useState(10);
 
   useEffect(() => {
     if (!sectorId) return;
@@ -73,10 +71,9 @@ export default function StockList({
         columns={columns}
         loading={loading}
         error={error}
-        initialState={{
-          pagination: { paginationModel: { pageSize: 10 } },
-        }}
-        pageSizeOptions={[10, 25, 50]}
+        pageSize={pageSize}
+        onPageSizeChange={setPageSize}
+        rowsPerPageOptions={[10, 25, 50]}
       />
     </Box>
   );

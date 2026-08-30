@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -18,8 +18,8 @@ import {
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
-import { closePosition, ClosePositionRequest, ClosePositionResponse } from '../../lib/services/portfolio';
-
+import { closePosition } from '../../lib/services/portfolio';
+import type { ClosePositionRequest, ClosePositionResponse } from '../../lib/services/portfolio';
 type Position = {
   id: number;
   ticker: string;

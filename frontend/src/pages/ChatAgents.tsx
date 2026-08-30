@@ -246,8 +246,10 @@ const ChatAgents = () => {
       sx={{
         display: 'flex',
         flexDirection: 'column',
-        height: '100%',
-        bgcolor: 'background.default',
+        // Fill the viewport below the app bar so the transcript scrolls
+        // internally rather than growing the page.
+        height: 'calc(100vh - var(--layout-app-bar-height))',
+        bgcolor: 'surface.canvas',
       }}
     >
       {/* Header */}

@@ -15,9 +15,7 @@ export default function CurrentPortfolioPieChart({ positions }: CurrentPortfolio
 
   const totalValue = Object.values(grouped).reduce((s, p) => s + p.totalValue, 0);
 
-  const formatCurrency = (v: number) =>
-    v.toLocaleString('vi-VN', { style: 'currency', currency: 'VND', minimumFractionDigits: 0, maximumFractionDigits: 0 });
-
+  
   const pieData = Object.values(grouped).map((p, index) => {
     const weight = p.totalValue / totalValue;
     return {

@@ -1,5 +1,6 @@
 import type { UTCTimestamp } from 'lightweight-charts';
 import { subDays, format } from 'date-fns';
+import { API_BASE_URL } from '../api';
 
 export interface TimeseriesResponse {
   symbol: string;
@@ -115,7 +116,7 @@ export interface BarsResponse extends TimeseriesResponse {
 }
 
 export const fetchBars = async (symbol: string, params: BarsRequest): Promise<BarsResponse> => {
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/${symbol}/bars`, {
+  const response = await fetch(`${API_BASE_URL}/timeseries/${symbol}/bars`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -131,7 +132,7 @@ export const fetchBars = async (symbol: string, params: BarsRequest): Promise<Ba
 };
 
 export const fetchTimeseries = async (symbol: string, params: TimeseriesRequest): Promise<TimeseriesResponse> => {
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/${symbol}`, {
+  const response = await fetch(`${API_BASE_URL}/timeseries/${symbol}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -257,7 +258,7 @@ export interface SectorTimeseries {
 }
 
 export const fetchSectorTimeseries = async (level: number, params: TimeseriesRequest): Promise<SectorTimeseries> => {
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/sector/${level}`, {
+  const response = await fetch(`${API_BASE_URL}/timeseries/sector/${level}`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
@@ -289,7 +290,7 @@ export interface MarketBreadthRequest {
 }
 
 export const fetchMarketBreadth = async (params: MarketBreadthRequest = {}): Promise<MarketBreadthResponse> => {
-  const response = await fetch(`${import.meta.env.VITE_API_BASE_URL}/timeseries/market/breadth`, {
+  const response = await fetch(`${API_BASE_URL}/timeseries/market/breadth`, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',

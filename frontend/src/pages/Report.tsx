@@ -1,8 +1,6 @@
 import React from 'react';
+import { PageContainer, PageHeader, Panel } from '../components/ui';
 import {
-  Container,
-  Typography,
-  Box,
   Button,
   CircularProgress,
   Snackbar,
@@ -118,13 +116,13 @@ const Report: React.FC = () => {
   }, [ragStatuses, loadRagStatuses]);
 
   return (
-    <Container maxWidth="xl">
-      <Box sx={{ py: 3 }}>
-        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
-          <Typography variant="h4" component="h1">
-            Research Reports
-          </Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+    <PageContainer>
+      <>
+        <PageHeader
+          title="Reports"
+          description="Broker research notes, parsed and embedded for retrieval by the analyst agents."
+          actions={
+            <>
             <TextField
               select
               size="small"
@@ -152,18 +150,21 @@ const Report: React.FC = () => {
               onClick={handleSync}
               disabled={isSyncing}
             >
-              {isSyncing ? 'Syncing...' : 'Sync Latest'}
+              {isSyncing ? 'Syncing…' : 'Sync latest'}
             </Button>
-          </Box>
-        </Box>
-        <ReportTable
-          reports={reports}
-          isLoading={isLoading}
-          onSymbolSearch={(symbol) => loadReports(symbol)}
-          ragStatuses={ragStatuses}
-          onEmbed={handleEmbed}
+            </>
+          }
         />
-      </Box>
+
+        <Panel flush>
+          <ReportTable
+            reports={reports}
+            isLoading={isLoading}
+            onSymbolSearch={(symbol) => loadReports(symbol)}
+            ragStatuses={ragStatuses}
+            onEmbed={handleEmbed}
+          />
+        </Panel>
 
       <AddReportDialog
         open={isAddOpen}
@@ -185,7 +186,8 @@ const Report: React.FC = () => {
           {notice?.message}
         </Alert>
       </Snackbar>
-    </Container>
+      </>
+    </PageContainer>
   );
 };
 

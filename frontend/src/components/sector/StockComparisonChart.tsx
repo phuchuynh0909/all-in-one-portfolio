@@ -312,7 +312,7 @@ export default function StockComparisonChart() {
         )}
 
         {/* Period Controls */}
-        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }} flexWrap>
+        <Stack direction="row" spacing={2} alignItems="center" sx={{ mb: 2 }} flexWrap="wrap">
           <ToggleButtonGroup
             value={period}
             exclusive

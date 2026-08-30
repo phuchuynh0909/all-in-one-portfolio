@@ -1,4 +1,4 @@
-import { apiPost, apiGet } from '../api';
+import { apiGet } from '../api';
 
 export interface PeriodSummary {
   label: string;

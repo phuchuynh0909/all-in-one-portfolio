@@ -2,17 +2,26 @@ import { useEffect, useMemo, useRef } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { Alert, Box, Stack, Typography } from '@mui/material';
 import { createChart, CandlestickSeries, createSeriesMarkers } from 'lightweight-charts';
-import type { IChartApi, ISeriesApi, SeriesMarker, UTCTimestamp } from 'lightweight-charts';
+import { useChartTheme } from '../../theme';
+import type {
+  IChartApi,
+  ISeriesApi,
+  ISeriesMarkersPluginApi,
+  SeriesMarker,
+  Time,
+  UTCTimestamp,
+} from 'lightweight-charts';
 import { fetchTimeseries, formatChartTime } from '../../lib/services/timeseries';
 import { getTrades } from '../../lib/experiments/queries';
 import { toUtcTimestamp } from '../../lib/experiments/time';
 import type { RunMeta, TradeRow } from '../../lib/experiments/types';
 
 export default function SymbolTab({ run, symbol }: { run: RunMeta; symbol: string | null }) {
+  const ct = useChartTheme();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const seriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
-  const markersRef = useRef<ReturnType<typeof createSeriesMarkers> | null>(null);
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
 
   const bars = useQuery({
     queryKey: ['experiments', 'ohlc', symbol, run.data_start, run.data_end],
@@ -50,7 +59,7 @@ export default function SymbolTab({ run, symbol }: { run: RunMeta; symbol: strin
         const entry: SeriesMarker<UTCTimestamp> = {
           time: toUtcTimestamp(t.entry_dt),
           position: 'belowBar',
-          color: '#22c55e',
+          color: ct.up,
           shape: 'arrowUp',
           text: `BUY @${Number(t.entry_price).toFixed(2)}`,
         };
@@ -59,25 +68,25 @@ export default function SymbolTab({ run, symbol }: { run: RunMeta; symbol: strin
         const exit: SeriesMarker<UTCTimestamp> = {
           time: toUtcTimestamp(t.exit_dt),
           position: 'aboveBar',
-          color: net >= 0 ? '#3b82f6' : '#ef4444',
+          color: net >= 0 ? ct.up : ct.down,
           shape: 'arrowDown',
           text: `${(net * 100).toFixed(1)}%`,
         };
         return [entry, exit];
       })
       .sort((a, b) => Number(a.time) - Number(b.time));
-  }, [trades.data, symbol]);
+  }, [trades.data, symbol, ct]);
 
   useEffect(() => {
     if (!containerRef.current || chartRef.current) return;
-    const chart = createChart(containerRef.current, { height: 460 });
+    const chart = createChart(containerRef.current, {
+      height: 460,
+      ...ct.lightweightChartOptions,
+    });
     chartRef.current = chart;
     seriesRef.current = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
+      ...ct.candlestick,
       borderVisible: false,
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
     });
     return () => {
       chart.remove();
@@ -86,6 +95,11 @@ export default function SymbolTab({ run, symbol }: { run: RunMeta; symbol: strin
       markersRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    chartRef.current?.applyOptions(ct.lightweightChartOptions);
+    seriesRef.current?.applyOptions(ct.candlestick);
+  }, [ct]);
 
   useEffect(() => {
     const series = seriesRef.current;

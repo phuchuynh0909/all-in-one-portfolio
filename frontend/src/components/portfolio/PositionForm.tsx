@@ -9,14 +9,7 @@ import {
   Stack,
 } from '@mui/material';
 import { API_BASE_URL } from '../../lib/api';
-
-type Position = {
-  ticker: string;
-  quantity: number;
-  purchase_price: number;
-  purchase_date: string;
-  notes?: string;
-};
+import type { Position } from '../../lib/services/portfolio';
 
 type PositionFormProps = {
   open: boolean;

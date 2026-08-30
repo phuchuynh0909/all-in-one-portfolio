@@ -1021,13 +1021,13 @@ export default function CWPage() {
                     xAxis={[
                       {
                         data: payoffCurve.map((point) => point.stockPrice),
-                        valueFormatter: (value) => fmtQuoteToVnd(value),
+                        valueFormatter: (value: number | null) => fmtQuoteToVnd(value ?? 0),
                         label: `${data.detail.base_stock_code || 'Underlying'} price at expiry`,
                       },
                     ]}
                     yAxis={[
                       {
-                        valueFormatter: (value) => fmtQuoteToVnd(value),
+                        valueFormatter: (value: number | null) => fmtQuoteToVnd(value ?? 0),
                       },
                     ]}
                     series={[
@@ -1050,7 +1050,7 @@ export default function CWPage() {
                     grid={{ horizontal: true, vertical: true }}
                     slotProps={{
                       legend: {
-                        position: { vertical: 'top', horizontal: 'right' },
+                        position: { vertical: 'top', horizontal: 'end' },
                       },
                     }}
                   />

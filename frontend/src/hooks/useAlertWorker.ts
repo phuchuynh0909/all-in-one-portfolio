@@ -3,6 +3,7 @@
  */
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { ISPAlert } from '../lib/services/ispAlerts';
+import { API_BASE_URL } from '../lib/api';
 
 interface UseAlertWorkerOptions {
   enabled: boolean;
@@ -23,7 +24,7 @@ export function useAlertWorker({
   interval,
   onAlertsReceived,
   onError,
-  apiBaseUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api/v1',
+  apiBaseUrl = API_BASE_URL,
 }: UseAlertWorkerOptions) {
   const workerRef = useRef<Worker | null>(null);
   const [isPolling, setIsPolling] = useState(false);
