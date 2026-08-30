@@ -92,3 +92,33 @@ def make_param_sweep_portfolio():
         close=wide_close, entries=entries, exits=exits,
         freq="1d", cash_sharing=False, init_cash=100,
     )
+
+
+def make_grouped_by_symbol_portfolio():
+    """The shape the real notebooks produce.
+
+    `from_signals(..., group_by=['symbol'])` requires a column level named
+    'symbol', and grouping makes vectorbt index its metric Series by *group*
+    labels (`('AAA',)`) while `wrapper.columns` keeps the full parameter tuple
+    (`(5, 'AAA')`). Label-aligning the two misses on every row, which silently
+    wrote NULL for every metric of a real run — hence the positional
+    alignment in the adapter.
+    """
+    idx = pd.date_range("2024-01-01", periods=60, freq="D")
+    close = pd.DataFrame(
+        {"AAA": np.linspace(10, 15, 60), "BBB": np.linspace(20, 18, 60)}, index=idx
+    )
+    columns = pd.MultiIndex.from_arrays(
+        [[5, 5], ["AAA", "BBB"]], names=["bb_window", "symbol"]
+    )
+    wide_close = pd.DataFrame(
+        np.column_stack([close["AAA"], close["BBB"]]), index=idx, columns=columns
+    )
+    entries = pd.DataFrame(False, index=idx, columns=columns)
+    exits = pd.DataFrame(False, index=idx, columns=columns)
+    entries.iloc[[5, 30], :] = True
+    exits.iloc[[18, 45], :] = True
+    return vbt.Portfolio.from_signals(
+        close=wide_close, entries=entries, exits=exits, freq="1d",
+        group_by=["symbol"], cash_sharing=False, init_cash=100,
+    )

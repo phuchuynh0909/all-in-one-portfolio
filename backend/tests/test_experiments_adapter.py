@@ -356,3 +356,28 @@ def test_metric_values_broadcasts_a_scalar_metric():
     from app.services.experiments.adapter import _metric_values
 
     assert _metric_values("total_return", 0.5, 3).tolist() == [0.5, 0.5, 0.5]
+
+
+def test_grouped_by_symbol_portfolio_yields_clean_symbols_and_real_metrics():
+    """Regression for the shape backtest_005d / backtest_012 actually produce.
+
+    Grouping by symbol indexes metrics by group label while wrapper.columns
+    keeps the parameter tuple; aligning those by label produced "(5, 'AAA')"
+    symbols and NULL metrics for every symbol of a real 200-symbol run.
+    """
+    from tests.experiments_fixtures import make_grouped_by_symbol_portfolio
+
+    pf = make_grouped_by_symbol_portfolio()
+    trades = build_trades(pf, run_id="r1")
+    stats = build_symbol_stats(pf, run_id="r1", trades=trades)
+
+    assert sorted(trades["symbol"].unique()) == ["AAA", "BBB"]
+    assert sorted(stats["symbol"]) == ["AAA", "BBB"]
+    for column in ["total_return", "sharpe", "max_drawdown", "win_rate"]:
+        assert stats[column].notna().all(), f"{column} is NaN: {stats[column].tolist()}"
+
+    np.testing.assert_allclose(
+        stats["total_return"].to_numpy(),
+        np.asarray(pf.total_return(), dtype="float64"),
+        rtol=1e-12,
+    )
