@@ -71,6 +71,38 @@ cannot corrupt it — a run missing from the catalog is fixed by a rebuild.
 
 ## Serving the page in dev
 
+The page reads Parquet over HTTP with DuckDB-WASM, so the store must be exposed
+as static assets. How that happens differs by run mode.
+
+### Docker (`make up`, the normal path)
+
+`docker-compose.yml` bind-mounts the store into the frontend container:
+
+```yaml
+- ./data/experiments:/app/public/experiment-data
+```
+
+A symlink in `frontend/public/` cannot be used here — it would resolve outside
+`/app` inside the container and 404.
+
+`node_modules` is the named volume `frontend_node_modules`, populated by
+`npm ci` when the **image** is built. Adding a frontend dependency therefore
+needs a rebuild, and because a non-empty named volume is never repopulated, the
+volume has to be dropped first:
+
+```bash
+docker compose rm -sf frontend
+docker volume rm all-in-one-portfolio_frontend_node_modules
+make rebuild-frontend
+```
+
+Symptom when this is skipped: `Failed to resolve import "@duckdb/duckdb-wasm"`
+with paths under `/app/`.
+
+### Host (`npm run dev` directly)
+
+
+
 The React page reads the Parquet directly with DuckDB-WASM, so the files must be
 reachable over HTTP. In dev that is a symlink into the Vite public dir:
 
@@ -79,6 +111,9 @@ mkdir -p data/experiments
 ln -sfn ../../data/experiments frontend/public/experiment-data
 cd frontend && npm run dev     # then open /experiments
 ```
+
+Do not create this symlink if you also run the Docker stack: the bind mount
+above covers that case, and the two would fight over the same path.
 
 Vite serves the symlinked directory and honours Range requests (verified: a
 range request returns `206 Partial Content`), which is what lets DuckDB read

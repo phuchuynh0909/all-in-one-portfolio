@@ -47,6 +47,12 @@ services:
       - ./frontend/tsconfig.node.json:/app/tsconfig.node.json
       - ./frontend/package.json:/app/package.json
       - ./frontend/package-lock.json:/app/package-lock.json
+      # Experiment store output. The page reads these Parquet files directly
+      # with DuckDB-WASM, so they must be served as static assets. A symlink in
+      # public/ cannot work here: it would resolve outside /app in the
+      # container. Named "experiment-data", not "experiments", to avoid
+      # colliding with the /experiments SPA route.
+      - ./data/experiments:/app/public/experiment-data
       - frontend_node_modules:/app/node_modules
     environment:
       - VITE_API_BASE_URL=http://localhost:8000/api/v1
