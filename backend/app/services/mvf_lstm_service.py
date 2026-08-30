@@ -12,9 +12,17 @@ this module serves the allocation you would actually put on as of the last bar.
 
 Training is the slow part (seconds per asset), so fitted weights are cached on
 disk under ``<model_path>/lstm_cache``, keyed by a fingerprint of the training
-data plus every knob that changes the fit. :func:`stream_mvf` is a generator of
-``(event, payload)`` pairs so the API can report per-asset progress while a run
-is still in flight.
+data plus every knob that changes the fit.
+
+The training window ends at a **cutoff**: 31 December of the previous calendar
+year. Everything the key depends on is anchored to it — the window start, the
+bars trained on, and the standardisation statistics — so a run on any day of
+the year reuses the same fitted model. Only forecasting and Σ see the fresh
+post-cutoff bars, and neither is cached. Before this, the window moved on both
+ends with every new bar, so the key changed daily and the cache never hit.
+
+:func:`stream_mvf` is a generator of ``(event, payload)`` pairs so the API can
+report per-asset progress while a run is still in flight.
 """
 from __future__ import annotations
 
@@ -80,11 +88,28 @@ class _Prepared:
     gkyz_mkt: pd.Series      # market (benchmark) volatility regime, aligned too
     universe: list[str]
     dropped: list[str]       # requested tickers without enough clean history
+    cutoff: pd.Timestamp     # last bar the models are allowed to train on
 
 
-def _panels(symbols: list[str], years: int) -> dict[str, pd.DataFrame]:
-    """Wide OHLCV panels (dates × symbols) from the ClickHouse EOD table."""
-    start = pd.Timestamp.now() - pd.DateOffset(years=years)
+def _train_cutoff(today: pd.Timestamp | None = None) -> pd.Timestamp:
+    """31 December of the previous calendar year.
+
+    Derived from the calendar rather than from the last loaded bar, so the value
+    is known before any data is fetched and cannot drift with a late feed.
+    """
+    now = pd.Timestamp.now() if today is None else pd.Timestamp(today)
+    return pd.Timestamp(year=now.year - 1, month=12, day=31)
+
+
+def _panels(symbols: list[str], years: int, cutoff: pd.Timestamp) -> dict[str, pd.DataFrame]:
+    """Wide OHLCV panels (dates × symbols) from the ClickHouse EOD table.
+
+    The window starts ``years`` before the cutoff, not before *now*: a start that
+    slides forward daily would change the training slice — and therefore the
+    cache key — on every run. Loading still runs to the latest bar, since the
+    forecast and Σ need the post-cutoff tail.
+    """
+    start = cutoff - pd.DateOffset(years=years)
     raw = _load_delta_stocks(
         symbols=symbols,
         start=start,
@@ -102,10 +127,10 @@ def _panels(symbols: list[str], years: int) -> dict[str, pd.DataFrame]:
     }
 
 
-def _prepare(req: MvfRequest, tickers: list[str]) -> _Prepared:
+def _prepare(req: MvfRequest, tickers: list[str], cutoff: pd.Timestamp) -> _Prepared:
     """Load prices, drop names without enough history, and build the GKYZ channels."""
     benchmark = req.benchmark.upper()
-    panels = _panels(sorted(set(tickers) | {benchmark}), req.years)
+    panels = _panels(sorted(set(tickers) | {benchmark}), req.years, cutoff)
     close = panels["close"]
 
     # The LSTM needs seq_len+1 bars to form a single training sequence; require a
@@ -124,10 +149,14 @@ def _prepare(req: MvfRequest, tickers: list[str]) -> _Prepared:
             f"usable: {universe or 'none'} | rejected: {dropped}"
         )
 
-    # ffill fills mid-series holidays/halts; dropna then trims only the leading
-    # warm-up where the youngest listing has no data yet.
-    prices = close[universe].ffill().dropna()
-    log_ret = np.log(prices).diff().dropna()
+    # ffill fills mid-series holidays/halts. Deliberately NOT dropna() across
+    # columns: that drops any row where *any* symbol is NaN, so one recently
+    # listed name silently truncated every other asset's history down to its own
+    # listing date. Leading NaNs are kept per column and handled per symbol;
+    # only rows where nothing trades at all are trimmed.
+    prices = close[universe].ffill()
+    prices = prices.loc[prices.notna().any(axis=1)]
+    log_ret = np.log(prices).diff().iloc[1:]
 
     # GKYZ (Garman-Klass-Yang-Zhang) volatility: OHLC-based, captures intraday
     # range + overnight gaps. We feed the rolling min-max normalised [0,1] value
@@ -149,7 +178,8 @@ def _prepare(req: MvfRequest, tickers: list[str]) -> _Prepared:
                 else pd.Series(0.0, index=log_ret.index))
 
     return _Prepared(prices=prices, log_ret=log_ret, gkyz_sym=panel[universe],
-                     gkyz_mkt=gkyz_mkt, universe=universe, dropped=dropped)
+                     gkyz_mkt=gkyz_mkt, universe=universe, dropped=dropped,
+                     cutoff=cutoff)
 
 
 def _asset_feat(prep: _Prepared, sym: str, z: pd.Series) -> np.ndarray:
@@ -176,11 +206,60 @@ def _make_sequences(feat: np.ndarray, tgt: np.ndarray,
 
 
 # ── training (with a per-symbol disk cache) ──────────────────────────────────
-def _fingerprint(sym: str, feat: np.ndarray, tgt: np.ndarray, req: MvfRequest) -> str:
+@dataclass
+class _TrainingSet:
+    """Everything derived from the pre-cutoff bars.
+
+    ``z_all`` spans the whole history but is standardised with pre-cutoff
+    statistics only: the model must be scaled the way it was fitted, and using
+    full-history moments would both leak the future into the input scaling and
+    make the cache key move with every new bar.
+    """
+
+    n_train: int             # leading bars at or before the cutoff
+    mu_r: pd.Series          # per-asset mean log-return, pre-cutoff
+    sd_r: pd.Series          # per-asset stdev, pre-cutoff
+    z_all: pd.DataFrame      # standardised log-returns over the full history
+
+
+def _training_set(prep: _Prepared) -> _TrainingSet:
+    pre = prep.log_ret.loc[prep.log_ret.index <= prep.cutoff]
+    n_train = len(pre)
+    if n_train == 0:
+        # Every name listed after the cutoff. Standardise on what exists so the
+        # run still produces an allocation; nothing will be cacheable.
+        logger.warning(
+            "MVF: no bars at or before the cutoff {}; standardising on the full "
+            "history and skipping the model cache", prep.cutoff.date(),
+        )
+        pre = prep.log_ret
+    mu_r = pre.mean()
+    sd_r = pre.std().replace(0, 1e-8)
+    return _TrainingSet(n_train=n_train, mu_r=mu_r, sd_r=sd_r,
+                        z_all=(prep.log_ret - mu_r) / sd_r)
+
+
+def _train_arrays(prep: _Prepared, ts: _TrainingSet,
+                  sym: str) -> tuple[np.ndarray, np.ndarray]:
+    """One asset's (features, targets) over its own pre-cutoff history.
+
+    Sliced per symbol, not by a shared row count: a name listed later than its
+    peers has leading NaNs in the panel, and those must not be fed to the model
+    or counted against the other assets' history.
+    """
+    z = ts.z_all[sym]
+    z = z[z.index <= prep.cutoff].dropna()
+    return _asset_feat(prep, sym, z), z.to_numpy(np.float32)
+
+
+def _fingerprint(sym: str, feat: np.ndarray, tgt: np.ndarray, req: MvfRequest,
+                 cutoff: pd.Timestamp) -> str:
     """SHA over the training data plus every knob that changes the fitted weights.
 
-    Any change (history, features, epochs, lr, batch, arch, seed, torch version)
-    yields a new key, so a stale model is never silently reused.
+    Any change (history, cutoff, features, epochs, lr, batch, arch, seed, torch
+    version) yields a new key, so a stale model is never silently reused. The
+    arrays cover only pre-cutoff bars, so the digest is stable within a year and
+    still catches an upstream revision of that history.
     """
     h = hashlib.sha256()
     h.update(sym.encode())
@@ -190,6 +269,7 @@ def _fingerprint(sym: str, feat: np.ndarray, tgt: np.ndarray, req: MvfRequest) -
         "seq_len": req.seq_len, "epochs": req.epochs, "lr": req.lr,
         "batch": req.batch_size, "seed": SEED, "feats": list(FEATURE_NAMES),
         "arch": ARCH, "torch": torch.__version__,
+        "cutoff": cutoff.strftime("%Y-%m-%d"), "years": req.years,
     }
     h.update(json.dumps(cfg, sort_keys=True, default=str).encode())
     return h.hexdigest()[:16]
@@ -214,9 +294,15 @@ def _train(feat: np.ndarray, tgt: np.ndarray, req: MvfRequest) -> PriceLSTM:
     return model
 
 
-def _train_cached(sym: str, feat: np.ndarray, tgt: np.ndarray,
-                  req: MvfRequest) -> tuple[PriceLSTM, str]:
-    path = _CACHE_DIR / f"mvf_{sym}_{_fingerprint(sym, feat, tgt, req)}.pt"
+def _train_cached(sym: str, feat: np.ndarray, tgt: np.ndarray, req: MvfRequest,
+                  cutoff: pd.Timestamp) -> tuple[PriceLSTM, str]:
+    """Fit on the pre-cutoff slice, reusing the stored weights when they match.
+
+    The cutoff is stamped into the filename so a year's models can be listed and
+    pruned without reading them.
+    """
+    stamp = cutoff.strftime("%Y%m%d")
+    path = _CACHE_DIR / f"mvf_{sym}_{stamp}_{_fingerprint(sym, feat, tgt, req, cutoff)}.pt"
     if not req.force_retrain and path.exists():
         model = PriceLSTM(**ARCH).to(DEVICE)
         model.load_state_dict(torch.load(path, map_location=DEVICE))
@@ -331,29 +417,43 @@ def stream_mvf(req: MvfRequest) -> Generator[tuple[str, dict], None, None]:
     failure — the caller is responsible for turning that into an ``error`` event.
     """
     tickers = list(dict.fromkeys(t.strip().upper() for t in req.tickers if t.strip()))
-    yield "started", {"tickers": tickers, "device": DEVICE, "horizon": req.horizon}
+    cutoff = _train_cutoff()
+    yield "started", {"tickers": tickers, "device": DEVICE, "horizon": req.horizon,
+                      "train_cutoff": cutoff.strftime("%Y-%m-%d")}
 
-    prep = _prepare(req, tickers)
+    prep = _prepare(req, tickers, cutoff)
     universe = prep.universe
+    ts = _training_set(prep)
     yield "loaded", {
         "universe": universe,
         "dropped": prep.dropped,
         "bars": len(prep.log_ret),
         "start": prep.prices.index[0].strftime("%Y-%m-%d"),
         "end": prep.prices.index[-1].strftime("%Y-%m-%d"),
+        "train_cutoff": cutoff.strftime("%Y-%m-%d"),
+        "train_bars": ts.n_train,
     }
 
-    # Standardise per asset over the full history — this is the production fit, so
-    # every observation is in-sample by design (validation lives in the notebook).
-    mu_r = prep.log_ret.mean()
-    sd_r = prep.log_ret.std().replace(0, 1e-8)
-    z_all = (prep.log_ret - mu_r) / sd_r
+    # Models are fitted through the cutoff and then rolled forward over the
+    # unseen tail — the same thing you would do in deployment, and what makes a
+    # fitted model reusable for a whole year.
+    z_all = ts.z_all
+    mu_r, sd_r = ts.mu_r, ts.sd_r
+    min_train = req.seq_len + req.horizon + 60
 
     models: dict[str, PriceLSTM] = {}
     for i, sym in enumerate(universe, start=1):
-        feat = _asset_feat(prep, sym, z_all[sym])
-        tgt = z_all[sym].to_numpy(np.float32)
-        models[sym], source = _train_cached(sym, feat, tgt, req)
+        feat_train, tgt_train = _train_arrays(prep, ts, sym)
+        if len(feat_train) >= min_train:
+            models[sym], source = _train_cached(sym, feat_train, tgt_train, req, cutoff)
+        else:
+            # Listed after the cutoff (or nearly so): there is no stable slice to
+            # key on, so fit on everything available and skip the cache rather
+            # than drop the name from the portfolio.
+            torch.manual_seed(SEED)
+            models[sym] = _train(_asset_feat(prep, sym, z_all[sym]),
+                                 z_all[sym].to_numpy(np.float32), req)
+            source = "trained-uncached"
         logger.info("MVF {} LSTM -> {} ({}/{})", source, sym, i, len(universe))
         yield "asset", {"symbol": sym, "index": i, "total": len(universe),
                         "source": source}
@@ -376,7 +476,17 @@ def stream_mvf(req: MvfRequest) -> Generator[tuple[str, dict], None, None]:
     # Σ: trailing historical daily returns. A single deterministic forecast path
     # gives a degenerate covariance and carries no cross-asset correlation, so the
     # co-movement estimate stays historical (and shrunk).
-    sigma = _shrunk_cov(prep.log_ret.iloc[-req.cov_lookback:][universe], req.cov_shrink)
+    # Rows where any asset has no return yet (a listing younger than the
+    # lookback) cannot contribute to a covariance, so they are dropped rather
+    # than shortening the lookback for everyone.
+    cov_window = prep.log_ret.iloc[-req.cov_lookback:][universe].dropna()
+    if len(cov_window) < len(universe):
+        logger.warning(
+            "MVF covariance window has {} rows for {} assets; Σ is poorly "
+            "conditioned — consider dropping the youngest names",
+            len(cov_window), len(universe),
+        )
+    sigma = _shrunk_cov(cov_window, req.cov_shrink)
 
     rf_ann = req.risk_free_rate * ANN
     w = _max_sharpe(mu_pred, sigma, rf_ann, req.max_weight)
@@ -405,6 +515,7 @@ def stream_mvf(req: MvfRequest) -> Generator[tuple[str, dict], None, None]:
     deployed = sum(h.alloc_value for h in holdings)
     result = MvfResult(
         as_of=as_of.strftime("%Y-%m-%d"),
+        train_cutoff=cutoff.strftime("%Y-%m-%d"),
         bars=len(prep.log_ret),
         universe=universe,
         dropped=prep.dropped,

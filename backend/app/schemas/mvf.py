@@ -51,6 +51,7 @@ class MvfHolding(BaseModel):
 
 class MvfResult(BaseModel):
     as_of: str                      # last bar the forecast starts from, YYYY-MM-DD
+    train_cutoff: str               # last bar the LSTMs were fitted on, YYYY-MM-DD
     bars: int
     universe: List[str]             # tickers actually modelled
     dropped: List[str]              # requested but lacking enough clean history
