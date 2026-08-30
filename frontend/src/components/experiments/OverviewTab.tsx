@@ -7,6 +7,7 @@ import {
   CartesianGrid, Legend, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts';
 import { getEquity, getSymbolStats } from '../../lib/experiments/queries';
+import { toIsoDate } from '../../lib/experiments/time';
 import type { RunMeta, SymbolStatRow } from '../../lib/experiments/types';
 
 const pct = (v: number | null) => (v == null ? '—' : `${(v * 100).toFixed(1)}%`);
@@ -76,9 +77,9 @@ export default function OverviewTab({ run, onSelectSymbol }: Props) {
             <ResponsiveContainer>
               <LineChart data={equity.data}>
                 <CartesianGrid strokeDasharray="3 3" />
-                <XAxis dataKey="dt" tickFormatter={(v) => String(v).slice(0, 10)} minTickGap={40} />
+                <XAxis dataKey="dt" tickFormatter={toIsoDate} minTickGap={40} />
                 <YAxis />
-                <Tooltip />
+                <Tooltip labelFormatter={toIsoDate} />
                 <Legend />
                 <Line type="monotone" dataKey="value" name="Strategy" dot={false} />
                 <Line type="monotone" dataKey="benchmark_value" name="Benchmark" dot={false}

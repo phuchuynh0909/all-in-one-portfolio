@@ -33,6 +33,31 @@
 2. **No `fcntl` lock on the catalog.** `catalog.json` is rebuilt in full from `runs/*/meta.json` after every write and written atomically via `os.replace`. A full rebuild is inherently correct under concurrency, so the lock the spec proposed is unnecessary.
 3. **No frontend test runner is added.** The repo has none, and adding vitest for this work is out of scope. Instead the two risky analytical queries live in shared `.sql` files that TypeScript imports with Vite's `?raw` and the existing pytest suite executes against native DuckDB (same SQL engine as DuckDB-WASM). React components are covered by `npm run build` and `npm run lint`.
 
+## Corrections found during execution (browser-verified)
+
+The plan's frontend design was written before DuckDB-WASM had ever run. Four
+things were wrong and are fixed in the shipped code:
+
+1. **`registerFileURL` does not work here.** Registering a Parquet under a name
+   and querying that name fails: DuckDB treats the name as a filesystem path and
+   globs it ("No files found that match the pattern"), with or without slashes.
+   Passing the **absolute URL** straight to `read_parquet` works and still uses
+   range requests, so registration was dropped entirely.
+2. **One connection cannot serve concurrent queries.** The Overview tab fires
+   `getEquity` and `getSymbolStats` together; two simultaneous prepared
+   statements deadlock and never settle, so the tab spins forever with no error.
+   All queries are now serialized through a promise queue.
+3. **DuckDB-WASM cannot bind a JS array to a `DOUBLE[]` parameter** ("Invalid
+   column type encountered for argument 0"), though native DuckDB can. The
+   `.sql` files keep the `?::DOUBLE[]` parameter so pytest still binds it; the
+   browser substitutes a validated numeric literal before executing.
+4. **Timestamps arrive as epoch-millisecond numbers, not ISO strings.** Every
+   `String(value).slice(0, 10)` formatter rendered `1704067200` into the UI, and
+   the chart markers were placed from a bad parse. `lib/experiments/time.ts` now
+   owns the conversion.
+
+---
+
 ## File Structure
 
 **Backend — `backend/app/services/experiments/`**

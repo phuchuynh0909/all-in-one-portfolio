@@ -15,6 +15,7 @@ platform.
 | [components.md](./components.md) | Per-deployable breakdown: backend, frontend, workers, vendored TradingAgents |
 | [data-and-integrations.md](./data-and-integrations.md) | Data stores, external market-data providers, and how they connect |
 | [deployment.md](./deployment.md) | Docker Compose topology, environments, and run commands |
+| [experiments.md](./experiments.md) | Experiment store: logging vectorbt runs to Parquet, querying with DuckDB, serving the `/experiments` page |
 
 ## The 30-second version
 

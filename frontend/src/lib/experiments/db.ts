@@ -4,7 +4,6 @@ import type { RunMeta } from './types';
 
 let dbPromise: Promise<AsyncDuckDB> | null = null;
 let connPromise: Promise<AsyncDuckDBConnection> | null = null;
-const registered = new Set<string>();
 
 /**
  * The WASM bundle is ~3 MB, so it is imported dynamically: pages other than
@@ -30,24 +29,24 @@ export async function getConnection(): Promise<AsyncDuckDBConnection> {
 }
 
 /**
- * Registers each run's Parquet by URL so DuckDB fetches byte ranges rather
- * than whole files. HTTP has no directory listing, so DuckDB cannot glob —
- * the file list always comes from the catalog.
+ * Absolute URL for a run's Parquet table.
+ *
+ * DuckDB's httpfs reads an http(s) URL directly and issues range requests for
+ * the column chunks a query touches. Registering files with registerFileURL
+ * was tried and does not work here: DuckDB treats the registered name as a
+ * filesystem path and globs it, failing with "No files found that match the
+ * pattern". Passing the URL straight to read_parquet is both simpler and the
+ * only form that resolves.
  */
-export async function registerRunFiles(runs: RunMeta[]): Promise<void> {
-  const duckdb = await import('@duckdb/duckdb-wasm');
-  if (!dbPromise) dbPromise = createDb();
-  const db = await dbPromise;
-  for (const run of runs) {
-    for (const rel of Object.values(run.files)) {
-      if (registered.has(rel)) continue;
-      await db.registerFileURL(rel, experimentFileUrl(rel), duckdb.DuckDBDataProtocol.HTTP, false);
-      registered.add(rel);
-    }
-  }
+export function tableUrl(run: RunMeta, table: keyof RunMeta['files']): string {
+  return new URL(experimentFileUrl(run.files[table]), window.location.origin).href;
 }
 
+/**
+ * A read_parquet(...) expression over one or more runs. HTTP has no directory
+ * listing, so DuckDB cannot glob — the file list always comes from the catalog.
+ */
 export function parquetList(runs: RunMeta[], table: keyof RunMeta['files']): string {
-  const files = runs.map((r) => `'${r.files[table]}'`).join(', ');
+  const files = runs.map((r) => `'${tableUrl(r, table)}'`).join(', ');
   return `read_parquet([${files}], union_by_name=true)`;
 }

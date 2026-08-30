@@ -5,6 +5,7 @@ import { createChart, CandlestickSeries, createSeriesMarkers } from 'lightweight
 import type { IChartApi, ISeriesApi, SeriesMarker, UTCTimestamp } from 'lightweight-charts';
 import { fetchTimeseries, formatChartTime } from '../../lib/services/timeseries';
 import { getTrades } from '../../lib/experiments/queries';
+import { toUtcTimestamp } from '../../lib/experiments/time';
 import type { RunMeta, TradeRow } from '../../lib/experiments/types';
 
 export default function SymbolTab({ run, symbol }: { run: RunMeta; symbol: string | null }) {
@@ -47,7 +48,7 @@ export default function SymbolTab({ run, symbol }: { run: RunMeta; symbol: strin
     return rows
       .flatMap((t) => {
         const entry: SeriesMarker<UTCTimestamp> = {
-          time: formatChartTime(String(t.entry_dt)),
+          time: toUtcTimestamp(t.entry_dt),
           position: 'belowBar',
           color: '#22c55e',
           shape: 'arrowUp',
@@ -56,7 +57,7 @@ export default function SymbolTab({ run, symbol }: { run: RunMeta; symbol: strin
         if (!t.exit_dt) return [entry];
         const net = Number(t.net_return ?? 0);
         const exit: SeriesMarker<UTCTimestamp> = {
-          time: formatChartTime(String(t.exit_dt)),
+          time: toUtcTimestamp(t.exit_dt),
           position: 'aboveBar',
           color: net >= 0 ? '#3b82f6' : '#ef4444',
           shape: 'arrowDown',

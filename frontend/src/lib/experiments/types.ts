@@ -31,9 +31,10 @@ export interface TradeRow {
   run_id: string;
   trade_id: number;
   symbol: string;
-  entry_dt: string;
+  /** Epoch milliseconds from Arrow; use lib/experiments/time helpers. */
+  entry_dt: number | string;
   entry_price: number;
-  exit_dt: string | null;
+  exit_dt: number | string | null;
   exit_price: number | null;
   size: number;
   pnl: number;
@@ -65,7 +66,8 @@ export interface SymbolStatRow {
 
 export interface EquityRow {
   run_id: string;
-  dt: string;
+  /** Epoch milliseconds from Arrow; use lib/experiments/time helpers. */
+  dt: number | string;
   value: number;
   returns: number | null;
   drawdown: number | null;

@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Alert, Box, MenuItem, Stack, TextField } from '@mui/material';
 import { DataGrid, type GridColDef } from '@mui/x-data-grid';
 import { DEFAULT_QUANTILES, getOutcomeBuckets } from '../../lib/experiments/queries';
+import { toIsoDate } from '../../lib/experiments/time';
 import type { RunMeta, TradeRow } from '../../lib/experiments/types';
 
 const OUTCOMES = [
@@ -12,9 +13,9 @@ const OUTCOMES = [
 const COLUMNS: GridColDef[] = [
   { field: 'symbol', headerName: 'Symbol', width: 100 },
   { field: 'entry_dt', headerName: 'Entry', width: 120,
-    valueFormatter: ({ value }) => String(value ?? '').slice(0, 10) },
+    valueFormatter: ({ value }) => toIsoDate(value) },
   { field: 'exit_dt', headerName: 'Exit', width: 120,
-    valueFormatter: ({ value }) => String(value ?? '').slice(0, 10) },
+    valueFormatter: ({ value }) => toIsoDate(value) },
   { field: 'net_return', headerName: 'Net Return', width: 120, type: 'number',
     valueFormatter: ({ value }) =>
       value == null ? '—' : `${((value as number) * 100).toFixed(2)}%` },
