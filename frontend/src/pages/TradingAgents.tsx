@@ -328,6 +328,13 @@ const TradingAgents: React.FC = () => {
   };
 
   const hasRun = started !== null || Object.keys(sections).length > 0 || decision !== null;
+
+  // The whole verdict, whichever source carries it. Longest wins: the streamed
+  // section and the stored decision are the same text, but a run interrupted
+  // mid-stream leaves a partial section behind while the saved row is complete.
+  const finalDecisionText = [sections.final, decision?.full]
+    .filter((t): t is string => typeof t === 'string' && t.trim().length > 0)
+    .sort((a, b) => b.length - a.length)[0];
   const asOf = started?.date ?? tradeDate ?? '';
   const displaySymbol = started?.symbol ?? symbol.trim().toUpperCase();
 
@@ -740,8 +747,14 @@ const TradingAgents: React.FC = () => {
               ))}
             </Box>
 
-            {/* Final decision (conclusion) */}
-            {sections.final !== undefined && (
+            {/* Final decision (conclusion).
+                `sections.final` streams in during a live run; `decision.full` is
+                the stored final_trade_decision returned by get_analysis. Both come
+                from the same upstream key, so prefer whichever is present and
+                render the card if either is — a saved row whose sections lack
+                'final' still has the decision, and dropping it left the panel
+                blank. */}
+            {finalDecisionText !== undefined && (
               <Card
                 variant="outlined"
                 sx={{ mb: 3, borderLeft: 6, borderLeftColor: signalHex(decision?.signal) }}
@@ -756,7 +769,7 @@ const TradingAgents: React.FC = () => {
                     )}
                   </Box>
                   <Divider sx={{ mb: 1 }} />
-                  <Markdown>{sections.final}</Markdown>
+                  <Markdown>{finalDecisionText}</Markdown>
                 </CardContent>
               </Card>
             )}
