@@ -23,3 +23,7 @@ notebooks/catboost_info
 .claude/settings.local.json
 **/.claude/settings.local.json
 lstm_cache/*
+
+# Experiment store output (Parquet + DuckDB views); never committed.
+data/experiments/
+frontend/public/experiments
