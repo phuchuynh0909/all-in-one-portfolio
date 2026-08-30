@@ -4,6 +4,9 @@ import {
 } from '@mui/material';
 import RunList from '../components/experiments/RunList';
 import OverviewTab from '../components/experiments/OverviewTab';
+import TradesTab from '../components/experiments/TradesTab';
+import AttributionTab from '../components/experiments/AttributionTab';
+import SymbolTab from '../components/experiments/SymbolTab';
 import { useCatalog } from '../lib/experiments/catalog';
 
 export default function Experiments() {
@@ -23,6 +26,9 @@ export default function Experiments() {
   }, [runs, selectedId]);
 
   const selectedRun = runs.find((r) => r.run_id === selectedId) ?? null;
+  const pooledRuns = comparedIds.length
+    ? runs.filter((r) => comparedIds.includes(r.run_id))
+    : selectedRun ? [selectedRun] : [];
 
   const toggleCompare = (id: string) =>
     setComparedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
@@ -75,9 +81,9 @@ export default function Experiments() {
             </Tabs>
             <Box>
               {tab === 0 && <OverviewTab run={selectedRun} onSelectSymbol={pickSymbol} />}
-              {tab > 0 && (
-                <Alert severity="info">This tab is added by a later task.</Alert>
-              )}
+              {tab === 1 && <TradesTab run={selectedRun} onSelectSymbol={pickSymbol} />}
+              {tab === 2 && <AttributionTab runs={pooledRuns} />}
+              {tab === 3 && <SymbolTab run={selectedRun} symbol={selectedSymbol} />}
             </Box>
           </>
         )}
