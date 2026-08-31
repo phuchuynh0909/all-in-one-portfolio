@@ -29,6 +29,60 @@ from clickhouse_driver import Client  # type: ignore
 from deltalake import DeltaTable
 
 
+SECTOR_WICHART = [
+  { "id": 70, "name": "Ngân hàng" },
+  { "id": 1, "name": "Quản lý và phát triển bất động sản" },
+  { "id": 26, "name": "Tập đoàn công nghiệp" },
+  { "id": 58, "name": "Sản phẩm thực phẩm" },
+  { "id": 72, "name": "Thị trường vốn" },
+  { "id": 35, "name": "Cơ sở hạ tầng giao thông" },
+  { "id": 67, "name": "Kim loại và khai khoáng" },
+  { "id": 41, "name": "Dịch vụ viễn thông đa dạng" },
+  { "id": 17, "name": "Phần mềm" },
+  { "id": 51, "name": "Khách sạn, nhà hàng và giải trí" },
+  { "id": 36, "name": "Tiện ích điện" },
+  { "id": 32, "name": "Vận tải hành khách hàng không" },
+  { "id": 68, "name": "Giấy và lâm sản" },
+  { "id": 37, "name": "Tiện ích khí đốt" },
+  { "id": 55, "name": "Bán lẻ chuyên dụng" },
+  { "id": 64, "name": "Hóa chất" },
+  { "id": 24, "name": "Kỹ thuật xây dựng" },
+  { "id": 54, "name": "Bán lẻ đa kênh" },
+  { "id": 33, "name": "Vận tải đường biển" },
+  { "id": 57, "name": "Đồ uống" },
+  { "id": 74, "name": "Bảo hiểm" },
+  { "id": 63, "name": "Dầu, khí đốt và nhiên liệu tiêu hao" },
+  { "id": 65, "name": "Vật liệu xây dựng" },
+  { "id": 50, "name": "Hàng may mặc, phụ kiện và hàng hóa xa xỉ" },
+  { "id": 14, "name": "Dược phẩm" },
+  { "id": 39, "name": "Tiện ích nước" },
+  { "id": 48, "name": "Hàng tiêu dùng lâu bền" },
+  { "id": 62, "name": "Thiết bị và dịch vụ năng lượng" },
+  { "id": 69, "name": "Dịch vụ tài chính" },
+  { "id": 34, "name": "Vận tải đường bộ và đường sắt" },
+  { "id": 53, "name": "Nhà phân phối" },
+  { "id": 25, "name": "Thiết bị điện" },
+  { "id": 16, "name": "Dịch vụ công nghệ thông tin" },
+  { "id": 29, "name": "Dịch vụ và cung cấp vật tư thương mại" },
+  { "id": 43, "name": "Phương tiện truyền thông" },
+  { "id": 46, "name": "Linh kiện ô tô" },
+  { "id": 11, "name": "Nhà cung cấp và dịch vụ chăm sóc sức khỏe" },
+  { "id": 66, "name": "Thùng đựng và bao bì" },
+  { "id": 40, "name": "Các nhà sản xuất điện độc lập và điện tái tạo" },
+  { "id": 60, "name": "Đồ gia dụng" },
+  { "id": 31, "name": "Vận tải hàng không và logistics" },
+  { "id": 27, "name": "Máy móc" },
+  { "id": 59, "name": "Thuốc lá" },
+  { "id": 20, "name": "Thiết bị, dụng cụ và linh kiện điện tử" },
+  { "id": 28, "name": "Công ty thương mại và nhà phân phối" },
+  { "id": 47, "name": "Ô tô" },
+  { "id": 10, "name": "Thiết bị và vật tư chăm sóc sức khỏe" },
+  { "id": 49, "name": "Sản phẩm giải trí" },
+  { "id": 52, "name": "Dịch vụ tiêu dùng đa dạng" },
+  { "id": 44, "name": "Giải trí" },
+  { "id": 30, "name": "Dịch vụ chuyên nghiệp" }
+]
+
 # ── config ────────────────────────────────────────────────────────────────────
 
 DELTA_SRC  = os.getenv("DELTA_TABLE_PATH", "s3://delta-table-storage/stocks")
@@ -43,7 +97,7 @@ def _get_delta_storage_options() -> dict[str, str]:
     return {
         "AWS_ACCESS_KEY_ID":         _get_env("AWS_ACCESS_KEY_ID",        "CzOwnLkEDXQy951AOqes"),
         "AWS_SECRET_ACCESS_KEY":     _get_env("AWS_SECRET_ACCESS_KEY",    "fdRe91TOtqTl0icUkZLsUnWvZa90aZ5qG5rVEf7S"),
-        "AWS_ENDPOINT_URL":          _get_env("AWS_ENDPOINT_URL",         "http://localhost:9000"),
+        "AWS_ENDPOINT_URL":          _get_env("AWS_ENDPOINT_URL",         "http://192.168.1.3:9000"),
         "AWS_ALLOW_HTTP":            "true",
         "AWS_EC2_METADATA_DISABLED": "true",
         "AWS_REGION":                _get_env("AWS_REGION",               "ap-southeast-1"),
@@ -52,7 +106,7 @@ def _get_delta_storage_options() -> dict[str, str]:
 
 
 def _get_ch_client() -> Client:
-    host = _get_env("CLICKHOUSE_HOST", "localhost")
+    host = _get_env("CLICKHOUSE_HOST", "192.168.1.3")
     port = int(_get_env("CLICKHOUSE_PORT", "9010"))
     try:
         return Client(

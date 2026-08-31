@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text
 
 from app.db.models.market import Sector, StockSymbol
+from app.services.sector_lists import SECTOR_LEVEL_5, level5_constituents
 from app.schemas.sector import StockSymbolCreate, SectorSummary
 
 
@@ -42,6 +43,14 @@ def upsert_stock_symbol(
 def get_stock_symbols_by_sector(
     db: Session, sector_id: int, level: int
 ) -> List[StockSymbol]:
+    if level == SECTOR_LEVEL_5:
+        # Level 5 membership is multi-tag and lives in the sector map, not in a
+        # stock_symbol column; look the rows up by symbol instead.
+        symbols = level5_constituents().get(int(sector_id), [])
+        if not symbols:
+            return []
+        return db.query(StockSymbol).filter(StockSymbol.symbol.in_(symbols)).all()
+
     if level == 1:
         return (
             db.query(StockSymbol)

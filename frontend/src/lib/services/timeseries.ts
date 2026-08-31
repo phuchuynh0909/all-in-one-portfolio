@@ -273,6 +273,201 @@ export const fetchSectorTimeseries = async (level: number, params: TimeseriesReq
   return response.json();
 };
 
+/** Both are outputs of the backend's `relative_strength_nb`, centred on zero. */
+export type SectorRsMetric = 'mansfield' | 'outperformance';
+
+/** `weekly` rolls closes up to one bar per calendar week before measuring, so
+ *  `window` and `lookback` then count weeks. */
+export type SectorRsTimeframe = 'daily' | 'weekly';
+
+export interface SectorRelativeStrengthRow {
+  id: number;
+  name: string;
+  /** Mansfield RS per date, aligned to `dates`. `null` = no bar that day, or warmup. */
+  values: (number | null)[];
+}
+
+export interface SectorRelativeStrength {
+  sector_level: string;
+  interval: string;
+  /** Symbol the ratio is taken against, e.g. VNINDEX. */
+  benchmark: string;
+  /** Rolling window behind the measure, in bars of `timeframe`. */
+  window: number;
+  /** Which measure `values` holds. */
+  metric: SectorRsMetric;
+  /** Bar size the values are computed on. */
+  timeframe: SectorRsTimeframe;
+  /** Oldest first, T-0 last. */
+  dates: string[];
+  rows: SectorRelativeStrengthRow[];
+}
+
+export interface SectorRelativeStrengthRequest {
+  /** Trading days to return, ending at T-0. */
+  lookback?: number;
+  /** Rolling window in bars; omit to take the timeframe's default (50 sessions / 10 weeks). */
+  window?: number;
+  /** Which measure to compute; defaults to Mansfield server-side. */
+  metric?: SectorRsMetric;
+  /** Bar size to compute on; defaults to daily server-side. */
+  timeframe?: SectorRsTimeframe;
+}
+
+export const fetchSectorRelativeStrength = async (
+  level: number,
+  params: SectorRelativeStrengthRequest = {},
+): Promise<SectorRelativeStrength> => {
+  const response = await fetch(`${API_BASE_URL}/timeseries/sector/${level}/relative-strength`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(params),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Error ${response.status}: ${await response.text()}`);
+  }
+
+  return response.json();
+};
+
+export interface SectorDominanceRow {
+  id: number;
+  name: string;
+  /** Composite 0-100. `null` when the sector has fewer than `min_constituents` symbols. */
+  score: number | null;
+  rs: number | null;
+  /** Mean cross-sectional rank over the window, 1 = strongest. */
+  mean_rank: number | null;
+  top_quintile_share: number | null;
+  breadth: number | null;
+  /** Slope of the RS line per bar. */
+  momentum: number | null;
+  turnover_share: number | null;
+  constituents: number;
+  /** Constituents that actually had an RS reading — the breadth denominator. */
+  constituents_rated: number;
+}
+
+export interface SectorDominance {
+  sector_level: string;
+  benchmark: string;
+  window: number;
+  metric: SectorRsMetric;
+  timeframe: SectorRsTimeframe;
+  lookback: number;
+  min_constituents: number;
+  as_of: string | null;
+  rows: SectorDominanceRow[];
+}
+
+export interface SectorDominanceRequest {
+  lookback?: number;
+  window?: number;
+  metric?: SectorRsMetric;
+  timeframe?: SectorRsTimeframe;
+  min_constituents?: number;
+}
+
+export const fetchSectorDominance = async (
+  level: number,
+  params: SectorDominanceRequest = {},
+): Promise<SectorDominance> => {
+  const response = await fetch(`${API_BASE_URL}/timeseries/sector/${level}/dominance`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!response.ok) throw new Error(`Error ${response.status}: ${await response.text()}`);
+  return response.json();
+};
+
+export interface SectorRotationRow {
+  id: number;
+  name: string;
+  /** Tails, oldest first. 100 = the benchmark. */
+  ratio: (number | null)[];
+  momentum: (number | null)[];
+}
+
+export interface SectorRotation {
+  sector_level: string;
+  benchmark: string;
+  window: number;
+  momentum_window: number;
+  timeframe: SectorRsTimeframe;
+  dates: string[];
+  rows: SectorRotationRow[];
+}
+
+export interface SectorRotationRequest {
+  tail?: number;
+  window?: number;
+  momentum_window?: number;
+  timeframe?: SectorRsTimeframe;
+}
+
+export const fetchSectorRotation = async (
+  level: number,
+  params: SectorRotationRequest = {},
+): Promise<SectorRotation> => {
+  const response = await fetch(`${API_BASE_URL}/timeseries/sector/${level}/rotation`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  });
+  if (!response.ok) throw new Error(`Error ${response.status}: ${await response.text()}`);
+  return response.json();
+};
+
+export interface SectorConstituentRow {
+  symbol: string;
+  name: string | null;
+  vonhoa_d: number | null;
+  /** Relative strength vs the benchmark. `null` = no series in ohlc_eod. */
+  rs: number | null;
+  /** 1-99 percentile against every constituent at this level. */
+  rs_rank: number | null;
+}
+
+export interface SectorConstituents {
+  sector_level: string;
+  sector_id: number;
+  benchmark: string;
+  window: number;
+  metric: SectorRsMetric;
+  timeframe: SectorRsTimeframe;
+  as_of: string | null;
+  covered: number;
+  mapped: number;
+  rows: SectorConstituentRow[];
+}
+
+export interface SectorConstituentsRequest {
+  window?: number;
+  metric?: SectorRsMetric;
+  timeframe?: SectorRsTimeframe;
+}
+
+export const fetchSectorConstituents = async (
+  level: number,
+  sectorId: number,
+  params: SectorConstituentsRequest = {},
+): Promise<SectorConstituents> => {
+  const response = await fetch(
+    `${API_BASE_URL}/timeseries/sector/${level}/${sectorId}/constituents`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(params),
+    },
+  );
+  if (!response.ok) throw new Error(`Error ${response.status}: ${await response.text()}`);
+  return response.json();
+};
+
 // Market Breadth Types
 export interface MarketBreadthResponse {
   timestamps: string[];

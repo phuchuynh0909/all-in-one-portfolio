@@ -23,7 +23,7 @@ PROJECT_ROOT = os.path.dirname(CURRENT_DIR)
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from app.utils.wichart import fetchMacroFrame
+from app.utils.wichart import fetchMacroFrame, fetchSectorFrame, sectorSymbol
 # INDEX_DIR = "D:\\fdata_ami\\MetaStock\\EOD\\Chi so"
 # INDEX_DIR = "D:\\dnse\\eod\\index"
 INDEX_DIR = "D:\\ami\\MetaStock\\EOD\\index"
@@ -439,6 +439,102 @@ def crawl_wichart_macro(full_refresh: bool = False, max_days: int = 20) -> pd.Da
     return macro_df
 
 
+# Level 3 has few enough sectors to take whole; level 4 has 157, most of them
+# too small to matter, so it is capped by market cap the way the standalone
+# wichart_sector crawler does.
+SECTOR_LEVELS = (3, 4)
+SECTOR_LEVEL_4_MIN_MARKET_CAP = float(_get_env("WICHART_SECTOR_L4_MIN_VONHOA", "10000"))
+SECTOR_HISTORY_START = _get_env("WICHART_SECTOR_HISTORY_START", "2020-01-01")
+
+
+def _sector_ids_by_level() -> dict[int, list[int]]:
+    """Wichart list ids to crawl per level, from the app's ``sector`` table.
+
+    The ids in that table *are* the wichart list ids for levels 3 and 4, so no
+    mapping is needed. Level 4 is filtered by ``vonhoa_d`` to keep the request
+    count near a hundred rather than two.
+    """
+    from app.db.base import SessionLocal
+    from app.db.models.market import Sector
+
+    ids_by_level: dict[int, list[int]] = {}
+    db = SessionLocal()
+    try:
+        for level in SECTOR_LEVELS:
+            query = db.query(Sector.id).filter(Sector.level == level)
+            if level == 4:
+                query = query.filter(Sector.vonhoa_d > SECTOR_LEVEL_4_MIN_MARKET_CAP)
+            ids_by_level[level] = [row[0] for row in query.all()]
+    finally:
+        db.close()
+    return ids_by_level
+
+
+@task(log_prints=True)
+def crawl_wichart_sectors(full_refresh: bool = False, max_days: int = 252) -> pd.DataFrame:
+    """Wichart sector indices, shaped as OHLC rows so they ride the ticker pipeline.
+
+    Same trick as ``crawl_wichart_macro``: each sector becomes a pseudo-symbol
+    (``SECTOR3_26``, see ``sectorSymbol``) with a flat bar —
+    open=high=low=close=index level — and zero volume. Levels 1 and 2 already
+    arrive as ``0001``/``0500`` from the MetaStock index files; this covers 3 and
+    4, which have no MetaStock source at all.
+
+    Unlike the macro endpoint, this one honours ``from``/``to``, so an
+    incremental run asks for ``max_days`` back instead of fetching the whole
+    history and slicing. Note the unit: these are index levels, not VND, so
+    anything aggregating across symbols has to exclude them — the watchlist in
+    ``_load_delta_stocks`` already does.
+    """
+    to_date = pd.Timestamp.today().normalize()
+    from_date = (
+        pd.Timestamp(SECTOR_HISTORY_START)
+        if full_refresh
+        else to_date - pd.Timedelta(days=max_days)
+    )
+
+    try:
+        ids_by_level = _sector_ids_by_level()
+    except Exception as exc:
+        # The crawler box may not reach MySQL. Skipping costs today's sector rows;
+        # failing here would cost the whole ticker run.
+        print(f"Cannot read sector ids from the database, skipping sectors: {exc}")
+        return pd.DataFrame()
+
+    requested = sum(len(v) for v in ids_by_level.values())
+    if not requested:
+        print("No sectors to crawl")
+        return pd.DataFrame()
+    print(
+        f"Sectors: requesting {requested} series "
+        f"({', '.join(f'L{k}={len(v)}' for k, v in ids_by_level.items())}) "
+        f"from {from_date.date()} to {to_date.date()}"
+    )
+
+    df = fetchSectorFrame(
+        ids_by_level,
+        from_date=from_date.strftime("%Y-%m-%d"),
+        to_date=to_date.strftime("%Y-%m-%d"),
+    )
+    if df.empty:
+        print("No sector rows crawled")
+        return pd.DataFrame()
+
+    value = df["value"].astype("float64")
+    sector_df = pd.DataFrame({
+        "date": pd.to_datetime(df["date"]),
+        "symbol": df["symbol"],
+        "open": value,
+        "high": value,
+        "low": value,
+        "close": value,
+        "volume": 0.0,
+    }).reset_index(drop=True)
+
+    print(f"Sectors: {len(sector_df):,} rows as {sector_df['symbol'].nunique()} pseudo-symbols")
+    return sector_df
+
+
 @task(log_prints=True)
 def sync_to_clickhouse(df: pd.DataFrame) -> int:
     normalized = _normalize_ohlc_df(df)
@@ -543,6 +639,28 @@ def convert_metastock_to_df(full_refresh: bool = False) -> pd.DataFrame:
             ).round(2)
     return all_symbol_ticker_df
 
+@task(log_prints=True)
+def build_level5_indices() -> int:
+    """Derive the level-5 sector indices from constituents and load ClickHouse.
+
+    Runs last and reads back from ClickHouse rather than riding the Delta merge:
+    the index chains constituent returns over the whole history, so it needs the
+    rows this flow has just synced, not the ~20 days in memory. The whole series
+    is recomputed each run — 24 sectors times ~1700 bars is nothing, and
+    ReplacingMergeTree makes the re-insert idempotent.
+    """
+    from app.services.stock_service import build_level5_sector_index
+
+    df = build_level5_sector_index()
+    if df.empty:
+        print("No level 5 indices built")
+        return 0
+
+    inserted = _insert_ohlc_df_to_clickhouse(_normalize_ohlc_df(df))
+    print(f"Level 5: inserted {inserted} index rows into ClickHouse")
+    return inserted
+
+
 @flow(log_prints=True)
 def sync_ticker_delta_table_pipeline(
     destination: str = "s3://delta-table-storage/stocks",
@@ -562,6 +680,15 @@ def sync_ticker_delta_table_pipeline(
     del macro_df
     gc.collect()
 
+    # Task 1c: Append the wichart sector indices (levels 3 and 4) as
+    # pseudo-symbols. Also after the rounding in Task 1 — index levels carry
+    # more than two decimals and the merge compares close with an epsilon.
+    sector_df = crawl_wichart_sectors(full_refresh=full_refresh)
+    if not sector_df.empty:
+        df = pd.concat([df, sector_df], ignore_index=True)
+    del sector_df
+    gc.collect()
+
     # Task 2: Sync data to Delta table — release df immediately after so merge
     # buffers don't overlap with the original frame in memory.
     sync_to_delta_table(df=df, destination=destination)
@@ -570,6 +697,10 @@ def sync_ticker_delta_table_pipeline(
 
     # Task 3: Sync only Delta CDF changes to ClickHouse
     sync_delta_cdf_to_clickhouse(destination=destination)
+
+    # Task 4: Derive the level-5 sector indices from the constituents that just
+    # landed. Must follow Task 3 — it reads them back out of ClickHouse.
+    build_level5_indices()
 
 
 # Run the flow

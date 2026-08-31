@@ -10,6 +10,15 @@ import base64
 
 SIGN_TOKEN = "ObBeWhVmYs3tP2Nz$C$FJ@P4AQfTjlPX"
 
+# The device-token check compares the user-agent against the session the
+# token was minted in: a short or mismatched UA gets "Không thể xác thực
+# thiết bị" (400) even with a valid token. Keep this in step with
+# DEFAULT_DEVICE_TOKEN whenever a new token is captured.
+BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36"
+)
+
 # The macro endpoints that widata.vn (wichart's public data front-end) calls
 # authenticate on a *device* token alone — no account login, no Bearer header.
 # Grab a fresh one from any widata.vn request (the `device-token` header, which
@@ -58,24 +67,35 @@ def getToken():
         "stime": now,
         "v": "v1"
     }
+    # The device cookie comes from getDeviceToken() (env-overridable) rather than
+    # being pinned here: login rejects a stale one outright, and this file used to
+    # carry its own older copy that had gone bad while the macro flow's token was
+    # still good.
+    device_token = getDeviceToken()
     headers = {
         'authority': 'wichart.vn',
         'host': 'wichart.vn',
         'accept': 'application/json, text/plain, */*',
         'Content-Type': 'application/json',
-        'Cookie': 'deviceToken=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1bmlxdWVJRCI6IjFiNTFhNjA4ODQyZjc2NjJjYmM2MGFkOGZjNDI3ZmFjIiwiZXhwaXJlcyI6IjIwMjYtMTItMzBUMDM6NDY6NTkuODU4WiIsImlhdCI6MTc2NzA2NjQxOX0.Cav-d5UMmAnMnjlFAgmtQk58HRcjZbM1HBanQCqhn9s',
+        'Cookie': 'deviceToken=' + device_token,
+        'device-token': device_token,
         'Nonce': nonce, 'Origin': 'https://wichart.vn', 'Referer': 'https://wichart.vn/login',
-        'sec-ch-ua': '"Google Chrome";v="117", "Not;A=Brand";v="8", "Chromium";v="117"',
+        'sec-ch-ua': '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
         'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"macOS"', 'sec-fetch-dest': 'empty',
         'sec-fetch-mode': 'cors', 'sec-fetch-site': 'same-origin', 'sec-gpc': '1',
-        'Sign': getSign(signData), 'Sign-Token': 'ObBeWhVmYs3tP2Nz$C$FJ@P4AQfTjlPX', 'Stime': str(now),
-        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/117.0.0.0 Safari/537.36',
+        'Sign': getSign(signData), 'Sign-Token': SIGN_TOKEN, 'Stime': str(now),
+        'user-agent': BROWSER_USER_AGENT,
         'v': 'v1',
         'visit-id': "089be3fa-3082-4dea-b940-67563d6d6144"
     }
 
-    response = requests.request("POST", url, headers=headers, data=json.dumps(payload))
+    response = requests.request("POST", url, headers=headers, data=json.dumps(payload), timeout=30)
     data = response.json()
+    if 'token' not in data:
+        raise RuntimeError(
+            f"wichart login failed: {data.get('message', data)}. A rejected device is usually a "
+            f"stale WICHART_DEVICE_TOKEN — capture a fresh one from a widata.vn request."
+        )
     return data['token']
 
 
@@ -115,7 +135,7 @@ def getDeviceHeaders(nonce, hashCode, stime, device_token=None):
         'sec-ch-ua': '"Not=A?Brand";v="99", "Google Chrome";v="151", "Chromium";v="151"',
         'sec-ch-ua-mobile': '?0', 'sec-ch-ua-platform': '"macOS"',
         'sec-fetch-dest': 'empty', 'sec-fetch-mode': 'cors', 'sec-fetch-site': 'cross-site',
-        'user-agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36',
+        'user-agent': BROWSER_USER_AGENT,
         'v': 'v1', 'nonce': nonce, 'sign': hashCode, 'sign-token': SIGN_TOKEN, 'stime': str(stime),
     }
 
@@ -188,6 +208,117 @@ def fetchMacroFrame(dims=None, table_name=None, start_date="2008-01-01", log=pri
     total_df = total_df.dropna(subset=['value'])
     total_df = total_df.drop(columns=['timestamp'])
     return total_df[['value', 'date', 'dim_name', 'key']].reset_index(drop=True)
+
+
+SECTOR_PRICE_URL = "https://wichart.vn/wichartapi/sector/nganh/gia"
+
+# Levels 3 and 4 reuse the same small integer ids (id 26 exists in both), and
+# padding them to four digits would collide with the level 1/2 ICB codes already
+# in ``ohlc_eod`` (``0001``, ``0500``). The level prefix is what keeps all four
+# apart, so every reader must build the symbol through here.
+def sectorSymbol(level, sector_id):
+    """Pseudo-symbol a sector's index series is stored under in ``ohlc_eod``."""
+    if int(level) in (1, 2):
+        return f"{int(sector_id):04d}"
+    return f"SECTOR{int(level)}_{int(sector_id)}"
+
+
+def fetchSectorSeries(sector_id, level, from_date, to_date, key="close"):
+    """One sector's index history: a list of ``{id, name, data}`` items.
+
+    ``data`` is ``[timestamp_ms, value]`` rows. Signed like the other wichart
+    endpoints — md5 over the query params plus nonce/stime/v and the shared
+    sign-token, sorted by key — but note the signature uses ``listID`` while the
+    query string sends ``listID[]``. Values are absolute index levels and do not
+    re-base with the requested window.
+
+    Authenticates on the device token alone, like the macro endpoints — this one
+    validates the signature and nothing else. Responses were byte-identical to
+    the logged-in variant across both levels, the full id range and history back
+    to 2008, so the account login it originally used bought nothing and is not
+    worth its fragility.
+    """
+    nonce = getNonce()
+    stime = int(time.time() * 1000)
+    sign_data = {
+        "from": from_date,
+        "key": key,
+        "listID": int(sector_id),
+        "nonce": nonce,
+        "sign-token": SIGN_TOKEN,
+        "stime": stime,
+        "to": to_date,
+        "type": int(level),
+        "v": "v1",
+    }
+    url = (
+        f"{SECTOR_PRICE_URL}?key={key}&type={int(level)}"
+        f"&listID[]={int(sector_id)}&from={from_date}&to={to_date}"
+    )
+    response = requests.get(
+        url,
+        headers=getDeviceHeaders(nonce, getSign(sign_data), stime),
+        timeout=30,
+    )
+    response.raise_for_status()
+    body = response.json()
+    if "enc" not in body:
+        raise RuntimeError(f"sector {level}/{sector_id}: unexpected response {body}")
+    return json.loads(decrypt(body["enc"]))
+
+
+def fetchSectorFrame(sector_ids_by_level, from_date, to_date, key="close", log=print):
+    """Sector index history as one tidy frame: ``date, symbol, value, level, sector_id, sector_name``.
+
+    ``sector_ids_by_level`` maps a level (3 or 4) to the wichart list ids to
+    pull; one request per sector, because the endpoint returns a single series
+    per call. A sector that errors is logged and skipped rather than failing the
+    whole crawl — with ~100 sequential requests, one bad id should not cost the
+    other ninety-nine.
+
+    No account login: this rides the device token like ``fetchMacroFrame``, so
+    ``WICHART_DEVICE_TOKEN`` is the only credential to refresh.
+    """
+    import pandas as pd
+
+    frames = []
+    failures = 0
+
+    for level, sector_ids in sector_ids_by_level.items():
+        for sector_id in sector_ids:
+            try:
+                items = fetchSectorSeries(sector_id, level, from_date, to_date, key=key)
+            except Exception as exc:
+                failures += 1
+                if log:
+                    log(f"  sector {level}/{sector_id}: {exc}")
+                continue
+
+            for item in items or []:
+                rows = item.get("data") or []
+                if not rows:
+                    continue
+                df = pd.DataFrame(rows, columns=["timestamp", "value"])
+                df["date"] = pd.to_datetime(df["timestamp"], unit="ms")
+                df["level"] = int(level)
+                df["sector_id"] = int(item.get("id", sector_id))
+                df["sector_name"] = item.get("name")
+                df["symbol"] = sectorSymbol(level, df["sector_id"].iloc[0])
+                frames.append(df.drop(columns=["timestamp"]))
+
+    columns = ["date", "symbol", "value", "level", "sector_id", "sector_name"]
+    if not frames:
+        if log:
+            log(f"No sector series fetched ({failures} failure(s))")
+        return pd.DataFrame(columns=columns)
+
+    total = pd.concat(frames, ignore_index=True).dropna(subset=["value"])
+    if log:
+        log(
+            f"Sectors: {len(total):,} rows across {total['symbol'].nunique()} series"
+            + (f", {failures} failure(s)" if failures else "")
+        )
+    return total[columns].reset_index(drop=True)
 
 
 def decrypt(encrypted_text):

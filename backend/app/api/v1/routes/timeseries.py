@@ -11,11 +11,25 @@ from app.schemas.timeseries import (
     MarketBreadthResponse,
     MarketBreadthRequest,
 )
-from app.schemas.sector import SectorTimeseries
+from app.schemas.sector import (
+    SectorConstituents,
+    SectorConstituentsRequest,
+    SectorDominance,
+    SectorDominanceRequest,
+    SectorRelativeStrength,
+    SectorRelativeStrengthRequest,
+    SectorRotation,
+    SectorRotationRequest,
+    SectorTimeseries,
+)
 from app.services.stock_service import (
     get_stock_timeseries,
     get_stock_bars,
     get_sector_timeseries,
+    get_sector_relative_strength,
+    get_sector_dominance,
+    get_sector_constituents,
+    get_sector_rotation,
     get_stock_indicators,
     get_market_indicators,
 )
@@ -92,6 +106,99 @@ async def sector_timeseries(
     return await get_sector_timeseries(
         sector_level=sector_level,
         db=db
+    )
+
+
+# Not @cache'd: fastapi-cache keys on the arguments, and the `db` session's repr
+# carries an object id, so every request would miss and grow the cache instead.
+@router.post("/sector/{sector_level}/relative-strength", response_model=SectorRelativeStrength)
+async def sector_relative_strength(
+    sector_level: str,
+    request: SectorRelativeStrengthRequest = SectorRelativeStrengthRequest(),
+    db: Session = Depends(get_db),
+) -> SectorRelativeStrength:
+    """
+    Relative strength of every sector at `sector_level` against VNINDEX.
+
+    Returns the last `lookback` sessions as a dense matrix (rows strongest-first
+    at T-0) — the shape the sector heatmap draws.
+    """
+    return await get_sector_relative_strength(
+        sector_level=sector_level,
+        lookback=request.lookback,
+        window=request.window,
+        metric=request.metric,
+        timeframe=request.timeframe,
+        db=db,
+    )
+
+
+@router.post("/sector/{sector_level}/dominance", response_model=SectorDominance)
+async def sector_dominance(
+    sector_level: str,
+    request: SectorDominanceRequest = SectorDominanceRequest(),
+    db: Session = Depends(get_db),
+) -> SectorDominance:
+    """
+    Rank sectors at `sector_level` by sustained leadership rather than latest RS.
+
+    Blends persistence, constituent breadth, RS momentum and turnover share, each
+    rank-scaled to 0-100. Every component is returned so the table can be sorted
+    on any of them.
+    """
+    return await get_sector_dominance(
+        sector_level=sector_level,
+        lookback=request.lookback,
+        window=request.window,
+        metric=request.metric,
+        timeframe=request.timeframe,
+        min_constituents=request.min_constituents,
+        db=db,
+    )
+
+
+@router.post("/sector/{sector_level}/rotation", response_model=SectorRotation)
+async def sector_rotation(
+    sector_level: str,
+    request: SectorRotationRequest = SectorRotationRequest(),
+    db: Session = Depends(get_db),
+) -> SectorRotation:
+    """
+    Relative rotation graph coordinates for `sector_level`: RS-ratio vs RS-momentum.
+
+    Both axes centre on 100 (the benchmark). Each sector carries a `tail` of bars
+    so the direction of travel through the quadrants is visible.
+    """
+    return await get_sector_rotation(
+        sector_level=sector_level,
+        tail=request.tail,
+        window=request.window,
+        momentum_window=request.momentum_window,
+        timeframe=request.timeframe,
+        db=db,
+    )
+
+
+@router.post("/sector/{sector_level}/{sector_id}/constituents", response_model=SectorConstituents)
+async def sector_constituents(
+    sector_level: str,
+    sector_id: int,
+    request: SectorConstituentsRequest = SectorConstituentsRequest(),
+    db: Session = Depends(get_db),
+) -> SectorConstituents:
+    """
+    One sector's constituents, each with its own relative strength.
+
+    Same measure, window and benchmark as the sector panels, plus a 1-99
+    percentile against every constituent at this level.
+    """
+    return await get_sector_constituents(
+        sector_level=sector_level,
+        sector_id=sector_id,
+        window=request.window,
+        metric=request.metric,
+        timeframe=request.timeframe,
+        db=db,
     )
 
 
