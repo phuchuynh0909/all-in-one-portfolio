@@ -34,6 +34,7 @@ from typing import Any
 
 import pandas as pd
 
+from . import tcbs_tiers
 from .utils import fmt_billion, fmt_count, fmt_ratio, iso_day, lookback_days
 
 logger = logging.getLogger(__name__)
@@ -1335,9 +1336,13 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
 
 @failsafe("INSIDER_DATA_UNAVAILABLE", "insider transactions")
 def get_insider_transactions(ticker: str) -> str:
+    sym = str(ticker).upper()
+    block = _best_effort(f"tcbs_insider[{sym}]", tcbs_tiers.insider_transactions, sym)
+    if block:
+        return block
     return (
         f"INSIDER_DATA_UNAVAILABLE: No insider-transaction feed is configured for "
-        f"Vietnamese equities ({str(ticker).upper()}). Do not fabricate filings."
+        f"Vietnamese equities ({sym}). Do not fabricate filings."
     )
 
 

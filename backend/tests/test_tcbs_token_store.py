@@ -61,12 +61,16 @@ def test_save_upserts_rather_than_appending(db, monkeypatch):
 @requires_mysql
 def test_load_returns_none_when_never_logged_in(db, monkeypatch):
     monkeypatch.setattr(store, "SessionLocal", lambda: db)
+    # A real login writes a row, so "never logged in" has to be established
+    # rather than assumed. The fixture rolls back, so the real token survives.
+    store.clear()
     assert store.load() is None
 
 
 @requires_mysql
 def test_clear_reports_whether_a_row_went(db, monkeypatch):
     monkeypatch.setattr(store, "SessionLocal", lambda: db)
+    store.clear()  # start from empty whether or not this install is logged in
     assert store.clear() is False
     store.save(_creds())
     assert store.clear() is True
