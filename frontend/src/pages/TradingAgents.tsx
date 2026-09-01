@@ -317,6 +317,10 @@ const TradingAgents: React.FC = () => {
         onComplete: () => {
           setRunning(false);
           setStatus('');
+          // A run is when the connector actually gets used, so it is also when
+          // a lapsed token would have surfaced. Re-read rather than let the
+          // header keep claiming a connection the run just found broken.
+          fetchTcbsStatus().then(setTcbs).catch(() => undefined);
           const secs = Math.round((Date.now() - startMsRef.current) / 1000);
           setElapsed(secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`);
         },
@@ -388,6 +392,35 @@ const TradingAgents: React.FC = () => {
     ),
   ].join(' · ');
 
+  /**
+   * How the connector reads in the header. Amber for a live connection —
+   * `success` green is reserved for market direction (see the design system's
+   * palette.market rule), so a healthy connector borrows the brand accent.
+   */
+  const tcbsChip: { label: string; color: 'primary' | 'warning' | 'default'; tooltip: string } =
+    !tcbs?.connected
+      ? {
+          label: 'TCBS not connected',
+          color: 'default',
+          tooltip:
+            'Fundamentals, statements, news and insider dealing are served by secondary sources.',
+        }
+      : tcbs.expired
+        ? {
+            label: 'TCBS expired',
+            color: 'warning',
+            tooltip: tcbs.expires_at
+              ? `The connection lapsed ${formatWhen(tcbs.expires_at)}. Reconnect to restore first-party data.`
+              : 'The connection has lapsed. Reconnect to restore first-party data.',
+          }
+        : {
+            label: 'TCBS connected',
+            color: 'primary',
+            tooltip: tcbs.expires_at
+              ? `First-party TCBS data is live. Token valid until ${formatWhen(tcbs.expires_at)}; it renews itself.`
+              : 'First-party TCBS data is live.',
+          };
+
   const statCards = [
     { label: 'Recommendation', value: decision?.signal ?? (running ? '…' : '—'), accent: signalHex(decision?.signal) },
     { label: 'As of', value: asOf || '—' },
@@ -407,22 +440,38 @@ const TradingAgents: React.FC = () => {
           title="Trading Agents"
           description="Multi-agent analysis over Vietnamese-market data — analysts debate, a trader acts, a risk team checks, and a portfolio manager decides."
           actions={
-            health && (
-              <Tooltip title={health.message}>
-                <Chip
-                  size="small"
-                  label={
-                    health.ollama_reachable
-                      ? `${(health.providers ?? [health.provider]).join(' + ')} · ${
-                          health.deep_think_llm
-                        }`
-                      : `${(health.providers ?? [health.provider]).join(' + ')} not ready`
-                  }
-                  color={health.ollama_reachable ? 'success' : 'error'}
-                  variant="outlined"
-                />
-              </Tooltip>
-            )
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+              {health && (
+                <Tooltip title={health.message}>
+                  <Chip
+                    size="small"
+                    label={
+                      health.ollama_reachable
+                        ? `${(health.providers ?? [health.provider]).join(' + ')} · ${
+                            health.deep_think_llm
+                          }`
+                        : `${(health.providers ?? [health.provider]).join(' + ')} not ready`
+                    }
+                    color={health.ollama_reachable ? 'success' : 'error'}
+                    variant="outlined"
+                  />
+                </Tooltip>
+              )}
+              {/* TCBS reach, in all three states — the banner below only appears
+                  when something needs doing, and "it is working" is worth
+                  seeing too. Amber, not green: green means market direction. */}
+              {tcbs && (
+                <Tooltip title={tcbsChip.tooltip}>
+                  <Chip
+                    size="small"
+                    icon={<LinkIcon />}
+                    label={tcbsChip.label}
+                    color={tcbsChip.color}
+                    variant="outlined"
+                  />
+                </Tooltip>
+              )}
+            </Stack>
           }
         />
 
