@@ -160,7 +160,14 @@ def list_tools() -> list[dict]:
             {
                 "name": t.name,
                 "description": getattr(t, "description", "") or "",
-                "inputSchema": getattr(t, "inputSchema", {}) or {},
+                # The SDK's 2.x model field is ``input_schema``; ``inputSchema``
+                # is only its serialization alias, so reading the alias off the
+                # object silently yields the empty default instead of failing.
+                "inputSchema": (
+                    getattr(t, "input_schema", None)
+                    or getattr(t, "inputSchema", None)
+                    or {}
+                ),
             }
             for t in result.tools
         ]

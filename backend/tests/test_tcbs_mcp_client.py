@@ -73,7 +73,10 @@ def test_list_tools_normalizes_the_sdk_objects(monkeypatch):
         def __init__(self, name):
             self.name = name
             self.description = f"does {name}"
-            self.inputSchema = {"type": "object", "properties": {"ticker": {}}}
+            # The 2.x SDK model field. Reading the ``inputSchema`` alias off the
+            # object instead returns an empty default with no error, which
+            # silently dumps 54 argument-less tools.
+            self.input_schema = {"type": "object", "properties": {"ticker": {}}}
 
     class _Result:
         tools = [_Tool("getTickerOverview"), _Tool("getInsiderDealing")]
