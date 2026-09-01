@@ -31,6 +31,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import LinkIcon from '@mui/icons-material/Link';
 import { Markdown } from '../components/Markdown';
 import {
   startAnalysis,
@@ -38,6 +39,8 @@ import {
   fetchModelOptions,
   fetchAnalyses,
   fetchAnalysis,
+  fetchTcbsStatus,
+  startTcbsLogin,
   modelChoices,
   type TADecision,
   type TAHealth,
@@ -45,6 +48,7 @@ import {
   type TALlmRole,
   type ModelChoice,
   type AnalysisSummary,
+  type TATcbsStatus,
 } from '../lib/services/tradingAgents';
 
 // ---------------------------------------------------------------------------
@@ -186,6 +190,10 @@ const TradingAgents: React.FC = () => {
   const [error, setError] = React.useState<string | null>(null);
   const [status, setStatus] = React.useState<string>('');
   const [health, setHealth] = React.useState<TAHealth | null>(null);
+  // TCBS connector: null until the status call answers, so the banner never
+  // flashes "not connected" at a page that simply has not asked yet.
+  const [tcbs, setTcbs] = React.useState<TATcbsStatus | null>(null);
+  const [connecting, setConnecting] = React.useState(false);
   const [started, setStarted] = React.useState<{ symbol: string; date: string } | null>(null);
   const [elapsed, setElapsed] = React.useState<string>('');
   const [analyses, setAnalyses] = React.useState<AnalysisSummary[]>([]);
@@ -222,6 +230,9 @@ const TradingAgents: React.FC = () => {
     fetchModelOptions()
       .then(setModelOptions)
       .catch(() => setModelOptions(null));
+    fetchTcbsStatus()
+      .then(setTcbs)
+      .catch(() => setTcbs(null));
     loadHistory();
     return () => controllerRef.current?.abort();
   }, [loadHistory]);
@@ -314,6 +325,21 @@ const TradingAgents: React.FC = () => {
     controllerRef.current = controller;
   };
 
+  /**
+   * Send the user to TCBS to authorize the connector. The redirect comes back
+   * to this page, so the status call on mount reflects the new token.
+   */
+  const handleConnectTcbs = async () => {
+    setConnecting(true);
+    setError(null);
+    try {
+      window.location.href = await startTcbsLogin(window.location.href);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setConnecting(false);
+    }
+  };
+
   const handleStop = () => {
     controllerRef.current?.abort();
     setRunning(false);
@@ -399,6 +425,32 @@ const TradingAgents: React.FC = () => {
             )
           }
         />
+
+        {/* TCBS connector. Rendered only when it needs attention: the tier
+            degrades quietly to the other sources, so a working connection is
+            not worth a line of chrome on every visit. */}
+        {tcbs && (!tcbs.connected || tcbs.expired) && (
+          <Alert
+            severity="warning"
+            sx={{ mb: 3 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                variant="outlined"
+                startIcon={connecting ? <CircularProgress size={14} /> : <LinkIcon />}
+                onClick={handleConnectTcbs}
+                disabled={connecting}
+              >
+                {connecting ? 'Opening TCBS…' : 'Connect TCBS'}
+              </Button>
+            }
+          >
+            {tcbs.expired
+              ? 'The TCBS connection has expired. Fundamentals, statements, company news and insider dealing are falling back to secondary sources until you reconnect.'
+              : 'TCBS is not connected. Connect it for first-party fundamentals, statements with industry averages, corporate events and insider dealing.'}
+          </Alert>
+        )}
 
         {/* Controls */}
         <Paper sx={{ p: 2, mb: 3 }}>

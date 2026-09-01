@@ -224,90 +224,48 @@ def _is_auth_error(exc: BaseException) -> bool:
 
 
 def _auth_metadata() -> dict | None:
-    """The authorization server's metadata, via the protected-resource document."""
-    import urllib.parse
-
-    import requests
-
-    def wellknown(url: str, document: str) -> str:
-        parts = urllib.parse.urlsplit(url)
-        return urllib.parse.urlunsplit(
-            (
-                parts.scheme,
-                parts.netloc,
-                f"/.well-known/{document}{parts.path.rstrip('/')}",
-                "",
-                "",
-            )
-        )
+    """The authorization server's metadata, or None when discovery fails."""
+    from app.services.tcbs_oauth import discover_auth_server
 
     try:
-        resource = requests.get(
-            wellknown(MCP_URL.rstrip("/"), "oauth-protected-resource"), timeout=TIMEOUT
-        )
-        resource.raise_for_status()
-        servers = resource.json().get("authorization_servers") or []
-        if not servers:
-            return None
-        meta = requests.get(
-            wellknown(servers[0], "oauth-authorization-server"), timeout=TIMEOUT
-        )
-        meta.raise_for_status()
-        return meta.json()
+        return discover_auth_server(MCP_URL)
     except Exception as exc:  # noqa: BLE001 -- no metadata means no refresh
         logger.warning("TCBS auth metadata lookup failed: %s", exc)
         return None
 
 
 def _refresh() -> bool:
-    """Exchange the refresh token for a new access token. False if impossible."""
-    from datetime import datetime, timedelta, timezone
+    """Exchange the refresh token for a new access token. False if impossible.
 
-    import requests
-
-    from app.services.tcbs_token_store import TcbsCredentials, save
+    Resolves its token endpoint through the same discovery the login flow uses,
+    so the two cannot disagree about which authorization server is
+    authoritative.
+    """
+    from app.services.tcbs_oauth import refresh_access_token, store_tokens
 
     creds = _load_credentials()
     if creds is None or not creds.refresh_token:
         return False
 
-    # Resolved the same way the login CLI does, so both agree on which
-    # authorization server is authoritative.
     meta = _auth_metadata()
     if not meta:
         return False
 
-    resp = requests.post(
-        meta["token_endpoint"],
-        data={
-            "grant_type": "refresh_token",
-            "refresh_token": creds.refresh_token,
-            "client_id": creds.client_id,
-            "client_secret": creds.client_secret or "",
-        },
-        timeout=TIMEOUT,
-    )
-    if resp.status_code >= 400:
-        logger.warning("TCBS refresh failed (%s): %s", resp.status_code, resp.text[:200])
-        return False
-
-    payload = resp.json()
-    expires_in = payload.get("expires_in")
-    save(
-        TcbsCredentials(
+    try:
+        payload = refresh_access_token(
+            meta,
+            refresh_token=creds.refresh_token,
             client_id=creds.client_id,
             client_secret=creds.client_secret,
-            access_token=payload["access_token"],
-            # A server that rotates refresh tokens returns a new one; one that
-            # does not expects the old one to keep working.
-            refresh_token=payload.get("refresh_token") or creds.refresh_token,
-            expires_at=(
-                datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
-                if expires_in
-                else None
-            ),
         )
-    )
+    except Exception as exc:  # noqa: BLE001 -- a failed refresh means re-auth
+        logger.warning("TCBS refresh failed: %s", exc)
+        return False
+
+    # A server that rotates refresh tokens returns a new one; one that does not
+    # expects the old one to keep working.
+    payload.setdefault("refresh_token", creds.refresh_token)
+    store_tokens(creds.client_id, creds.client_secret, payload)
     logger.info("Refreshed the TCBS access token")
     return True
 

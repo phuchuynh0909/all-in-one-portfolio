@@ -43,100 +43,23 @@ from dotenv import load_dotenv  # noqa: E402
 load_dotenv(REPO_ROOT / ".env")
 load_dotenv(BACKEND_ROOT / ".env", override=False)
 
-import requests  # noqa: E402
+import requests  # noqa: E402  (kept importable: tests patch this module's requests)
 
-MCP_URL = "https://mcp.tcbs.com.vn/mcp/tcinvest/"
+from app.services.tcbs_oauth import (  # noqa: E402
+    MCP_URL,
+    TcbsOAuthError as LoginError,
+    authorization_url,
+    discover_auth_server,
+    exchange_code,
+    new_verifier as _new_verifier,
+    parse_callback,
+    pkce_pair,
+    register_client,
+    store_tokens as _store_tokens,
+    wellknown_url,
+)
+
 HTTP_TIMEOUT = 30
-
-
-class LoginError(RuntimeError):
-    """The authorization flow could not be completed."""
-
-
-def wellknown_url(url: str, document: str) -> str:
-    """RFC 8414 well-known URL for ``url``.
-
-    The segment is *inserted* between the host and the path:
-    ``https://h/mcp/tcinvest`` -> ``https://h/.well-known/<doc>/mcp/tcinvest``.
-    Appending it instead reaches the root document, which for TCBS advertises a
-    different token endpoint with no registration and no refresh grant.
-    """
-    parts = urllib.parse.urlsplit(url)
-    path = parts.path.rstrip("/")
-    return urllib.parse.urlunsplit(
-        (parts.scheme, parts.netloc, f"/.well-known/{document}{path}", "", "")
-    )
-
-
-def _new_verifier() -> str:
-    """A fresh PKCE code verifier. Seam for the RFC test vector."""
-    return base64.urlsafe_b64encode(secrets.token_bytes(32)).decode().rstrip("=")
-
-
-def pkce_pair() -> tuple[str, str]:
-    """``(verifier, challenge)`` for PKCE S256."""
-    verifier = _new_verifier()
-    digest = hashlib.sha256(verifier.encode("ascii")).digest()
-    challenge = base64.urlsafe_b64encode(digest).decode().rstrip("=")
-    return verifier, challenge
-
-
-def discover_auth_server(resource_url: str) -> dict:
-    """Follow the protected-resource document to its authorization server."""
-    resource_doc = requests.get(
-        wellknown_url(resource_url, "oauth-protected-resource"),
-        timeout=HTTP_TIMEOUT,
-        headers={"Accept": "application/json"},
-    )
-    resource_doc.raise_for_status()
-    servers = resource_doc.json().get("authorization_servers") or []
-    if not servers:
-        raise LoginError(f"{resource_url} names no authorization server")
-
-    as_doc = requests.get(
-        wellknown_url(servers[0], "oauth-authorization-server"),
-        timeout=HTTP_TIMEOUT,
-        headers={"Accept": "application/json"},
-    )
-    as_doc.raise_for_status()
-    return as_doc.json()
-
-
-def register_client(registration_endpoint: str, redirect_uri: str) -> tuple[str, str | None]:
-    """Dynamic client registration. Returns ``(client_id, client_secret)``."""
-    resp = requests.post(
-        registration_endpoint,
-        json={
-            "client_name": "all-in-one-portfolio TradingAgents",
-            "redirect_uris": [redirect_uri],
-            "grant_types": ["authorization_code", "refresh_token"],
-            "response_types": ["code"],
-            "token_endpoint_auth_method": "client_secret_post",
-        },
-        timeout=HTTP_TIMEOUT,
-    )
-    resp.raise_for_status()
-    payload = resp.json()
-    client_id = payload.get("client_id")
-    if not client_id:
-        raise LoginError(f"registration returned no client_id: {payload}")
-    return client_id, payload.get("client_secret")
-
-
-def parse_callback(path: str, expected_state: str) -> str:
-    """The authorization code from the redirect path, or raise."""
-    query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
-    if "error" in query:
-        raise LoginError(
-            f"authorization failed: {query['error'][0]} "
-            f"({query.get('error_description', [''])[0]})"
-        )
-    if query.get("state", [None])[0] != expected_state:
-        raise LoginError("authorization state did not match; aborting")
-    code = query.get("code", [None])[0]
-    if not code:
-        raise LoginError("callback carried no authorization code")
-    return code
 
 
 class _CallbackHandler(http.server.BaseHTTPRequestHandler):

@@ -39,9 +39,12 @@ def test_wellknown_url_handles_a_bare_origin():
 
 
 def test_pkce_challenge_matches_the_rfc_7636_vector(monkeypatch):
-    # RFC 7636 appendix B: this verifier must produce this challenge.
+    # RFC 7636 appendix B: this verifier must produce this challenge. Patched on
+    # the module that owns the primitive -- the CLI only re-exports it.
+    from app.services import tcbs_oauth
+
     verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk"
-    monkeypatch.setattr(tcbs_login, "_new_verifier", lambda: verifier)
+    monkeypatch.setattr(tcbs_oauth, "new_verifier", lambda: verifier)
     got_verifier, challenge = tcbs_login.pkce_pair()
     assert got_verifier == verifier
     assert challenge == "E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM"

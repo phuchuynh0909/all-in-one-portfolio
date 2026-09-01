@@ -14,10 +14,13 @@ import os
 from datetime import date
 from typing import Dict, Generator, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, HTTPException, Query, Request
+from fastapi.responses import RedirectResponse, StreamingResponse
 from loguru import logger
 from pydantic import BaseModel, Field
+
+from app.services import tcbs_oauth
+from app.services.tcbs_token_store import load as load_credentials
 
 router = APIRouter(prefix="/trading-agents", tags=["trading-agents"])
 
@@ -280,3 +283,192 @@ def analyze_stream(request: AnalyzeRequest) -> StreamingResponse:
         media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
     )
+
+
+# ---------------------------------------------------------------------------
+# TCBS connector login
+#
+# The MCP tier that serves fundamentals, statements, news and insider dealing
+# authorizes over OAuth 2.0 with an iOTP confirmation, so connecting it is
+# inherently a browser round trip. ``backend/scripts/tcbs_login.py`` does the
+# same handshake from a terminal; these routes do it from the app, sharing the
+# protocol in ``app.services.tcbs_oauth``.
+# ---------------------------------------------------------------------------
+
+#: In-flight logins, keyed by the ``state`` we minted: the PKCE verifier and the
+#: client credentials the callback needs to finish. Process-local, which is
+#: sound because the app runs as a single uvicorn process; a multi-worker
+#: deployment would have to move this to the database.
+_PENDING: Dict[str, dict] = {}
+
+#: How long a user has to get through the TCBS login and iOTP prompt.
+_PENDING_TTL_SECONDS = 900
+
+#: Where the callback sends the browser when it has no safe return URL.
+_DONE_HTML = (
+    "<!doctype html><meta charset='utf-8'>"
+    "<title>TCBS connected</title>"
+    "<body style='font-family:system-ui;padding:3rem;max-width:32rem'>"
+    "<h2>TCBS connected.</h2>"
+    "<p>You can close this tab and return to the app.</p>"
+)
+
+
+def _expire_pending() -> None:
+    """Drop flows nobody completed. Keeps a stale verifier from lingering."""
+    import time
+
+    now = time.monotonic()
+    for state in [s for s, f in _PENDING.items() if now - f["started"] > _PENDING_TTL_SECONDS]:
+        _PENDING.pop(state, None)
+
+
+def _safe_return_to(candidate: Optional[str]) -> Optional[str]:
+    """Allow a post-login redirect only back to a configured app origin.
+
+    ``return_to`` arrives from the browser, so an unchecked value would turn the
+    callback into an open redirect.
+    """
+    if not candidate:
+        return None
+    from urllib.parse import urlsplit
+
+    from app.core.settings import settings
+
+    origin = urlsplit(candidate)
+    if not origin.scheme or not origin.netloc:
+        return None
+    allowed = {
+        urlsplit(str(o)).netloc for o in (settings.backend_cors_origins or []) if o
+    }
+    return candidate if origin.netloc in allowed else None
+
+
+@router.get("/tcbs/status")
+def tcbs_status() -> dict:
+    """Whether the TCBS connector is connected, and whether its token is spent."""
+    try:
+        return tcbs_oauth.describe(load_credentials())
+    except Exception as exc:  # noqa: BLE001 -- a store failure is "not connected"
+        logger.warning("TCBS status lookup failed: {}", exc)
+        return {"connected": False, "expired": False, "expires_at": None}
+
+
+@router.get("/tcbs/authorize")
+def tcbs_authorize(request: Request, return_to: Optional[str] = None) -> dict:
+    """Start a login and hand back the URL to send the user to.
+
+    Deliberately returns the URL rather than redirecting: the caller reaches
+    this over XHR with its bearer token, then navigates itself.
+    """
+    _expire_pending()
+
+    redirect_uri = _redirect_uri(request)
+    try:
+        meta = tcbs_oauth.discover_auth_server()
+        if "registration_endpoint" not in meta:
+            raise tcbs_oauth.TcbsOAuthError(
+                "the authorization server advertises no registration endpoint"
+            )
+        client_id, client_secret = tcbs_oauth.register_client(
+            meta["registration_endpoint"], redirect_uri
+        )
+    except Exception as exc:  # noqa: BLE001 -- surfaced to the user as a 502
+        logger.warning("TCBS authorize failed: {}", exc)
+        raise HTTPException(status_code=502, detail=f"TCBS login unavailable: {exc}")
+
+    import secrets
+    import time
+
+    verifier, challenge = tcbs_oauth.pkce_pair()
+    state = secrets.token_urlsafe(24)
+    _PENDING[state] = {
+        "verifier": verifier,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "redirect_uri": redirect_uri,
+        "meta": meta,
+        "return_to": _safe_return_to(return_to),
+        "started": time.monotonic(),
+    }
+    return {
+        "authorization_url": tcbs_oauth.authorization_url(
+            meta,
+            client_id=client_id,
+            redirect_uri=redirect_uri,
+            state=state,
+            challenge=challenge,
+        )
+    }
+
+
+def _redirect_uri(request: Request) -> str:
+    """The callback URL TCBS should send the browser back to.
+
+    Derived from the request so development and production each work without
+    configuration -- uvicorn runs with ``--proxy-headers``, so the forwarded
+    scheme and host are honoured. ``TCBS_REDIRECT_BASE`` overrides it for a
+    proxy that does not forward them.
+    """
+    base = os.getenv("TCBS_REDIRECT_BASE", "").rstrip("/")
+    if not base:
+        base = str(request.base_url).rstrip("/")
+    return f"{base}/api/v1/trading-agents/tcbs/callback"
+
+
+@router.get("/tcbs/callback")
+def tcbs_callback(
+    state: Optional[str] = None,
+    code: Optional[str] = None,
+    error: Optional[str] = None,
+    error_description: Optional[str] = None,
+):
+    """Finish a login. Exempt from the auth guard: TCBS redirects a bare browser
+    here, with no Authorization header to carry. The unguessable ``state`` we
+    minted is what makes the route safe to leave open -- without a matching
+    in-flight flow there is nothing to complete.
+    """
+    _expire_pending()
+
+    # Popped, not read: a code may be redeemed once, and a replay must miss.
+    flow = _PENDING.pop(state, None) if state else None
+    if flow is None:
+        raise HTTPException(
+            status_code=400, detail="Unknown or expired login state. Start the login again."
+        )
+    if error:
+        raise HTTPException(
+            status_code=400, detail=f"TCBS refused the login: {error} ({error_description or ''})"
+        )
+    if not code:
+        raise HTTPException(status_code=400, detail="TCBS returned no authorization code.")
+
+    try:
+        payload = tcbs_oauth.exchange_code(
+            flow["meta"],
+            code=code,
+            redirect_uri=flow["redirect_uri"],
+            client_id=flow["client_id"],
+            client_secret=flow["client_secret"],
+            verifier=flow["verifier"],
+        )
+        tcbs_oauth.store_tokens(flow["client_id"], flow["client_secret"], payload)
+    except Exception as exc:  # noqa: BLE001 -- surfaced to the user as a 502
+        logger.warning("TCBS token exchange failed: {}", exc)
+        raise HTTPException(status_code=502, detail=f"TCBS token exchange failed: {exc}")
+
+    # A new token means the client is holding a session authorized by the old
+    # one; drop it so the next call reconnects with the new credentials.
+    try:
+        from app.services import tcbs_mcp_client
+
+        tcbs_mcp_client.reset()
+    except Exception as exc:  # noqa: BLE001 -- a stale session is not fatal
+        logger.debug("TCBS session reset after login failed (ignored): {}", exc)
+
+    logger.info("TCBS connector authorized")
+    if flow["return_to"]:
+        return RedirectResponse(flow["return_to"], status_code=302)
+    from fastapi.responses import HTMLResponse
+
+    return HTMLResponse(_DONE_HTML)
