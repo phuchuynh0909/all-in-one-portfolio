@@ -120,3 +120,97 @@ def test_token_without_a_subject_is_rejected():
 def test_garbage_input_raises_rather_than_returning_something_truthy():
     with pytest.raises(TokenError):
         decode_access_token("not.a.token")
+
+
+# --- login routes -----------------------------------------------------------
+#
+# Everything below runs against MySQL through the rolled-back ``db`` fixture,
+# following the pattern in test_corporate_action_routes.py.
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from app.db.base import get_db  # noqa: E402
+from app.db.models.user import User  # noqa: E402
+from app.main import app  # noqa: E402
+from tests.conftest import requires_mysql  # noqa: E402
+
+PASSWORD = "s3cret-test-password"
+
+
+@pytest.fixture
+def seeded_user(db):
+    """An active user that disappears with the fixture's rollback."""
+    user = User(
+        username="route-test-user",
+        password_hash=hash_password(PASSWORD),
+        is_active=True,
+    )
+    db.add(user)
+    db.flush()
+    return user
+
+
+@pytest.fixture
+def client(db):
+    app.dependency_overrides[get_db] = lambda: db
+    try:
+        with TestClient(app) as test_client:
+            yield test_client
+    finally:
+        app.dependency_overrides.pop(get_db, None)
+
+
+@requires_mysql
+def test_login_returns_a_usable_token(client, seeded_user):
+    res = client.post(
+        "/api/v1/auth/login",
+        json={"username": seeded_user.username, "password": PASSWORD},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["token_type"] == "bearer"
+    assert decode_access_token(body["access_token"]) == seeded_user.username
+    assert body["expires_at"]
+
+
+@requires_mysql
+def test_login_rejects_the_wrong_password(client, seeded_user):
+    res = client.post(
+        "/api/v1/auth/login",
+        json={"username": seeded_user.username, "password": "wrong"},
+    )
+    assert res.status_code == 401
+
+
+@requires_mysql
+def test_login_rejects_an_unknown_username(client):
+    res = client.post(
+        "/api/v1/auth/login",
+        json={"username": "nobody-by-that-name", "password": PASSWORD},
+    )
+    assert res.status_code == 401
+
+
+@requires_mysql
+def test_login_rejects_a_deactivated_user(client, db, seeded_user):
+    seeded_user.is_active = False
+    db.flush()
+    res = client.post(
+        "/api/v1/auth/login",
+        json={"username": seeded_user.username, "password": PASSWORD},
+    )
+    assert res.status_code == 401
+
+
+@requires_mysql
+def test_login_does_not_reveal_whether_the_username_exists(client, seeded_user):
+    """Identical wording for a bad password and an unknown user."""
+    unknown = client.post(
+        "/api/v1/auth/login",
+        json={"username": "nobody-by-that-name", "password": PASSWORD},
+    )
+    bad_password = client.post(
+        "/api/v1/auth/login",
+        json={"username": seeded_user.username, "password": "wrong"},
+    )
+    assert unknown.json()["detail"] == bad_password.json()["detail"]

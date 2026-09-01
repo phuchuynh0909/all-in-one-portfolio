@@ -25,6 +25,7 @@ from app.api.v1.routes.trade_flow import router as trade_flow_router
 from app.api.v1.routes.price_alerts import router as price_alerts_router
 from app.api.v1.routes.chat import router as chat_router
 from app.api.v1.routes.auth import router as auth_router
+from app.api.v1.routes.broker import router as broker_router
 from app.api.v1.routes.future import router as future_router
 from app.api.v1.routes.cw import router as cw_router
 from app.api.v1.routes.regime import router as regime_router
@@ -85,6 +86,7 @@ def get_app() -> FastAPI:
     app.include_router(price_alerts_router, prefix=api_prefix)
     app.include_router(chat_router, prefix=api_prefix)
     app.include_router(auth_router, prefix=api_prefix)
+    app.include_router(broker_router, prefix=api_prefix)
     app.include_router(future_router, prefix=api_prefix)
     app.include_router(cw_router, prefix=api_prefix)
     app.include_router(regime_router, prefix=api_prefix)

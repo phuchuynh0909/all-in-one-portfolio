@@ -66,7 +66,7 @@ export interface ChatNotesResponse {
 
 export const refreshAccessToken = async (
   payload: RefreshTokenRequest,
-): Promise<RefreshTokenResponse> => apiPost('/auth/refresh-token', payload);
+): Promise<RefreshTokenResponse> => apiPost('/broker/refresh-token', payload);
 
 export const saveChatNote = async (
   payload: SaveChatNoteRequest,

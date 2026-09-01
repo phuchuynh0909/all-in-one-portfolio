@@ -1,60 +1,52 @@
-from typing import Optional
+"""Application authentication: log in, and identify the caller."""
+from functools import lru_cache
 
-import requests
-from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import APIRouter, Depends, HTTPException, status
+from loguru import logger
+from sqlalchemy.orm import Session
 
-
-REFRESH_URL = "https://accts.mbs.com.vn/webuaa/refreshToken"
+from app.core.security import create_access_token, hash_password, verify_password
+from app.db.base import get_db
+from app.db.models.user import User
+from app.schemas.auth import LoginRequest, TokenResponse
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
-
-class RefreshTokenRequest(BaseModel):
-    access_token: str = Field(..., min_length=1)
-    refresh_token: str = Field(..., min_length=1)
-    master_account: Optional[str] = None
-    code_verifier: Optional[str] = None
-    device_id: Optional[str] = None
-    x_channel: Optional[str] = "S24"
-    x_client_device_id: Optional[str] = None
-    x_client_request_id: Optional[str] = None
-    x_master_account: Optional[str] = None
-    x_version: Optional[str] = "v1.2.84"
+_BAD_CREDENTIALS = "Incorrect username or password"
 
 
-@router.post("/refresh-token")
-def refresh_token(request: RefreshTokenRequest) -> dict:
-    headers = {
-        "Accept": "application/json, text/plain, */*",
-        "Content-Type": "application/x-www-form-urlencoded",
-        "Authorization": f"Bearer {request.access_token}",
-    }
+@lru_cache(maxsize=1)
+def _timing_decoy_hash() -> str:
+    """A real bcrypt digest to verify against when the username is unknown.
 
-    if request.x_channel:
-        headers["x-channel"] = request.x_channel
-    if request.x_client_device_id:
-        headers["x-client-device-id"] = request.x_client_device_id
-    if request.x_client_request_id:
-        headers["x-client-request-id"] = request.x_client_request_id
-    if request.x_master_account:
-        headers["x-master-account"] = request.x_master_account
-    if request.x_version:
-        headers["x-version"] = request.x_version
+    Without it a missing user returns immediately while a wrong password costs
+    ~250ms of bcrypt, and that difference tells an attacker which usernames
+    exist. Computed on the first unknown-username login rather than at import,
+    so it costs nothing at startup or on the happy path. The plaintext is
+    arbitrary — this digest guards nothing.
+    """
+    return hash_password("unused")
 
-    form = {"refresh_token": request.refresh_token}
-    if request.master_account:
-        form["master_account"] = request.master_account
-    if request.code_verifier:
-        form["code_verifier"] = request.code_verifier
-    if request.device_id:
-        form["device_id"] = request.device_id
 
-    try:
-        response = requests.post(REFRESH_URL, headers=headers, data=form, timeout=30)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as exc:
-        status_code = getattr(exc.response, "status_code", 502)
-        detail = getattr(exc.response, "text", str(exc))
-        raise HTTPException(status_code=status_code, detail=detail)
+@router.post("/login", response_model=TokenResponse)
+def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse:
+    user = db.query(User).filter(User.username == payload.username).one_or_none()
+
+    if user is None:
+        verify_password(payload.password, _timing_decoy_hash())
+        logger.info("auth: login failed — no such user {!r}", payload.username)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, _BAD_CREDENTIALS)
+
+    if not verify_password(payload.password, user.password_hash):
+        logger.info("auth: login failed — bad password for {!r}", payload.username)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, _BAD_CREDENTIALS)
+
+    if not user.is_active:
+        # Same wording as a bad password: whether an account exists but is
+        # disabled is not something an unauthenticated caller should learn.
+        logger.info("auth: login refused — {!r} is deactivated", payload.username)
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, _BAD_CREDENTIALS)
+
+    token, expires_at = create_access_token(user.username)
+    logger.info("auth: {!r} logged in until {}", user.username, expires_at)
+    return TokenResponse(access_token=token, expires_at=expires_at)
