@@ -333,3 +333,170 @@ def fundamentals(symbol: str) -> str | None:
         f"recommendation to act on."
     )
     return "\n".join(lines)
+
+
+import re  # noqa: E402
+
+#: Statement key -> (TCBS tool stem, human title). The keys match _STATEMENTS in
+#: vn_data.py so the two files stay legible side by side.
+_STATEMENT_TOOLS: dict[str, tuple[str, str]] = {
+    "cdkt": ("BalanceSheet", "Balance sheet (Cân đối kế toán)"),
+    "kqkd": ("IncomeStatement", "Income statement (Kết quả kinh doanh)"),
+    "lctt": ("CashFlow", "Cash flow (Lưu chuyển tiền tệ)"),
+}
+
+#: Periods rendered. Matches vn_data's default so switching tiers does not
+#: change how much history an analyst sees.
+_STMT_PERIODS = 12
+
+#: Line items per statement. TCBS returns the full chart of accounts.
+_STMT_FIELDS = 30
+
+#: Keys that identify the period rather than report a value.
+_PERIOD_KEYS = {"year", "quarter", "ticker", "fiscalYear", "fiscalQuarter"}
+
+
+def _label(field: str) -> str:
+    """``netInterestIncome`` -> ``Net interest income``."""
+    spaced = re.sub(r"(?<!^)(?=[A-Z])", " ", str(field)).strip()
+    return spaced[:1].upper() + spaced[1:].lower() if spaced else str(field)
+
+
+def _period(row: dict) -> str:
+    year = _first(row, "year", default="")
+    quarter = _first(row, "quarter")
+    if quarter in (None, "", 0, 5):
+        return str(year)
+    return f"{year}Q{quarter}"
+
+
+def _period_sort_key(row: dict) -> tuple:
+    def _num(value):
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return 0.0
+
+    return (_num(_first(row, "year", default=0)), _num(_first(row, "quarter", default=0)))
+
+
+@lru_cache(maxsize=2048)
+def _icb_code(symbol: str) -> str | None:
+    """The company's ICB level-2 code, which the industry-average tools key off.
+
+    Those tools take ``icbCodeL2`` rather than a ticker, and the code is only
+    available from the overview -- hence a second call, cached per symbol.
+    """
+    overview = _rows(_try("getTickerOverview", ticker=symbol))
+    if not overview:
+        return None
+    code = _first(overview[0], "industryIdLevel2", "icbCodeL2")
+    return str(code) if code else None
+
+
+#: Line items whose name marks them a ratio rather than an amount.
+_RATIO_FIELD = re.compile(
+    r"growth|percentage|percent|margin|ratio|rate|yield", re.IGNORECASE
+)
+
+
+def _row_digits(field: str, values: list) -> int:
+    """Decimals for one line item: amounts are whole, ratios are not.
+
+    A statement mixes billions of VND with ratios in the same table, and
+    formatting a 0.177 growth rate to zero decimals prints "0" — which reads as
+    a real zero rather than as 17.7%. Decided by field name first, then by
+    magnitude for the ones the name does not give away.
+    """
+    if _RATIO_FIELD.search(field):
+        return 3
+    numeric = []
+    for value in values:
+        try:
+            numeric.append(abs(float(value)))
+        except (TypeError, ValueError):
+            continue
+    if numeric and max(numeric) < 10:
+        return 3
+    return 0
+
+
+def _stmt_table(rows: list[dict], fields: list[str], heading: str) -> list[str]:
+    periods = [_period(r) for r in rows]
+    out = [
+        heading,
+        "",
+        "| Line item | " + " | ".join(periods) + " |",
+        "|---" * (len(periods) + 1) + "|",
+    ]
+    for field in fields:
+        raw = [row.get(field) for row in rows]
+        digits = _row_digits(field, raw)
+        values = [_fmt(v, digits) for v in raw]
+        if all(v == "-" for v in values):
+            continue
+        out.append(f"| {_label(field)} | " + " | ".join(values) + " |")
+    return out
+
+
+def statement(symbol: str, kind: str, freq: str) -> str | None:
+    """One financial statement from TCBS, with the industry average appended."""
+    if not tcbs.enabled() or kind not in _STATEMENT_TOOLS:
+        return None
+
+    sym = str(symbol).upper()
+    stem, title = _STATEMENT_TOOLS[kind]
+    bank = is_bank(sym)
+    variant = "ForBank" if bank else "ForNonBank"
+    # The API takes a flag, not a word: 1 is annual, 0 is quarterly.
+    yearly = 1 if str(freq or "quarterly").lower().startswith(("annual", "year")) else 0
+
+    rows = _rows(_try(f"get{stem}{variant}", ticker=sym, yearly=yearly))
+    if not rows:
+        return None
+
+    rows = sorted(rows, key=_period_sort_key)[-_STMT_PERIODS:]
+
+    # Union of the line items present, in first-seen order: the chart of
+    # accounts is wide and not every period reports every item.
+    fields: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in _PERIOD_KEYS and key not in fields:
+                fields.append(key)
+    fields = fields[:_STMT_FIELDS]
+
+    lines = [f"# {sym} — {title}", ""]
+    lines += _stmt_table(rows, fields, "## Company")
+
+    code = _icb_code(sym)
+    if code:
+        industry = _rows(
+            _try(f"get{stem}Industry{variant}", icbCodeL2=code, yearly=yearly)
+        )
+        if industry:
+            ind_rows = sorted(industry, key=_period_sort_key)[-_STMT_PERIODS:]
+            lines += [""] + _stmt_table(
+                ind_rows, fields, f"## Industry average (ICB {code})"
+            )
+
+    if kind == "lctt":
+        analysis = _rows(_try("getCashFlowAnalyze", ticker=sym, yearly=yearly))
+        if analysis:
+            row = sorted(analysis, key=_period_sort_key)[-1]
+            bits = [
+                f"{_label(k)} {_fmt(v, 2)}"
+                for k, v in row.items()
+                if k not in _PERIOD_KEYS and v is not None
+            ][:10]
+            if bits:
+                lines += ["", "## Cash flow analysis (latest period)", "", ", ".join(bits) + "."]
+
+    lines += [
+        "",
+        f"Amounts in billions of VND, {'annual' if yearly else 'quarterly'} periods, "
+        f"oldest to newest, on the {'bank' if bank else 'non-bank'} reporting "
+        f"basis. The industry column is the average across the ICB level-2 "
+        f"sector, not a single peer. Source: TCBS (TCInvest).",
+    ]
+    return "\n".join(lines)

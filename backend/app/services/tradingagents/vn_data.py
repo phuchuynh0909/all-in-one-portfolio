@@ -1624,6 +1624,12 @@ def _statement_table(
 def _statement_tool(ticker: str, freq: str | None, key: str) -> str:
     """Shared body for the three per-statement tools."""
     sym = str(ticker).upper()
+    block = _best_effort(
+        f"tcbs_statement[{sym}/{key}]", tcbs_tiers.statement, sym, key, freq
+    )
+    if block:
+        return block
+
     _, title = _STATEMENTS[key]
     try:
         payload = _load_statements(sym, freq)

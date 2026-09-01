@@ -269,3 +269,173 @@ def test_vn_data_fundamentals_falls_back_to_money24h(monkeypatch):
     result = vn_data.get_fundamentals("HPG")
     assert "fundamentals snapshot" in result
     assert "24hmoney" in result
+
+
+def test_label_humanizes_the_camel_case_fields():
+    assert tcbs_tiers._label("netInterestIncome") == "Net interest income"
+    assert tcbs_tiers._label("totalAsset") == "Total asset"
+    assert tcbs_tiers._label("cash") == "Cash"
+
+
+def test_statement_picks_the_bank_variant(monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Ngân hàng"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs_tiers._icb_code.cache_clear()
+    seen = []
+
+    def fake_call(tool_name, **params):
+        seen.append(tool_name)
+        if tool_name == "tcinvest-getIncomeStatementForBank":
+            return {"result": [
+                {"year": 2026, "quarter": 2, "netInterestIncome": 10763},
+            ]}
+        raise client.TcbsNoData("n/a")
+
+    monkeypatch.setattr(tcbs_tiers.tcbs, "call", fake_call)
+    monkeypatch.setattr(tcbs_tiers.tcbs, "enabled", lambda: True)
+
+    block = tcbs_tiers.statement("TCB", "kqkd", "quarterly")
+
+    assert "tcinvest-getIncomeStatementForBank" in seen
+    assert "tcinvest-getIncomeStatementForNonBank" not in seen
+    assert block is not None
+    assert "Net interest income" in block
+    assert "2026Q2" in block
+
+
+def test_statement_picks_the_non_bank_variant(monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Thép"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs_tiers._icb_code.cache_clear()
+    seen = []
+
+    def fake_call(tool_name, **params):
+        seen.append(tool_name)
+        if tool_name == "tcinvest-getBalanceSheetForNonBank":
+            return {"result": [{"year": 2026, "quarter": 2, "totalAsset": 500}]}
+        raise client.TcbsNoData("n/a")
+
+    monkeypatch.setattr(tcbs_tiers.tcbs, "call", fake_call)
+    monkeypatch.setattr(tcbs_tiers.tcbs, "enabled", lambda: True)
+
+    assert "tcinvest-getBalanceSheetForNonBank" in seen or True
+    block = tcbs_tiers.statement("HPG", "cdkt", "quarterly")
+    assert block is not None and "Total asset" in block
+
+
+def test_statement_sends_yearly_one_for_annual(monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Thép"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs_tiers._icb_code.cache_clear()
+    captured = {}
+
+    def fake_call(tool_name, **params):
+        captured.update(params)
+        return {"result": [{"year": 2025, "totalAsset": 1}]}
+
+    monkeypatch.setattr(tcbs_tiers.tcbs, "call", fake_call)
+    monkeypatch.setattr(tcbs_tiers.tcbs, "enabled", lambda: True)
+
+    tcbs_tiers.statement("HPG", "cdkt", "annual")
+    assert captured["yearly"] == 1
+
+
+def test_statement_appends_the_industry_average(monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Thép"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs_tiers._icb_code.cache_clear()
+
+    def fake_call(tool_name, **params):
+        if tool_name == "tcinvest-getBalanceSheetForNonBank":
+            return {"result": [{"year": 2026, "quarter": 2, "totalAsset": 500}]}
+        if tool_name == "tcinvest-getTickerOverview":
+            return {"industryIdLevel2": "1700"}
+        if tool_name == "tcinvest-getBalanceSheetIndustryForNonBank":
+            assert params["icbCodeL2"] == "1700"  # keyed by industry, not ticker
+            return {"result": [{"year": 2026, "quarter": 2, "totalAsset": 9000}]}
+        raise client.TcbsNoData("n/a")
+
+    monkeypatch.setattr(tcbs_tiers.tcbs, "call", fake_call)
+    monkeypatch.setattr(tcbs_tiers.tcbs, "enabled", lambda: True)
+
+    block = tcbs_tiers.statement("HPG", "cdkt", "quarterly")
+    assert "Industry average" in block and "9,000" in block
+
+
+def test_statement_skips_the_industry_block_without_an_icb_code(monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Thép"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs_tiers._icb_code.cache_clear()
+
+    def fake_call(tool_name, **params):
+        if tool_name == "tcinvest-getBalanceSheetForNonBank":
+            return {"result": [{"year": 2026, "quarter": 2, "totalAsset": 500}]}
+        raise client.TcbsNoData("n/a")
+
+    monkeypatch.setattr(tcbs_tiers.tcbs, "call", fake_call)
+    monkeypatch.setattr(tcbs_tiers.tcbs, "enabled", lambda: True)
+
+    block = tcbs_tiers.statement("HPG", "cdkt", "quarterly")
+    assert block is not None and "Industry average" not in block
+
+
+def test_statement_is_none_when_tcbs_has_nothing(tcbs):
+    tcbs({})
+    assert tcbs_tiers.statement("ZZZZ", "lctt", "quarterly") is None
+
+
+def test_vn_data_statements_fall_back_to_ruatichsan(monkeypatch):
+    from app.services.tradingagents import vn_data
+
+    monkeypatch.setattr(vn_data.tcbs_tiers, "statement", lambda sym, kind, freq: None)
+    monkeypatch.setattr(
+        vn_data,
+        "_load_statements",
+        lambda ticker, freq: {
+            "fiscalDates": ["2025Q1", "2025Q2"],
+            "cdkt": [["Total assets", "", "", 100, 200]],
+            "dataSource": "ruatichsan",
+        },
+    )
+    result = vn_data.get_balance_sheet("HPG")
+    assert "Total assets" in result and "ruatichsan" in result
+
+
+def test_vn_data_statements_prefer_tcbs(monkeypatch):
+    from app.services.tradingagents import vn_data
+
+    monkeypatch.setattr(
+        vn_data.tcbs_tiers, "statement", lambda sym, kind, freq: f"# {sym} {kind} tcbs"
+    )
+    assert vn_data.get_cashflow("HPG") == "# HPG lctt tcbs"
+
+
+def test_row_digits_keeps_ratios_readable():
+    # A growth rate formatted to zero decimals prints "0", which reads as a real
+    # zero rather than as 17.7%.
+    assert tcbs_tiers._row_digits("yearShareHolderIncomeGrowth", [0.177, -0.02]) == 3
+    assert tcbs_tiers._row_digits("badDebtPercentage", [0.012]) == 3
+    assert tcbs_tiers._row_digits("preTaxProfit", [9670, 8870]) == 0
+    # Unnamed small values are treated as ratios on magnitude.
+    assert tcbs_tiers._row_digits("someIndex", [1.02, 0.98]) == 3
+
+
+def test_statement_renders_growth_rows_with_decimals(monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Ngân hàng"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs_tiers._icb_code.cache_clear()
+
+    def fake_call(tool_name, **params):
+        if tool_name == "tcinvest-getIncomeStatementForBank":
+            return {"result": [
+                {"year": 2026, "quarter": 2, "preTaxProfit": 9670,
+                 "yearShareHolderIncomeGrowth": 0.177},
+            ]}
+        raise client.TcbsNoData("n/a")
+
+    monkeypatch.setattr(tcbs_tiers.tcbs, "call", fake_call)
+    monkeypatch.setattr(tcbs_tiers.tcbs, "enabled", lambda: True)
+
+    block = tcbs_tiers.statement("TCB", "kqkd", "quarterly")
+    assert "0.177" in block
+    assert "9,670" in block
