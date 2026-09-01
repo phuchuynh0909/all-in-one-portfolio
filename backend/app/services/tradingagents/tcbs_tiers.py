@@ -500,3 +500,84 @@ def statement(symbol: str, kind: str, freq: str) -> str | None:
         f"sector, not a single peer. Source: TCBS (TCInvest).",
     ]
     return "\n".join(lines)
+
+
+#: Headlines and events shown per block.
+_NEWS_ROWS = 20
+_EVENT_ROWS = 12
+
+
+def _in_window(day: str, start_date: str, end_date: str) -> bool:
+    """Whether an ISO date falls in the window. An unknown date is kept."""
+    if len(day) != 10 or day == "-":
+        return True
+    return start_date <= day <= end_date
+
+
+def company_news(symbol: str, start_date: str, end_date: str) -> str | None:
+    """Corporate activity news and events from TCBS, or None."""
+    if not tcbs.enabled():
+        return None
+
+    sym = str(symbol).upper()
+    news = _rows(_try("getTickerActivityNews", ticker=sym, size=_NEWS_ROWS))
+    events = _rows(_try("getTickerEventNews", ticker=sym, size=_EVENT_ROWS))
+    if not news and not events:
+        return None
+
+    lines = [f"# {sym} — company news and corporate events (TCBS)", ""]
+
+    shown = [
+        row
+        for row in news
+        if _in_window(
+            _vn_date(_first(row, "publishDate", "date", default="")),
+            start_date,
+            end_date,
+        )
+    ][:_NEWS_ROWS]
+    if shown:
+        lines += ["## Activity news", ""]
+        for row in shown:
+            date = _vn_date(_first(row, "publishDate", "date", default=""))
+            title = _first(row, "title", "name", default="(untitled)")
+            source = _first(row, "source")
+            suffix = f"  _({source})_" if source else ""
+            lines.append(f"- **{date}** — {title}{suffix}")
+        lines.append("")
+
+    if events:
+        rendered = []
+        for row in events[:_EVENT_ROWS]:
+            # Dates that are absent come back as SQL Server's minimum date;
+            # printing 1753-01-01 as an ex-rights date would be a fabricated fact.
+            cells = []
+            for keys in (("exRigthDate", "exRightDate"), ("regFinalDate",)):
+                value = _vn_date(_first(row, *keys, default=""))
+                cells.append("-" if _is_null_date(value) else value)
+            notify = _vn_date(_first(row, "notifyDate", default=""))
+            rendered.append(
+                "| {name} | {notify} | {ex} | {rec} |".format(
+                    name=str(_first(row, "eventName", "eventDesc", default="-"))[:90],
+                    notify="-" if _is_null_date(notify) else notify,
+                    ex=cells[0],
+                    rec=cells[1],
+                )
+            )
+        if rendered:
+            lines += [
+                "## Corporate events",
+                "",
+                "| Event | Announced | Ex-rights | Record date |",
+                "|---|---|---|---|",
+                *rendered,
+                "",
+            ]
+
+    lines.append(
+        "Source: TCBS (TCInvest). Corporate events are scheduled, not completed: "
+        "an ex-rights date in the future is a commitment, not a result, and '-' "
+        "means the event carries no such date. Do not fabricate headlines beyond "
+        "those listed."
+    )
+    return "\n".join(lines)

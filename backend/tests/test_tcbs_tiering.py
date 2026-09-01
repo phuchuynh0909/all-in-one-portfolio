@@ -439,3 +439,116 @@ def test_statement_renders_growth_rows_with_decimals(monkeypatch):
     block = tcbs_tiers.statement("TCB", "kqkd", "quarterly")
     assert "0.177" in block
     assert "9,670" in block
+
+
+def test_company_news_renders_activity_and_events(tcbs):
+    tcbs({
+        "getTickerActivityNews": {"listActivityNews": [
+            {"id": 12091023, "title": "TCB: Các Quyết định HĐQT",
+             "source": "HOSE", "publishDate": "2026-07-23 17:39:48"},
+        ]},
+        "getTickerEventNews": {"listEventNews": [
+            {"eventName": "TCB - BCTC Quý 2/2026", "eventCode": "KQQY",
+             "notifyDate": "2026-07-21 00:00:00", "exerDate": "2026-07-21 00:00:00",
+             "regFinalDate": "1753-01-01 00:00:00", "exRigthDate": "1753-01-01 00:00:00",
+             "eventDesc": "TCB - BCTC Quý 2/2026"},
+        ]},
+    })
+
+    block = tcbs_tiers.company_news("TCB", "2026-07-01", "2026-08-10")
+
+    assert block is not None
+    assert "Các Quyết định HĐQT" in block
+    assert "2026-07-23" in block
+    assert "BCTC Quý 2/2026" in block
+    assert "TCBS" in block
+
+
+def test_company_news_hides_the_sentinel_dates(tcbs):
+    # TCBS returns SQL Server's minimum date for "this event has no such date".
+    # Printing 1753-01-01 as an ex-rights date would be a fabricated fact.
+    tcbs({
+        "getTickerEventNews": {"listEventNews": [
+            {"eventName": "Q2 results", "notifyDate": "2026-07-21 00:00:00",
+             "exRigthDate": "1753-01-01 00:00:00", "regFinalDate": "1753-01-01 00:00:00"},
+        ]},
+    })
+    block = tcbs_tiers.company_news("TCB", "2026-07-01", "2026-08-10")
+    assert "1753" not in block
+
+
+def test_company_news_filters_headlines_to_the_window(tcbs):
+    tcbs({
+        "getTickerActivityNews": {"listActivityNews": [
+            {"title": "In window", "publishDate": "2026-07-23 10:00:00"},
+            {"title": "Way too old", "publishDate": "2024-01-05 10:00:00"},
+        ]},
+    })
+    block = tcbs_tiers.company_news("TCB", "2026-07-01", "2026-08-10")
+    assert "In window" in block
+    assert "Way too old" not in block
+
+
+def test_company_news_is_none_when_both_feeds_are_empty(tcbs):
+    tcbs({})
+    assert tcbs_tiers.company_news("ZZZZ", "2026-07-01", "2026-08-10") is None
+
+
+def test_company_news_survives_one_feed_failing(tcbs):
+    tcbs({
+        "getTickerActivityNews": {"listActivityNews": [
+            {"title": "Only this", "publishDate": "2026-07-20 09:00:00"},
+        ]},
+        "getTickerEventNews": client.TcbsUnavailable("boom"),
+    })
+    block = tcbs_tiers.company_news("TCB", "2026-07-01", "2026-08-10")
+    assert block is not None and "Only this" in block
+
+
+def test_company_news_tier_sits_below_the_knowledge_base(monkeypatch):
+    # Curated research stays the top tier; TCBS must not displace it.
+    from app.services.tradingagents import kb_search, vn_data
+
+    monkeypatch.setattr(
+        kb_search, "search", lambda q, symbols=None: [{"text": "curated", "score": 0.9}]
+    )
+    monkeypatch.setattr(kb_search, "format_hits", lambda title, hits: "KB BLOCK")
+    called = []
+    monkeypatch.setattr(
+        vn_data.tcbs_tiers,
+        "company_news",
+        lambda sym, s, e: called.append(sym) or "TCBS BLOCK",
+    )
+
+    result = vn_data._company_news("TCB", "2026-07-01", "2026-08-10")
+
+    assert "KB BLOCK" in result
+    assert called == []  # TCBS never reached
+
+
+def test_company_news_tier_runs_when_the_knowledge_base_is_empty(monkeypatch):
+    from app.services.tradingagents import kb_search, vn_data
+
+    monkeypatch.setattr(kb_search, "search", lambda q, symbols=None: [])
+    monkeypatch.setattr(
+        vn_data.tcbs_tiers, "company_news", lambda sym, s, e: "TCBS BLOCK"
+    )
+
+    result = vn_data._company_news("TCB", "2026-07-01", "2026-08-10")
+
+    assert "TCBS BLOCK" in result
+
+
+def test_company_news_falls_through_to_wichart_without_tcbs(monkeypatch):
+    # The regression guard for the news stack.
+    from app.services.tradingagents import kb_search, vn_data
+
+    monkeypatch.setattr(kb_search, "search", lambda q, symbols=None: [])
+    monkeypatch.setattr(vn_data.tcbs_tiers, "company_news", lambda sym, s, e: None)
+    monkeypatch.setattr(
+        vn_data, "_wichart_company_news", lambda sym, s, e: "WICHART BLOCK"
+    )
+
+    result = vn_data._company_news("TCB", "2026-07-01", "2026-08-10")
+
+    assert "WICHART BLOCK" in result
