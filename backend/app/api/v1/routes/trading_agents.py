@@ -281,7 +281,14 @@ def analyze_stream(request: AnalyzeRequest) -> StreamingResponse:
     return StreamingResponse(
         event_generator(),
         media_type="text/event-stream",
-        headers={"Cache-Control": "no-cache", "Connection": "keep-alive"},
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            # nginx buffers a proxied response by default, which holds each
+            # event — heartbeats included — until its buffer fills. That defeats
+            # both the keepalive and the live progress the stream exists for.
+            "X-Accel-Buffering": "no",
+        },
     )
 
 

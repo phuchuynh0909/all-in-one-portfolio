@@ -303,6 +303,10 @@ export const startAnalysis = (
               break;
             case 'done':
               break;
+            case 'ping':
+              // Keepalive from the server so a proxy does not drop an idle
+              // stream while a graph node runs. Nothing to render.
+              break;
             default:
               break;
           }

@@ -244,3 +244,86 @@ def test_shutdown_does_not_hang_on_a_job_that_never_notices():
 
 def test_shutdown_with_no_jobs_is_harmless():
     jobs.shutdown(timeout=0.1)
+
+
+# --- keepalive --------------------------------------------------------------
+#
+# A graph node is minutes of LLM calls, and nothing crosses the wire while one
+# runs. Idle that long and a proxy between the browser and uvicorn will drop the
+# response as dead, so the subscriber emits a heartbeat to keep it open.
+
+
+def test_a_quiet_run_still_sends_something(monkeypatch):
+    monkeypatch.setattr(jobs, "HEARTBEAT_SECONDS", 0.05)
+    gate = threading.Event()
+    job = jobs.start("QUIET", "2026-09-01", make_stream([("done", {})], gate=gate))
+
+    stream = jobs.subscribe(job)
+    kind, data = next(stream)
+
+    assert kind == "ping"
+    assert data["idle_ms"] >= 0
+    gate.set()
+    stream.close()
+
+
+def test_the_heartbeat_is_not_written_into_the_run(monkeypatch):
+    # The buffer is replayed from zero for every new subscriber. A ping in there
+    # would be replayed forever, and would grow the buffer without bound while a
+    # single node runs.
+    monkeypatch.setattr(jobs, "HEARTBEAT_SECONDS", 0.05)
+    gate = threading.Event()
+    job = jobs.start("BUFFER", "2026-09-01", make_stream([("done", {})], gate=gate))
+
+    stream = jobs.subscribe(job)
+    next(stream)
+    next(stream)
+
+    assert job.events == []
+    gate.set()
+    stream.close()
+
+
+def test_real_events_are_not_displaced_by_the_heartbeat(monkeypatch):
+    monkeypatch.setattr(jobs, "HEARTBEAT_SECONDS", 0.05)
+    job = jobs.start(
+        "FLOW",
+        "2026-09-01",
+        make_stream([("started", {"symbol": "FLOW"}), ("report", {"section": "market"}), ("done", {})]),
+    )
+
+    kinds = [kind for kind, _ in jobs.subscribe(job)]
+
+    assert [k for k in kinds if k != "ping"] == ["started", "report", "done"]
+
+
+def test_a_busy_run_is_not_padded_with_heartbeats(monkeypatch):
+    # An event is itself proof the connection is alive; a heartbeat on top of a
+    # steady stream is pure noise.
+    monkeypatch.setattr(jobs, "HEARTBEAT_SECONDS", 30.0)
+    job = jobs.start(
+        "BUSY", "2026-09-01", make_stream([("node", {"node": "Market"}), ("done", {})])
+    )
+
+    kinds = [kind for kind, _ in jobs.subscribe(job)]
+
+    assert "ping" not in kinds
+
+
+def test_the_heartbeat_stops_when_the_run_does(monkeypatch):
+    # Otherwise the generator never returns and the response never closes.
+    monkeypatch.setattr(jobs, "HEARTBEAT_SECONDS", 0.05)
+    job = jobs.start("ENDS", "2026-09-01", make_stream([("done", {})]))
+
+    kinds = [kind for kind, _ in jobs.subscribe(job)]
+
+    assert kinds[-1] == "done"
+
+
+def test_the_heartbeat_can_be_switched_off(monkeypatch):
+    monkeypatch.setattr(jobs, "HEARTBEAT_SECONDS", 0.0)
+    job = jobs.start("OFF", "2026-09-01", make_stream([("done", {})]))
+
+    kinds = [kind for kind, _ in jobs.subscribe(job)]
+
+    assert "ping" not in kinds

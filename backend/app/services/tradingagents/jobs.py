@@ -34,6 +34,12 @@ EventStream = Iterator[Event]
 # thing bounding the cost of a mistyped ticker, so it is deliberately small.
 MAX_CONCURRENT_RUNS = int(os.getenv("TRADINGAGENTS_MAX_CONCURRENT_RUNS", "3"))
 
+# How long a subscriber may send nothing before it emits a ``ping``. A graph
+# node is minutes of LLM calls and nothing crosses the wire while one runs, so
+# without this an idle proxy between the browser and uvicorn drops the response
+# as dead (nginx's proxy_read_timeout defaults to 60s). Set to 0 to disable.
+HEARTBEAT_SECONDS = float(os.getenv("TRADINGAGENTS_HEARTBEAT_SECONDS", "15"))
+
 
 class TooManyRuns(RuntimeError):
     """Admission refused: the concurrency cap is full."""
@@ -153,12 +159,27 @@ def subscribe(job: Job) -> EventStream:
     The wait is given a timeout so a subscriber cannot be stranded forever by a
     worker that died without notifying; every state change notifies, so the
     timeout is a backstop rather than a poll interval.
+
+    Emits a ``("ping", {"idle_ms": ...})`` when nothing has gone out for
+    ``HEARTBEAT_SECONDS``. A graph node is minutes of LLM calls and produces no
+    events while it runs, so without one an intermediary drops the response as
+    dead. The heartbeat is yielded to this subscriber only and never appended to
+    ``job.events``, which is replayed in full to everyone who attaches later.
     """
     index = 0
+    now = time.monotonic
+    last_event_at = now()
+    last_sent_at = last_event_at
+
     while True:
         with job.cond:
             while len(job.events) == index and not job.done:
                 job.cond.wait(timeout=1.0)
+                # Leave the wait to send a heartbeat. The condition is still
+                # what wakes this on real work; the timeout only bounds how
+                # long the connection can sit silent.
+                if HEARTBEAT_SECONDS and now() - last_sent_at >= HEARTBEAT_SECONDS:
+                    break
             pending = job.events[index:]
             index += len(pending)
             exhausted = job.done and index == len(job.events)
@@ -167,6 +188,17 @@ def subscribe(job: Job) -> EventStream:
         # from appending, nor other subscribers from reading.
         for event in pending:
             yield event
+
+        if pending:
+            last_event_at = last_sent_at = now()
+        elif not exhausted:
+            # Yielded, never appended: ``job.events`` is replayed in full to
+            # every new subscriber, so a heartbeat in there would be replayed
+            # forever and would grow the buffer without bound while one node
+            # runs. ``idle_ms`` is how long the current node has been working,
+            # which is the only thing a waiting client can usefully be told.
+            yield ("ping", {"idle_ms": int((now() - last_event_at) * 1000)})
+            last_sent_at = now()
 
         if exhausted:
             return

@@ -86,3 +86,17 @@ def test_the_endpoint_does_not_close_the_job(client, monkeypatch):
 
     assert not job.stop_requested
     assert not job.done
+
+
+def test_the_stream_tells_nginx_not_to_buffer_it(client, monkeypatch):
+    """Without this the proxy holds events — heartbeats included — until its
+    buffer fills, which defeats both the keepalive and the live progress."""
+    from app.services.tradingagents import runner
+
+    monkeypatch.setattr(
+        runner, "run_analysis_stream", lambda *a, **k: iter([("done", {})])
+    )
+    with client.stream("POST", URL, json=BODY) as resp:
+        assert resp.status_code == 200
+        assert resp.headers["x-accel-buffering"] == "no"
+        assert resp.headers["cache-control"] == "no-cache"
