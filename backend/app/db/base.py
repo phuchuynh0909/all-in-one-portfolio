@@ -12,6 +12,7 @@ from app.db.models.portfolio import Position, Transaction, InvestmentAmount
 from app.db.models.market import Sector, StockSymbol
 from app.db.models.corporate_action import CorporateAction, CorporateActionApplication
 from app.db.models.user import User
+from app.db.models.tcbs import TcbsOAuthToken
 
 
 def _engine_kwargs(url: str) -> dict:
