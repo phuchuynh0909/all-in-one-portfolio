@@ -93,3 +93,5 @@ ddgs>=6.0            # keyless web search for the news/sentiment analysts (Tavil
 # (Yahoo is never actually called — all data routes to the VN 'portfolio' vendor).
 
 -e ./libs/backtesting.py
+# TCBS MCP connector (backend/app/services/tcbs_mcp_client.py)
+mcp>=2.1.0
