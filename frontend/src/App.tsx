@@ -6,7 +6,10 @@ import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { ColorModeProvider } from './theme';
 import AppShell from './components/layout/AppShell';
 import ErrorBoundary from './components/ErrorBoundary';
+import AuthProvider from './components/auth/AuthProvider';
+import RequireAuth from './components/auth/RequireAuth';
 
+import Login from './pages/Login';
 import Home from './pages/Home';
 import Portfolio from './pages/Portfolio';
 import Chart from './pages/Chart';
@@ -34,7 +37,7 @@ const queryClient = new QueryClient({
   },
 });
 
-function AppRoutes() {
+function ShellRoutes() {
   const { pathname } = useLocation();
 
   return (
@@ -71,13 +74,32 @@ function AppRoutes() {
   );
 }
 
+function AppRoutes() {
+  return (
+    <Routes>
+      {/* Outside AppShell on purpose: no nav chrome on the login screen. */}
+      <Route path="/login" element={<Login />} />
+      <Route
+        path="*"
+        element={
+          <RequireAuth>
+            <ShellRoutes />
+          </RequireAuth>
+        }
+      />
+    </Routes>
+  );
+}
+
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
       <ColorModeProvider>
         <LocalizationProvider dateAdapter={AdapterDateFns}>
           <BrowserRouter>
-            <AppRoutes />
+            <AuthProvider>
+              <AppRoutes />
+            </AuthProvider>
           </BrowserRouter>
         </LocalizationProvider>
       </ColorModeProvider>
