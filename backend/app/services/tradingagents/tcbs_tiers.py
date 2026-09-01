@@ -18,10 +18,13 @@ uniform ``data`` key).
 from __future__ import annotations
 
 import logging
+import re
+from functools import lru_cache
 from typing import Any
 
 from app.services import tcbs_mcp_client as tcbs
 
+from .sector_analyst import sector_tags
 from .utils import fmt_count
 
 logger = logging.getLogger(__name__)
@@ -180,10 +183,6 @@ def insider_transactions(symbol: str) -> str | None:
     return "\n".join(lines)
 
 
-from functools import lru_cache  # noqa: E402
-
-from .sector_analyst import sector_tags  # noqa: E402
-
 #: TCBS splits every statement and ratio tool into bank and non-bank variants,
 #: because the two report different line items entirely. The committed sector
 #: map already tags banks, so the split costs no extra call. (TCBS agrees:
@@ -334,8 +333,6 @@ def fundamentals(symbol: str) -> str | None:
     )
     return "\n".join(lines)
 
-
-import re  # noqa: E402
 
 #: Statement key -> (TCBS tool stem, human title). The keys match _STATEMENTS in
 #: vn_data.py so the two files stay legible side by side.

@@ -318,8 +318,10 @@ def test_statement_picks_the_non_bank_variant(monkeypatch):
     monkeypatch.setattr(tcbs_tiers.tcbs, "call", fake_call)
     monkeypatch.setattr(tcbs_tiers.tcbs, "enabled", lambda: True)
 
-    assert "tcinvest-getBalanceSheetForNonBank" in seen or True
     block = tcbs_tiers.statement("HPG", "cdkt", "quarterly")
+
+    assert "tcinvest-getBalanceSheetForNonBank" in seen
+    assert "tcinvest-getBalanceSheetForBank" not in seen
     assert block is not None and "Total asset" in block
 
 
@@ -552,3 +554,40 @@ def test_company_news_falls_through_to_wichart_without_tcbs(monkeypatch):
     result = vn_data._company_news("TCB", "2026-07-01", "2026-08-10")
 
     assert "WICHART BLOCK" in result
+
+
+def _tcbs_connected() -> bool:
+    try:
+        from app.services import tcbs_mcp_client
+
+        return tcbs_mcp_client.enabled()
+    except Exception:  # noqa: BLE001 -- no store, no connection
+        return False
+
+
+requires_tcbs = pytest.mark.skipif(
+    not _tcbs_connected(),
+    reason="no TCBS token; run: python backend/scripts/tcbs_login.py login",
+)
+
+
+@requires_tcbs
+@pytest.mark.integration
+def test_live_ticker_overview_answers():
+    from app.services import tcbs_mcp_client
+
+    payload = tcbs_mcp_client.call("tcinvest-getTickerOverview", ticker="TCB")
+    assert payload
+    assert payload.get("ticker") == "TCB"
+
+
+@requires_tcbs
+@pytest.mark.integration
+def test_live_bank_and_non_bank_statements_use_different_line_items():
+    # The bank/non-bank split is the one branch a fixture cannot prove, because
+    # it is the upstream API that returns different charts of accounts.
+    bank = tcbs_tiers.statement("TCB", "kqkd", "quarterly")
+    non_bank = tcbs_tiers.statement("HPG", "kqkd", "quarterly")
+    assert bank and non_bank
+    assert "Net interest income" in bank
+    assert "Net interest income" not in non_bank

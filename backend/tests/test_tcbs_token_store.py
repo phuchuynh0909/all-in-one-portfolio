@@ -3,21 +3,19 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-import pytest
-
 from app.services import tcbs_token_store as store
 from app.services.tcbs_token_store import TcbsCredentials
 from tests.conftest import requires_mysql
 
 
 def _creds(**over) -> TcbsCredentials:
-    base = dict(
-        client_id="client-abc",
-        client_secret="secret-xyz",
-        access_token="access-1",
-        refresh_token="refresh-1",
-        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
-    )
+    base = {
+        "client_id": "client-abc",
+        "client_secret": "secret-xyz",
+        "access_token": "access-1",
+        "refresh_token": "refresh-1",
+        "expires_at": datetime.now(timezone.utc) + timedelta(hours=1),
+    }
     base.update(over)
     return TcbsCredentials(**base)
 

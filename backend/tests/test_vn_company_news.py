@@ -85,7 +85,12 @@ def test_wichart_company_news_upstream_error_returns_none():
 
 
 def test_company_news_falls_through_kb_and_reports_to_wichart():
+    # TCBS sits between the knowledge base and wichart, so it has to be stood
+    # down explicitly; otherwise this asserts on wichart only when the machine
+    # running the suite happens not to be logged in to TCBS.
     with mock.patch.object(kb_search, "search", return_value=[]), mock.patch.object(
+        vn_data.tcbs_tiers, "company_news", return_value=None
+    ), mock.patch.object(
         vn_data, "_report_section", return_value=None
     ), mock.patch(
         "app.services.wichart_news_client.fetch_news", return_value=_KBC_ITEMS
