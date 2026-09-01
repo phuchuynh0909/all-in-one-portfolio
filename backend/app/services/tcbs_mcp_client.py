@@ -167,3 +167,189 @@ def list_tools() -> list[dict]:
 
     with _session_lock:
         return run_sync(_list())
+
+
+def _payload(result: Any) -> Any:
+    """The usable payload from a CallToolResult, or raise TcbsNoData.
+
+    The server may answer with ``structuredContent`` or with a text block
+    carrying JSON; both are normal, so both are read. An empty payload is "no
+    data for this symbol", not a broken call -- the distinction is what lets a
+    tier fall back quietly instead of logging an error.
+    """
+    import json
+
+    if getattr(result, "isError", False):
+        raise TcbsNoData(f"TCBS reported an error: {_first_text(result)[:200]}")
+
+    structured = getattr(result, "structuredContent", None)
+    if structured:
+        return structured
+
+    text = _first_text(result)
+    if text:
+        try:
+            parsed = json.loads(text)
+        except (TypeError, ValueError):
+            return text
+        if parsed:
+            return parsed
+
+    raise TcbsNoData("TCBS returned an empty payload")
+
+
+def _first_text(result: Any) -> str:
+    for block in getattr(result, "content", None) or []:
+        text = getattr(block, "text", None)
+        if text:
+            return text
+    return ""
+
+
+def _is_auth_error(exc: BaseException) -> bool:
+    """Whether ``exc`` looks like an expired or rejected token.
+
+    Matched on the message because the SDK surfaces transport status codes as
+    plain exceptions rather than a typed 401.
+    """
+    text = str(exc).lower()
+    return "401" in text or "unauthorized" in text or "invalid_token" in text
+
+
+def _auth_metadata() -> dict | None:
+    """The authorization server's metadata, via the protected-resource document."""
+    import urllib.parse
+
+    import requests
+
+    def wellknown(url: str, document: str) -> str:
+        parts = urllib.parse.urlsplit(url)
+        return urllib.parse.urlunsplit(
+            (
+                parts.scheme,
+                parts.netloc,
+                f"/.well-known/{document}{parts.path.rstrip('/')}",
+                "",
+                "",
+            )
+        )
+
+    try:
+        resource = requests.get(
+            wellknown(MCP_URL.rstrip("/"), "oauth-protected-resource"), timeout=TIMEOUT
+        )
+        resource.raise_for_status()
+        servers = resource.json().get("authorization_servers") or []
+        if not servers:
+            return None
+        meta = requests.get(
+            wellknown(servers[0], "oauth-authorization-server"), timeout=TIMEOUT
+        )
+        meta.raise_for_status()
+        return meta.json()
+    except Exception as exc:  # noqa: BLE001 -- no metadata means no refresh
+        logger.warning("TCBS auth metadata lookup failed: %s", exc)
+        return None
+
+
+def _refresh() -> bool:
+    """Exchange the refresh token for a new access token. False if impossible."""
+    from datetime import datetime, timedelta, timezone
+
+    import requests
+
+    from app.services.tcbs_token_store import TcbsCredentials, save
+
+    creds = _load_credentials()
+    if creds is None or not creds.refresh_token:
+        return False
+
+    # Resolved the same way the login CLI does, so both agree on which
+    # authorization server is authoritative.
+    meta = _auth_metadata()
+    if not meta:
+        return False
+
+    resp = requests.post(
+        meta["token_endpoint"],
+        data={
+            "grant_type": "refresh_token",
+            "refresh_token": creds.refresh_token,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret or "",
+        },
+        timeout=TIMEOUT,
+    )
+    if resp.status_code >= 400:
+        logger.warning("TCBS refresh failed (%s): %s", resp.status_code, resp.text[:200])
+        return False
+
+    payload = resp.json()
+    expires_in = payload.get("expires_in")
+    save(
+        TcbsCredentials(
+            client_id=creds.client_id,
+            client_secret=creds.client_secret,
+            access_token=payload["access_token"],
+            # A server that rotates refresh tokens returns a new one; one that
+            # does not expects the old one to keep working.
+            refresh_token=payload.get("refresh_token") or creds.refresh_token,
+            expires_at=(
+                datetime.now(timezone.utc) + timedelta(seconds=int(expires_in))
+                if expires_in
+                else None
+            ),
+        )
+    )
+    logger.info("Refreshed the TCBS access token")
+    return True
+
+
+def call(tool_name: str, **params) -> Any:
+    """Invoke one TCBS tool. The single entry point for every tier.
+
+    Raises :class:`TcbsNoData` when the symbol has nothing and
+    :class:`TcbsUnavailable` for everything else, so a caller can tell "TCBS
+    has no coverage here" from "TCBS is broken" -- though both degrade to the
+    fallback tier in practice.
+    """
+    import time
+
+    if not enabled():
+        raise TcbsUnavailable("TCBS tier is not enabled")
+
+    key = (tool_name, tuple(sorted(params.items())))
+    now = time.monotonic()
+    cached = _cache.get(key)
+    if cached and now - cached[0] < CACHE_TTL_SECONDS:
+        return cached[1]
+
+    async def _invoke():
+        session = await _session()
+        return await session.call_tool(tool_name, params)
+
+    with _session_lock:
+        try:
+            result = run_sync(_invoke())
+        except TcbsNoData:
+            raise
+        except Exception as exc:  # noqa: BLE001 -- classified below
+            if not _is_auth_error(exc):
+                raise TcbsUnavailable(f"TCBS call {tool_name} failed: {exc}") from exc
+            logger.info("TCBS rejected the token on %s; refreshing", tool_name)
+            reset()
+            if not _refresh():
+                raise TcbsUnavailable(
+                    "TCBS token expired and could not be refreshed; re-authorize "
+                    "with: python backend/scripts/tcbs_login.py login"
+                ) from exc
+            try:
+                result = run_sync(_invoke())
+            except Exception as retry_exc:  # noqa: BLE001
+                raise TcbsUnavailable(
+                    f"TCBS call {tool_name} failed after refresh: {retry_exc}"
+                ) from retry_exc
+
+    payload = _payload(result)
+    _cache[key] = (now, payload)
+    return payload
