@@ -1671,6 +1671,10 @@ def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
     profitable is it, versus its sector" instead.
     """
     sym = str(ticker).upper()
+    block = _best_effort(f"tcbs_fundamentals[{sym}]", tcbs_tiers.fundamentals, sym)
+    if block:
+        return block
+
     try:
         from app.services import money24h_client
 

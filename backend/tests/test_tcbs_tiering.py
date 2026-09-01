@@ -147,3 +147,125 @@ def test_vn_data_tool_keeps_the_sentinel_when_tcbs_is_absent(monkeypatch):
     result = vn_data.get_insider_transactions("TCB")
     assert result.startswith("INSIDER_DATA_UNAVAILABLE:")
     assert "TCB" in result
+
+
+def test_is_bank_reads_the_committed_sector_map(monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Ngân hàng"])
+    tcbs_tiers.is_bank.cache_clear()
+    assert tcbs_tiers.is_bank("TCB") is True
+
+
+def test_is_bank_is_false_for_other_sectors(monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Thép"])
+    tcbs_tiers.is_bank.cache_clear()
+    assert tcbs_tiers.is_bank("HPG") is False
+
+
+def test_is_bank_defaults_to_non_bank_when_unmapped(monkeypatch):
+    # Non-bank is the safe default: it is the larger population, and the wrong
+    # guess costs one degraded block, not a failed run.
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: [])
+    tcbs_tiers.is_bank.cache_clear()
+    assert tcbs_tiers.is_bank("XYZ") is False
+
+
+def _ratio_payload(**over):
+    base = {
+        "capitalize": 236680, "priceToEarning": 8.7, "priceToBook": 1.3,
+        "roe": 0.161, "earningPerShare": 3827, "bookValuePerShare": 26671,
+        "revenue": 40998, "netProfit": 27116, "betaIndex": 1.02,
+        "loanOnDeposit": 1.279, "badDebtPercentage": 0.012, "creditGrowth": 0.15,
+    }
+    base.update(over)
+    return base
+
+
+def test_fundamentals_block_carries_ratios_peers_and_rating(tcbs, monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Ngân hàng"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs({
+        "getTickerOverview": {
+            "exchange": "HOSE", "shortName": "Techcombank", "industry": "Ngân hàng",
+            "noEmployees": 12946, "foreignPercent": 0.208, "industryIdLevel2": "8300",
+        },
+        "getStockRatio": _ratio_payload(),
+        "getStockSameIndustry": {"value": [
+            {"ticker": "VCB", "companyName": "Vietcombank", "pe": 12.058, "pb": 2.0,
+             "roe": 0.18, "beta": 0.737, "marketCap": 502176},
+        ]},
+        "getGeneralRating": {
+            "stockRating": 3.3, "valuation": 3.3, "financialHealth": 3.6,
+            "businessModel": 4.0, "businessOperation": 4.2,
+        },
+    })
+
+    block = tcbs_tiers.fundamentals("TCB")
+
+    assert block is not None
+    assert "8.70" in block          # priceToEarning, not "pe"
+    assert "VCB" in block           # the peer table
+    assert "3.3" in block           # the rating
+    assert "TCBS" in block
+
+
+def test_fundamentals_shows_bank_specific_metrics(tcbs, monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Ngân hàng"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs({"getStockRatio": _ratio_payload()})
+    block = tcbs_tiers.fundamentals("TCB")
+    # A bank reports loan/deposit and bad-debt ratios; inventory age is
+    # meaningless for one and must not appear.
+    assert "Loan/deposit" in block
+    assert "Bad debt" in block
+    assert "Inventory" not in block
+
+
+def test_fundamentals_shows_non_bank_metrics_instead(tcbs, monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Thép"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs({"getStockRatio": _ratio_payload(
+        ageOfInventory=95.0, payableOnEquity=0.8, ebitOnInterest=4.2,
+        loanOnDeposit=None, badDebtPercentage=None,
+    )})
+    block = tcbs_tiers.fundamentals("HPG")
+    assert "Inventory" in block
+    assert "Loan/deposit" not in block
+
+
+def test_fundamentals_block_is_none_without_core_data(tcbs):
+    # Peers and ratings are enrichment; with no ratios and no overview there is
+    # no snapshot, so the 24hmoney tier should serve instead of a stub.
+    tcbs({})
+    assert tcbs_tiers.fundamentals("ZZZZ") is None
+
+
+def test_fundamentals_block_survives_missing_enrichment(tcbs, monkeypatch):
+    monkeypatch.setattr(tcbs_tiers, "sector_tags", lambda sym: ["Thép"])
+    tcbs_tiers.is_bank.cache_clear()
+    tcbs({
+        "getStockRatio": _ratio_payload(),
+        "getStockSameIndustry": client.TcbsUnavailable("boom"),
+        "getGeneralRating": client.TcbsUnavailable("boom"),
+    })
+    block = tcbs_tiers.fundamentals("HPG")
+    assert block is not None and "8.70" in block
+
+
+def test_vn_data_fundamentals_prefers_tcbs(monkeypatch):
+    from app.services.tradingagents import vn_data
+
+    monkeypatch.setattr(vn_data.tcbs_tiers, "fundamentals", lambda sym: f"# {sym} tcbs")
+    assert vn_data.get_fundamentals("TCB") == "# TCB tcbs"
+
+
+def test_vn_data_fundamentals_falls_back_to_money24h(monkeypatch):
+    from app.services import money24h_client
+    from app.services.tradingagents import vn_data
+
+    monkeypatch.setattr(vn_data.tcbs_tiers, "fundamentals", lambda sym: None)
+    monkeypatch.setattr(
+        money24h_client, "fetch_company_index", lambda sym: {"pe": 7.7, "group_name": "Thép"}
+    )
+    result = vn_data.get_fundamentals("HPG")
+    assert "fundamentals snapshot" in result
+    assert "24hmoney" in result

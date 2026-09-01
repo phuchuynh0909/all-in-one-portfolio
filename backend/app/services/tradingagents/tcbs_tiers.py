@@ -178,3 +178,158 @@ def insider_transactions(symbol: str) -> str | None:
         "extrapolate beyond the rows shown.",
     ]
     return "\n".join(lines)
+
+
+from functools import lru_cache  # noqa: E402
+
+from .sector_analyst import sector_tags  # noqa: E402
+
+#: TCBS splits every statement and ratio tool into bank and non-bank variants,
+#: because the two report different line items entirely. The committed sector
+#: map already tags banks, so the split costs no extra call. (TCBS agrees:
+#: getTickerOverview returns companyType "NH" for one, but that needs a call.)
+_BANK_TAGS = {"ngân hàng", "ngan hang", "banking", "bank"}
+
+#: Peers shown in the comparison table.
+_PEER_ROWS = 8
+
+#: (label, field, decimals) for metrics every company reports.
+_COMMON_RATIOS = (
+    ("Market cap (bn VND)", "capitalize", 0),
+    ("P/E", "priceToEarning", 2),
+    ("P/B", "priceToBook", 2),
+    ("EPS (VND/share)", "earningPerShare", 0),
+    ("Book value (VND/share)", "bookValuePerShare", 0),
+    ("ROE", "roe", 3),
+    ("Dividend yield", "dividend", 3),
+    ("Revenue (bn VND)", "revenue", 0),
+    ("Net profit (bn VND)", "netProfit", 0),
+    ("Equity (bn VND)", "equity", 0),
+    ("Beta", "betaIndex", 2),
+)
+
+#: Metrics that only mean something for a bank.
+_BANK_RATIOS = (
+    ("Loan/deposit", "loanOnDeposit", 3),
+    ("Bad debt %", "badDebtPercentage", 4),
+    ("Provision on bad debt", "provisionOnBadDebt", 3),
+    ("Credit growth", "creditGrowth", 3),
+    ("Non-interest income / TOI", "nonInterestOnToi", 3),
+)
+
+#: ...and the ones that only mean something for everyone else.
+_NON_BANK_RATIOS = (
+    ("Profit margin", "profitMargin", 3),
+    ("EV/EBITDA", "valueBeforeEbitda", 2),
+    ("Inventory age (days)", "ageOfInventory", 1),
+    ("Receivable age (days)", "ageOfReceivable", 1),
+    ("Payable/equity", "payableOnEquity", 3),
+    ("EBIT/interest", "ebitOnInterest", 2),
+)
+
+
+@lru_cache(maxsize=2048)
+def is_bank(symbol: str) -> bool:
+    """Whether ``symbol`` reports as a bank.
+
+    Non-bank is the default for an unmapped ticker: it is the far larger
+    population, and a wrong guess costs one degraded block rather than a run.
+    """
+    for tag in sector_tags(str(symbol).upper()):
+        if str(tag).strip().lower() in _BANK_TAGS:
+            return True
+    return False
+
+
+def fundamentals(symbol: str) -> str | None:
+    """Valuation, peers and rating from TCBS, or None when it cannot serve."""
+    if not tcbs.enabled():
+        return None
+
+    sym = str(symbol).upper()
+    ratios = _rows(_try("getStockRatio", ticker=sym))
+    overview = _rows(_try("getTickerOverview", ticker=sym))
+    if not ratios and not overview:
+        return None
+
+    bank = is_bank(sym)
+    lines = [f"# {sym} — fundamentals snapshot", ""]
+
+    if overview:
+        row = overview[0]
+        bits = []
+        for label, key in (
+            ("Exchange", "exchange"),
+            ("Industry", "industry"),
+            ("Employees", "noEmployees"),
+            ("Shareholders", "noShareholders"),
+            ("Established", "establishedYear"),
+        ):
+            value = _first(row, key)
+            if value is not None:
+                bits.append(f"{label}: {value}")
+        foreign = _first(row, "foreignPercent")
+        if foreign is not None:
+            bits.append(f"Foreign ownership: {float(foreign) * 100:,.1f}%")
+        if bits:
+            lines += ["  ·  ".join(bits), ""]
+
+    if ratios:
+        row = ratios[0]
+        applicable = _COMMON_RATIOS + (_BANK_RATIOS if bank else _NON_BANK_RATIOS)
+        lines += ["| Metric | Value |", "|---|---|"]
+        for label, key, digits in applicable:
+            value = _first(row, key)
+            if value is not None:
+                lines.append(f"| {label} | {_fmt(value, digits)} |")
+        lines.append("")
+
+    peers = _rows(_try("getStockSameIndustry", ticker=sym))
+    if peers:
+        lines += [
+            "## Peers in the same industry",
+            "",
+            "| Ticker | Company | P/E | P/B | ROE | Beta | Market cap (bn VND) |",
+            "|---|---|---|---|---|---|---|",
+        ]
+        for row in peers[:_PEER_ROWS]:
+            lines.append(
+                "| {t} | {n} | {pe} | {pb} | {roe} | {beta} | {cap} |".format(
+                    t=_first(row, "ticker", default="-"),
+                    n=str(_first(row, "companyName", default="-"))[:40],
+                    pe=_fmt(_first(row, "pe")),
+                    pb=_fmt(_first(row, "pb")),
+                    roe=_fmt(_first(row, "roe"), 3),
+                    beta=_fmt(_first(row, "beta")),
+                    cap=_fmt(_first(row, "marketCap"), 0),
+                )
+            )
+        lines.append("")
+
+    rating = _rows(_try("getGeneralRating", ticker=sym, fType="TICKER"))
+    if rating:
+        row = rating[0]
+        bits = []
+        for label, key in (
+            ("Overall", "stockRating"),
+            ("Valuation", "valuation"),
+            ("Financial health", "financialHealth"),
+            ("Business model", "businessModel"),
+            ("Business operation", "businessOperation"),
+            ("RS rating", "rsRating"),
+        ):
+            value = _first(row, key)
+            if value is not None:
+                bits.append(f"{label} {_fmt(value, 1)}")
+        if bits:
+            lines += ["## TCBS rating (out of 5)", "", ", ".join(bits) + ".", ""]
+
+    lines.append(
+        f"Amounts in billions of VND. Ratios are on the "
+        f"{'bank' if bank else 'non-bank'} reporting basis, so the metric set "
+        f"differs by sector. Call get_balance_sheet / get_income_statement / "
+        f"get_cashflow for the underlying line items (freq='annual' for yearly). "
+        f"Source: TCBS (TCInvest); the rating is TCBS's own model, not a "
+        f"recommendation to act on."
+    )
+    return "\n".join(lines)
