@@ -19,6 +19,7 @@ import { layout } from '../../theme';
 import BrandMark from './BrandMark';
 import SidebarNav from './SidebarNav';
 import ModeToggle from './ModeToggle';
+import UserMenu from './UserMenu';
 import DeskClock from './DeskClock';
 import { findNavItem } from './navigation';
 
@@ -183,6 +184,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               sx={{ my: 1.25, display: { xs: 'none', md: 'block' } }}
             />
             <ModeToggle />
+            <UserMenu />
           </Toolbar>
         </AppBar>
 
