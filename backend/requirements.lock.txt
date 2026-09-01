@@ -72,6 +72,8 @@ backports-zstd==1.7.0
     # via clickhouse-connect
 banks==2.5.0
     # via llama-index-core
+bcrypt==5.0.0
+    # via -r requirements.txt
 beartype==0.22.9
     # via py-key-value-aio
 beautifulsoup4==4.15.0
@@ -212,6 +214,8 @@ docstring-parser==0.18.0
     # via
     #   anthropic
     #   cyclopts
+duckdb==1.5.5
+    # via -r requirements.txt
 et-xmlfile==2.0.0
     # via openpyxl
 exceptiongroup==1.3.1
@@ -800,6 +804,8 @@ pygments==2.21.0
     #   pytest
     #   rich
     #   rich-rst
+pyjwt==2.13.0
+    # via -r requirements.txt
 pykalman==0.11.2
     # via -r requirements.txt
 pylatexenc==2.11

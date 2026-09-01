@@ -46,6 +46,13 @@ make down
 
 - Backend API: http://localhost:8000 (prefix `/api/v1`, docs at `/docs`)
 - Frontend dev server: http://localhost:5173 (talks to `VITE_API_BASE_URL=http://localhost:8000/api/v1`)
+- **Auth:** every route except `/api/v1/health` and `/api/v1/auth/login` needs
+  `Authorization: Bearer <token>`. `APP_AUTH_SECRET_KEY` must be set (the
+  backend refuses to start without it in production). Create a login with
+  `docker compose exec backend python -m app.scripts.create_user <username>`;
+  revoke one with `--deactivate`. Backend tests run as a stubbed logged-in user
+  via an autouse fixture in `tests/conftest.py`; a test that wants the real
+  guard marks itself `@pytest.mark.real_auth`.
 
 Production uses `docker-compose.prod.yml` + `prod.env` via `make prod-*`.
 **Never** run `make prod-up` / `make prod-down` or otherwise touch production
