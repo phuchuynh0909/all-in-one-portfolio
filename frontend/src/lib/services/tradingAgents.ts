@@ -167,6 +167,31 @@ export const fetchTradingAgentsHealth = async (): Promise<TAHealth> =>
 export const fetchModelOptions = async (): Promise<TAModelOptions> =>
   apiGet<TAModelOptions>('/trading-agents/models');
 
+/**
+ * Whether the TCBS connector — which serves fundamentals, statements, news and
+ * insider dealing — is connected and whether its token is still good.
+ */
+export interface TATcbsStatus {
+  connected: boolean;
+  expired: boolean;
+  expires_at: string | null;
+}
+
+export const fetchTcbsStatus = async (): Promise<TATcbsStatus> =>
+  apiGet<TATcbsStatus>('/trading-agents/tcbs/status');
+
+/**
+ * Begin a TCBS login. The URL is fetched over XHR (so the bearer token travels
+ * with it) and the caller then navigates to it; TCBS sends the browser back to
+ * `returnTo` once the account login and iOTP prompt are done.
+ */
+export const startTcbsLogin = async (returnTo: string): Promise<string> => {
+  const { authorization_url } = await apiGet<{ authorization_url: string }>(
+    `/trading-agents/tcbs/authorize?return_to=${encodeURIComponent(returnTo)}`,
+  );
+  return authorization_url;
+};
+
 export interface ModelChoice {
   /** What to send: always provider-qualified, so the pick is unambiguous. */
   spec: string;

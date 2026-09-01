@@ -34,6 +34,7 @@ from typing import Any
 
 import pandas as pd
 
+from . import tcbs_tiers
 from .utils import fmt_billion, fmt_count, fmt_ratio, iso_day, lookback_days
 
 logger = logging.getLogger(__name__)
@@ -968,14 +969,19 @@ def _wichart_company_news(sym: str, start_date: str, end_date: str) -> str | Non
 def _company_news(ticker: str, start_date: str, end_date: str) -> str:
     """Company-level news, knowledge-base first.
 
-    Tiered so we prefer our own curated research over the open web:
+    Tiered so we prefer our own curated research, then a first-party feed, over
+    the open web:
       1. **Knowledge base** — semantic search over embedded wichart research
          reports in Qdrant, filtered to this ticker (``kb_search``).
-      2. If neither exists, the wichart xbrain-news company feed (``codetag``)
-         provides live ticker-tagged headlines.
-      3. If the KB has no match, the curated report *metadata* (MySQL) is a
+      2. **TCBS** — the broker's own activity-news feed plus the corporate event
+         calendar (ex-rights dates, AGMs, board resolutions), which no other
+         tier carries. Below the knowledge base because curated research is the
+         better signal; above the rest because it is first-party and live.
+      3. The wichart xbrain-news company feed (``codetag``) provides live
+         ticker-tagged headlines.
+      4. If the KB has no match, the curated report *metadata* (MySQL) is a
          cheap secondary internal source.
-      4. Only when we have no internal signal at all do we fall back to a live
+      5. Only when we have no internal signal at all do we fall back to a live
          **web search**.
     """
     from . import kb_search, web_search as ws
@@ -1001,32 +1007,43 @@ def _company_news(ticker: str, start_date: str, end_date: str) -> str:
         return f"{body}\n\n{note}"
     logger.info("company_news[%s]: tier 1 knowledge base MISS", sym)
 
-    # Tier 2: wichart xbrain-news company feed (ticker-tagged headlines).
+    # Tier 2: TCBS -- a live, first-party, ticker-tagged feed plus the corporate
+    # event calendar. Below the knowledge base, whose curated research is the
+    # better signal; above the scraped feed and the open web.
+    tcbs_block = _best_effort(
+        f"tcbs_news[{sym}]", tcbs_tiers.company_news, sym, start_date, end_date
+    )
+    if tcbs_block:
+        logger.info("company_news[%s]: tier 2 TCBS HIT", sym)
+        return tcbs_block
+    logger.info("company_news[%s]: tier 2 TCBS MISS", sym)
+
+    # Tier 3: wichart xbrain-news company feed (ticker-tagged headlines).
     wichart_text = _wichart_company_news(sym, start_date, end_date)
     if wichart_text:
-        logger.info("company_news[%s]: tier 2 wichart company feed HIT", sym)
+        logger.info("company_news[%s]: tier 3 wichart company feed HIT", sym)
         return (
             f"{wichart_text}\n\n"
             "Source: wichart xbrain-news company feed (no knowledge-base or "
             "research-report match). Base the assessment on these headlines; do "
             "not fabricate any beyond what is shown."
         )
-    logger.info("company_news[%s]: tier 2 wichart company feed MISS", sym)
+    logger.info("company_news[%s]: tier 3 wichart company feed MISS", sym)
 
-    # Tier 3: curated report metadata (reports that exist but aren't embedded yet).
+    # Tier 4: curated report metadata (reports that exist but aren't embedded yet).
     report_text = _report_section(sym, start_date, end_date)
     if report_text:
-        logger.info("company_news[%s]: tier 3 curated report metadata HIT", sym)
+        logger.info("company_news[%s]: tier 4 curated report metadata HIT", sym)
         return (
             f"{report_text}\n\n"
             "Source: curated research reports (no knowledge-base match). Base the "
             "assessment on this evidence; do not fabricate headlines."
         )
-    logger.info("company_news[%s]: tier 3 curated report metadata MISS", sym)
+    logger.info("company_news[%s]: tier 4 curated report metadata MISS", sym)
 
-    # Tier 4: live web search fallback (no internal knowledge for this ticker).
+    # Tier 5: live web search fallback (no internal knowledge for this ticker).
     if ws.web_search_enabled():
-        logger.info("company_news[%s]: tier 4 live web search fallback", sym)
+        logger.info("company_news[%s]: tier 5 live web search fallback", sym)
         days = lookback_days(start_date, end_date)
         web = ws.search_and_format(
             f"{sym} stock Vietnam news",
@@ -1335,9 +1352,13 @@ def get_global_news(curr_date=None, look_back_days=None, limit=None) -> str:
 
 @failsafe("INSIDER_DATA_UNAVAILABLE", "insider transactions")
 def get_insider_transactions(ticker: str) -> str:
+    sym = str(ticker).upper()
+    block = _best_effort(f"tcbs_insider[{sym}]", tcbs_tiers.insider_transactions, sym)
+    if block:
+        return block
     return (
         f"INSIDER_DATA_UNAVAILABLE: No insider-transaction feed is configured for "
-        f"Vietnamese equities ({str(ticker).upper()}). Do not fabricate filings."
+        f"Vietnamese equities ({sym}). Do not fabricate filings."
     )
 
 
@@ -1619,6 +1640,12 @@ def _statement_table(
 def _statement_tool(ticker: str, freq: str | None, key: str) -> str:
     """Shared body for the three per-statement tools."""
     sym = str(ticker).upper()
+    block = _best_effort(
+        f"tcbs_statement[{sym}/{key}]", tcbs_tiers.statement, sym, key, freq
+    )
+    if block:
+        return block
+
     _, title = _STATEMENTS[key]
     try:
         payload = _load_statements(sym, freq)
@@ -1666,6 +1693,10 @@ def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
     profitable is it, versus its sector" instead.
     """
     sym = str(ticker).upper()
+    block = _best_effort(f"tcbs_fundamentals[{sym}]", tcbs_tiers.fundamentals, sym)
+    if block:
+        return block
+
     try:
         from app.services import money24h_client
 

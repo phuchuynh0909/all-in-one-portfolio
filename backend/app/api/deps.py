@@ -22,6 +22,11 @@ EXEMPT_PATHS = frozenset(
     {
         "/api/v1/health",
         "/api/v1/auth/login",
+        # TCBS redirects the browser here after its own login and iOTP prompt,
+        # with no Authorization header to carry. The route is safe to leave open
+        # because it completes nothing without the unguessable ``state`` the
+        # authorize call minted and kept server-side.
+        "/api/v1/trading-agents/tcbs/callback",
     }
 )
 

@@ -31,6 +31,7 @@ import PlayArrowIcon from '@mui/icons-material/PlayArrow';
 import StopIcon from '@mui/icons-material/Stop';
 import InfoOutlinedIcon from '@mui/icons-material/InfoOutlined';
 import RefreshIcon from '@mui/icons-material/Refresh';
+import LinkIcon from '@mui/icons-material/Link';
 import { Markdown } from '../components/Markdown';
 import {
   startAnalysis,
@@ -38,6 +39,8 @@ import {
   fetchModelOptions,
   fetchAnalyses,
   fetchAnalysis,
+  fetchTcbsStatus,
+  startTcbsLogin,
   modelChoices,
   type TADecision,
   type TAHealth,
@@ -45,6 +48,7 @@ import {
   type TALlmRole,
   type ModelChoice,
   type AnalysisSummary,
+  type TATcbsStatus,
 } from '../lib/services/tradingAgents';
 
 // ---------------------------------------------------------------------------
@@ -186,6 +190,10 @@ const TradingAgents: React.FC = () => {
   const [error, setError] = React.useState<string | null>(null);
   const [status, setStatus] = React.useState<string>('');
   const [health, setHealth] = React.useState<TAHealth | null>(null);
+  // TCBS connector: null until the status call answers, so the banner never
+  // flashes "not connected" at a page that simply has not asked yet.
+  const [tcbs, setTcbs] = React.useState<TATcbsStatus | null>(null);
+  const [connecting, setConnecting] = React.useState(false);
   const [started, setStarted] = React.useState<{ symbol: string; date: string } | null>(null);
   const [elapsed, setElapsed] = React.useState<string>('');
   const [analyses, setAnalyses] = React.useState<AnalysisSummary[]>([]);
@@ -222,6 +230,9 @@ const TradingAgents: React.FC = () => {
     fetchModelOptions()
       .then(setModelOptions)
       .catch(() => setModelOptions(null));
+    fetchTcbsStatus()
+      .then(setTcbs)
+      .catch(() => setTcbs(null));
     loadHistory();
     return () => controllerRef.current?.abort();
   }, [loadHistory]);
@@ -306,12 +317,31 @@ const TradingAgents: React.FC = () => {
         onComplete: () => {
           setRunning(false);
           setStatus('');
+          // A run is when the connector actually gets used, so it is also when
+          // a lapsed token would have surfaced. Re-read rather than let the
+          // header keep claiming a connection the run just found broken.
+          fetchTcbsStatus().then(setTcbs).catch(() => undefined);
           const secs = Math.round((Date.now() - startMsRef.current) / 1000);
           setElapsed(secs >= 60 ? `${Math.floor(secs / 60)}m ${secs % 60}s` : `${secs}s`);
         },
       },
     );
     controllerRef.current = controller;
+  };
+
+  /**
+   * Send the user to TCBS to authorize the connector. The redirect comes back
+   * to this page, so the status call on mount reflects the new token.
+   */
+  const handleConnectTcbs = async () => {
+    setConnecting(true);
+    setError(null);
+    try {
+      window.location.href = await startTcbsLogin(window.location.href);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setConnecting(false);
+    }
   };
 
   const handleStop = () => {
@@ -362,6 +392,35 @@ const TradingAgents: React.FC = () => {
     ),
   ].join(' · ');
 
+  /**
+   * How the connector reads in the header. Amber for a live connection —
+   * `success` green is reserved for market direction (see the design system's
+   * palette.market rule), so a healthy connector borrows the brand accent.
+   */
+  const tcbsChip: { label: string; color: 'primary' | 'warning' | 'default'; tooltip: string } =
+    !tcbs?.connected
+      ? {
+          label: 'TCBS not connected',
+          color: 'default',
+          tooltip:
+            'Fundamentals, statements, news and insider dealing are served by secondary sources.',
+        }
+      : tcbs.expired
+        ? {
+            label: 'TCBS expired',
+            color: 'warning',
+            tooltip: tcbs.expires_at
+              ? `The connection lapsed ${formatWhen(tcbs.expires_at)}. Reconnect to restore first-party data.`
+              : 'The connection has lapsed. Reconnect to restore first-party data.',
+          }
+        : {
+            label: 'TCBS connected',
+            color: 'primary',
+            tooltip: tcbs.expires_at
+              ? `First-party TCBS data is live. Token valid until ${formatWhen(tcbs.expires_at)}; it renews itself.`
+              : 'First-party TCBS data is live.',
+          };
+
   const statCards = [
     { label: 'Recommendation', value: decision?.signal ?? (running ? '…' : '—'), accent: signalHex(decision?.signal) },
     { label: 'As of', value: asOf || '—' },
@@ -381,24 +440,66 @@ const TradingAgents: React.FC = () => {
           title="Trading Agents"
           description="Multi-agent analysis over Vietnamese-market data — analysts debate, a trader acts, a risk team checks, and a portfolio manager decides."
           actions={
-            health && (
-              <Tooltip title={health.message}>
-                <Chip
-                  size="small"
-                  label={
-                    health.ollama_reachable
-                      ? `${(health.providers ?? [health.provider]).join(' + ')} · ${
-                          health.deep_think_llm
-                        }`
-                      : `${(health.providers ?? [health.provider]).join(' + ')} not ready`
-                  }
-                  color={health.ollama_reachable ? 'success' : 'error'}
-                  variant="outlined"
-                />
-              </Tooltip>
-            )
+            <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap">
+              {health && (
+                <Tooltip title={health.message}>
+                  <Chip
+                    size="small"
+                    label={
+                      health.ollama_reachable
+                        ? `${(health.providers ?? [health.provider]).join(' + ')} · ${
+                            health.deep_think_llm
+                          }`
+                        : `${(health.providers ?? [health.provider]).join(' + ')} not ready`
+                    }
+                    color={health.ollama_reachable ? 'success' : 'error'}
+                    variant="outlined"
+                  />
+                </Tooltip>
+              )}
+              {/* TCBS reach, in all three states — the banner below only appears
+                  when something needs doing, and "it is working" is worth
+                  seeing too. Amber, not green: green means market direction. */}
+              {tcbs && (
+                <Tooltip title={tcbsChip.tooltip}>
+                  <Chip
+                    size="small"
+                    icon={<LinkIcon />}
+                    label={tcbsChip.label}
+                    color={tcbsChip.color}
+                    variant="outlined"
+                  />
+                </Tooltip>
+              )}
+            </Stack>
           }
         />
+
+        {/* TCBS connector. Rendered only when it needs attention: the tier
+            degrades quietly to the other sources, so a working connection is
+            not worth a line of chrome on every visit. */}
+        {tcbs && (!tcbs.connected || tcbs.expired) && (
+          <Alert
+            severity="warning"
+            sx={{ mb: 3 }}
+            action={
+              <Button
+                color="inherit"
+                size="small"
+                variant="outlined"
+                startIcon={connecting ? <CircularProgress size={14} /> : <LinkIcon />}
+                onClick={handleConnectTcbs}
+                disabled={connecting}
+              >
+                {connecting ? 'Opening TCBS…' : 'Connect TCBS'}
+              </Button>
+            }
+          >
+            {tcbs.expired
+              ? 'The TCBS connection has expired. Fundamentals, statements, company news and insider dealing are falling back to secondary sources until you reconnect.'
+              : 'TCBS is not connected. Connect it for first-party fundamentals, statements with industry averages, corporate events and insider dealing.'}
+          </Alert>
+        )}
 
         {/* Controls */}
         <Paper sx={{ p: 2, mb: 3 }}>

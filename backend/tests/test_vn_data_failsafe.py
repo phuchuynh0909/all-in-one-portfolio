@@ -64,6 +64,9 @@ def dead_sources(monkeypatch):
         "app.services.money24h_client.fetch_company_index",
         "app.services.ruatichsan_client.fetch_financial_statements",
         "app.services.report_service._query_raw_reports",
+        # TCBS is a real source too: without killing it, a machine that happens
+        # to hold a login gets live data here and the sentinel is never reached.
+        "app.services.tcbs_mcp_client.call",
     ):
         monkeypatch.setattr(target, _boom)
     monkeypatch.setattr(
