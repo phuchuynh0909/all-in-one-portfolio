@@ -73,6 +73,13 @@ class Settings(BaseSettings):
     dnse_api_secret: str = os.getenv("DNSE_API_SECRET", "")
     dnse_api_version: str = os.getenv("DNSE_API_VERSION", "2026-05-07")
 
+    # Auth — see docs/superpowers/specs/2026-09-01-simple-auth-design.md.
+    # No default for the key on purpose: a committed fallback secret is how
+    # tokens become forgeable. app/core/security.py decides what to do when it
+    # is empty (refuse to start in production, ephemeral key in development).
+    auth_secret_key: str = os.getenv("APP_AUTH_SECRET_KEY", "")
+    auth_token_ttl_days: int = int(os.getenv("APP_AUTH_TOKEN_TTL_DAYS", "30"))
+
     # CORS
     backend_cors_origins: List[AnyHttpUrl | str] = [
         "http://localhost:5173",
