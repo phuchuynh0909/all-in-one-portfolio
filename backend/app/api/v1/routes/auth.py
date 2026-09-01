@@ -8,7 +8,8 @@ from sqlalchemy.orm import Session
 from app.core.security import create_access_token, hash_password, verify_password
 from app.db.base import get_db
 from app.db.models.user import User
-from app.schemas.auth import LoginRequest, TokenResponse
+from app.api.deps import require_user
+from app.schemas.auth import LoginRequest, TokenResponse, UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -50,3 +51,9 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)) -> TokenResponse
     token, expires_at = create_access_token(user.username)
     logger.info("auth: {!r} logged in until {}", user.username, expires_at)
     return TokenResponse(access_token=token, expires_at=expires_at)
+
+
+@router.get("/me", response_model=UserOut)
+def read_me(user: User = Depends(require_user)) -> User:
+    """The caller's own identity. Guarded, so it doubles as a token check."""
+    return user

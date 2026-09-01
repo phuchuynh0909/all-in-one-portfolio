@@ -1,5 +1,5 @@
 import time
-from fastapi import FastAPI, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi_cache import FastAPICache
 from fastapi_cache.backends.inmemory import InMemoryBackend
@@ -9,6 +9,7 @@ from functools import wraps
 
 from app.core.logging_bridge import install_logging_bridge
 from app.core.settings import settings
+from app.api.deps import require_user
 from app.api.v1.routes.health import router as health_router
 from app.api.v1.routes.portfolio import router as portfolio_router
 from app.api.v1.routes.sector import router as sector_router
@@ -41,7 +42,13 @@ def get_app() -> FastAPI:
     # this points it at loguru. See app/core/logging_bridge.py.
     install_logging_bridge()
 
-    app = FastAPI(title=settings.project_name, version="0.1.0")
+    # Deny by default: every router mounted below is guarded, including any
+    # added later. app/api/deps.py holds the exempt list.
+    app = FastAPI(
+        title=settings.project_name,
+        version="0.1.0",
+        dependencies=[Depends(require_user)],
+    )
 
     app.add_middleware(
         CORSMiddleware,

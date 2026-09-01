@@ -59,3 +59,29 @@ def db():
         session.close()
         outer.rollback()
         connection.close()
+
+
+@pytest.fixture(autouse=True)
+def _authenticated(request):
+    """Run every test as a logged-in user.
+
+    The app guards all routes by default, which would 401 the six modules that
+    build a ``TestClient``. Overriding the dependency here fixes all of them
+    without touching a single one. A test that wants the real guard opts out
+    with ``@pytest.mark.real_auth``.
+    """
+    if "real_auth" in request.keywords:
+        yield
+        return
+
+    from app.api.deps import require_user
+    from app.db.models.user import User
+    from app.main import app
+
+    app.dependency_overrides[require_user] = lambda: User(
+        id=1, username="test-user", is_active=True
+    )
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(require_user, None)

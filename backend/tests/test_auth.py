@@ -214,3 +214,96 @@ def test_login_does_not_reveal_whether_the_username_exists(client, seeded_user):
         json={"username": seeded_user.username, "password": "wrong"},
     )
     assert unknown.json()["detail"] == bad_password.json()["detail"]
+
+
+# --- the global guard -------------------------------------------------------
+#
+# These opt out of the conftest autouse override with @pytest.mark.real_auth so
+# they exercise the real dependency rather than the stubbed one.
+
+
+@pytest.mark.real_auth
+@requires_mysql
+def test_protected_route_401s_without_a_token(client):
+    assert client.get("/api/v1/portfolio/positions").status_code == 401
+
+
+@pytest.mark.real_auth
+@requires_mysql
+def test_protected_route_401s_on_a_malformed_header(client):
+    res = client.get(
+        "/api/v1/portfolio/positions", headers={"Authorization": "Basic zzzz"}
+    )
+    assert res.status_code == 401
+
+
+@pytest.mark.real_auth
+@requires_mysql
+def test_protected_route_401s_on_a_forged_token(client):
+    forged = jwt.encode(
+        {"sub": "phuc"}, "a-different-secret-at-least-32-bytes-long", algorithm=ALGORITHM
+    )
+    res = client.get(
+        "/api/v1/portfolio/positions", headers={"Authorization": f"Bearer {forged}"}
+    )
+    assert res.status_code == 401
+
+
+@pytest.mark.real_auth
+@requires_mysql
+def test_protected_route_accepts_a_valid_token(client, seeded_user):
+    token, _ = create_access_token(seeded_user.username)
+    res = client.get(
+        "/api/v1/portfolio/positions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert res.status_code != 401
+
+
+@pytest.mark.real_auth
+@requires_mysql
+def test_token_for_a_deactivated_user_is_rejected(client, db, seeded_user):
+    """Revocation must bite immediately, not at token expiry."""
+    token, _ = create_access_token(seeded_user.username)
+    seeded_user.is_active = False
+    db.flush()
+    res = client.get(
+        "/api/v1/portfolio/positions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert res.status_code == 401
+
+
+@pytest.mark.real_auth
+@requires_mysql
+def test_token_for_a_deleted_user_is_rejected(client, db, seeded_user):
+    token, _ = create_access_token("someone-who-was-never-seeded")
+    res = client.get(
+        "/api/v1/portfolio/positions", headers={"Authorization": f"Bearer {token}"}
+    )
+    assert res.status_code == 401
+
+
+@pytest.mark.real_auth
+@requires_mysql
+def test_me_returns_the_callers_username(client, seeded_user):
+    token, _ = create_access_token(seeded_user.username)
+    res = client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert res.status_code == 200, res.text
+    assert res.json()["username"] == seeded_user.username
+
+
+@pytest.mark.real_auth
+@requires_mysql
+def test_health_is_reachable_without_a_token(client):
+    res = client.get("/api/v1/health")
+    assert res.status_code == 200
+    assert res.json() == {"status": "ok"}
+
+
+@pytest.mark.real_auth
+@requires_mysql
+def test_docs_and_openapi_are_reachable_without_a_token(client):
+    """FastAPI adds these as Starlette routes, so app-level dependencies do not
+    apply. Asserted rather than assumed — it is the carve-out the design relies
+    on, and a FastAPI upgrade could change it."""
+    assert client.get("/docs").status_code == 200
+    assert client.get("/openapi.json").status_code == 200
