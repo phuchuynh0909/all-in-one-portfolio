@@ -71,7 +71,7 @@ first use — the Delta paths above are the crawler's secondary sink.
 ## Data lifecycle summary
 
 1. **Live:** DNSE MQTT → `tick_ingest` → ClickHouse ticks → downstream workers
-   (`ohlc_5m`, `hawkes`, `isp`, `large_order_*`) → ClickHouse signals →
+   (`ohlc_5m`, `isp`, `large_order_*`) → ClickHouse signals →
    backend read-model services → frontend.
 2. **Historical:** crawlers / importers → Delta Lake (MinIO) → backend
    `stores/` + services → frontend charts/tables.

@@ -1,8 +1,10 @@
 """
 Hawkes BSI indicators and signal state machine.
 
-Shared between backtest (analysis/backtest_hawkes_quant.py) and the live
-signal worker (workers/hawkes_signal_worker.py).
+Used by the backtest in analysis/backtest_hawkes_quant.py. The live signal
+worker that also consumed this was removed; the module is kept for that
+research path, and the backend has its own BVC indicator in
+backend/app/services/indicators/hawkes_bvc.py for the Future page study.
 """
 
 from __future__ import annotations

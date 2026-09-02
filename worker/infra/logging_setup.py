@@ -9,7 +9,7 @@ counters never appeared in the container even though the DNSE reconnect warnings
 did.
 
 The one-shot scripts (``workers/reconciler.py``,
-``workers/hawkes_signal_worker.py``, …) each call ``logging.basicConfig`` at
+``workers/ohlc_5m.py``, …) each call ``logging.basicConfig`` at
 import. The Bytewax flows did not, because ``python -m bytewax.run`` owns
 ``__main__`` and there is no ``if __name__ == "__main__"`` block to hang it off —
 so they call ``setup_logging()`` at module scope instead, which the import

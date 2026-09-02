@@ -11,7 +11,7 @@ Compose via the `Makefile`.
 | `frontend` | `./frontend` | `5173:5173` | `npm run dev --host`; `VITE_API_BASE_URL=http://localhost:8000/api/v1`; depends on backend. |
 | `worker-tick-ingest` | `./worker` | — | `bytewax.run workers.tick_ingest:flow`. |
 | `worker-price-alerts` | `./worker` | — | `bytewax.run workers.price_alerts:flow`; mounts `backend/portfolio.db`. |
-| `worker-hawkes` | `./worker` | — | `python -m workers.hawkes_signal_worker`; state files under `state_dir`. |
+| `worker-ohlc-5m` | `./worker` | — | `python -m workers.ohlc_5m --poll 60`; keeps `ohlc_5m` current for the Future page. State file under `state_dir`. |
 
 - **Networks:** `appnet` (internal bridge) + `shared_network` (external,
   `my-common-network`) that connects to shared infra (ClickHouse, MinIO).
@@ -72,7 +72,7 @@ When you finish, state the exact verify command you ran and its result.
 - **Caching:** backend uses an in-memory `fastapi-cache` (1h default TTL);
   restarting the backend clears it.
 - **Worker state** persists in the `worker_state` volume (and
-  `HAWKES_STATE_PATH` / `OHLC_5M_SYNC_STATE_PATH` files) — deleting it forces a
+  `OHLC_5M_SYNC_STATE_PATH` file) — deleting it forces a
   cold rebuild/backfill.
 - **Vendored `vendor/TradingAgents`** is a gitlink with no `.gitmodules`; a
   fresh clone won't populate it. The backend loads it via a `sys.path` shim and

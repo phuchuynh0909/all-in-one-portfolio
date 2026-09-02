@@ -92,7 +92,7 @@ DNSE WebSocket ─▶ worker: tick_ingest ─▶ ClickHouse (ticks)
                     ├─▶ ClickHouse MV           ─▶ large_order_blocks (no worker)
                     ├─▶ ClickHouse MV           ─▶ trade_flow_seconds/windows (no worker)
                     ├─▶ worker: ohlc_5m         ─▶ ClickHouse (5m OHLC)
-                    ├─▶ worker: hawkes_signal   ─▶ signals + Telegram
+                    ├─▶ worker: ohlc_5m         ─▶ ohlc_5m bars (Future page)
                     ├─▶ worker: isp             ─▶ ISP alerts
                     └─▶ worker: price_alerts    ─▶ reads portfolio.db, notifies
 ```

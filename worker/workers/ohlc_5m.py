@@ -203,49 +203,14 @@ def tick_to_ohlc_5m_pipeline(session_date: str | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
-def _run_cli() -> None:
-    import argparse
+def _aggregate_once(args) -> None:
+    """One aggregation pass for the window implied by ``args``.
+
+    Split out of ``_run_cli`` so ``--poll`` can repeat it. The session date is
+    resolved per call, so a process left running overnight rolls onto the new
+    day by itself.
+    """
     from datetime import date as _date
-
-    parser = argparse.ArgumentParser(
-        description="Aggregate ticks → OHLC 5m candles (plain Python, no Prefect)"
-    )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--session-date",
-        metavar="YYYY-MM-DD",
-        help="Aggregate a single trading session (09:00-15:00 ICT). Defaults to today.",
-    )
-    group.add_argument(
-        "--date-from",
-        metavar="YYYY-MM-DD HH:MM:SS",
-        help="UTC start of custom window (pair with --date-to).",
-    )
-    parser.add_argument(
-        "--date-to",
-        metavar="YYYY-MM-DD HH:MM:SS",
-        help="UTC end of custom window (pair with --date-from).",
-    )
-    parser.add_argument("--symbol", default=None, help="Filter to a single symbol.")
-    parser.add_argument(
-        "deploy",
-        nargs="?",
-        help="Pass 'deploy' as positional arg to register Prefect deployments instead.",
-    )
-    args = parser.parse_args()
-
-    if args.deploy == "deploy":
-        from pathlib import Path
-
-        tick_to_ohlc_5m_pipeline.from_source(
-            source=str(Path(__file__).parent.parent),
-            entrypoint="workers/ohlc_5m.py:tick_to_ohlc_5m_pipeline",
-        ).deploy(
-            name="vn30f1m-ohlc-5m",
-            work_pool_name="my-worker",
-            cron="5 8 * * 1-5",  # 08:05 UTC = 15:05 ICT, weekdays
-        )
-        return
 
     client = _get_ch_client()
     database = _get_env("CLICKHOUSE_DB", "default")
@@ -328,6 +293,81 @@ def _run_cli() -> None:
         SYNC_STATE_PATH, {"last_date_from": date_from, "last_date_to": date_to}
     )
     print(f"Done — inserted {inserted} rows into {database}.{ohlc_table}")
+
+
+def _dispatch(args) -> None:
+    """Run once, or forever on an interval when ``--poll`` is given."""
+    import time
+
+    if not args.poll:
+        _aggregate_once(args)
+        return
+
+    print(f"Polling every {args.poll}s — Ctrl-C to stop.")
+    while True:
+        try:
+            _aggregate_once(args)
+        except Exception as exc:  # noqa: BLE001 -- a bad pass must not kill the loop
+            print(f"Aggregation pass failed (retrying in {args.poll}s): {exc}")
+        time.sleep(args.poll)
+
+
+def _run_cli() -> None:
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        description="Aggregate ticks → OHLC 5m candles (plain Python, no Prefect)"
+    )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--session-date",
+        metavar="YYYY-MM-DD",
+        help="Aggregate a single trading session (09:00-15:00 ICT). Defaults to today.",
+    )
+    group.add_argument(
+        "--date-from",
+        metavar="YYYY-MM-DD HH:MM:SS",
+        help="UTC start of custom window (pair with --date-to).",
+    )
+    parser.add_argument(
+        "--date-to",
+        metavar="YYYY-MM-DD HH:MM:SS",
+        help="UTC end of custom window (pair with --date-from).",
+    )
+    parser.add_argument("--symbol", default=None, help="Filter to a single symbol.")
+    parser.add_argument(
+        "--poll",
+        type=int,
+        default=None,
+        metavar="SECONDS",
+        help=(
+            "Re-aggregate every SECONDS instead of exiting. Used by the "
+            "worker-ohlc-5m service to keep the current session fresh for the "
+            "Future page, which reads ohlc_5m intraday. Each pass rewrites the "
+            "whole session and ReplacingMergeTree dedupes, so repeating is safe."
+        ),
+    )
+    parser.add_argument(
+        "deploy",
+        nargs="?",
+        help="Pass 'deploy' as positional arg to register Prefect deployments instead.",
+    )
+    args = parser.parse_args()
+
+    if args.deploy == "deploy":
+        from pathlib import Path
+
+        tick_to_ohlc_5m_pipeline.from_source(
+            source=str(Path(__file__).parent.parent),
+            entrypoint="workers/ohlc_5m.py:tick_to_ohlc_5m_pipeline",
+        ).deploy(
+            name="vn30f1m-ohlc-5m",
+            work_pool_name="my-worker",
+            cron="5 8 * * 1-5",  # 08:05 UTC = 15:05 ICT, weekdays
+        )
+        return
+
+    _dispatch(args)
 
 
 if __name__ == "__main__":

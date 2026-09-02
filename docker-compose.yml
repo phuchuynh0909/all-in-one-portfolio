@@ -94,16 +94,18 @@ services:
       - shared_network
     restart: unless-stopped
 
-  worker-hawkes:
+  # Keeps ohlc_5m current for the Future page, which reads it intraday
+  # (backend/app/api/v1/routes/future.py). Each pass re-aggregates the whole
+  # session; ReplacingMergeTree dedupes, so repeating is harmless.
+  worker-ohlc-5m:
     build: ./worker
-    command: ["python", "-m", "workers.hawkes_signal_worker"]
+    command: ["python", "-m", "workers.ohlc_5m", "--poll", "60"]
     volumes:
       - ./worker:/app
       - worker_state:/app/state_dir
     env_file:
       - ./worker/.env
     environment:
-      - HAWKES_STATE_PATH=/app/state_dir/hawkes_signal_state.json
       - OHLC_5M_SYNC_STATE_PATH=/app/state_dir/ohlc_5m_sync_state.json
     networks:
       - appnet

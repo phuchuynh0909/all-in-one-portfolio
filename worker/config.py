@@ -405,47 +405,6 @@ class ReconcilerConfig:
 
 
 @dataclass
-class HawkesConfig:
-    """Hawkes BSI live signal worker configuration."""
-
-    symbol: str
-    poll_interval: int
-    kappa: float
-    quantile_lookback: int
-    q_lo_pct: float
-    q_hi_pct: float
-    kama_period: int
-    allow_short: bool
-    sl_bars: int
-    calm_bars: int
-    calm_threshold: float
-    state_path: str
-    ohlc_table: str
-    ticks_table: str
-    alert_exits: bool
-
-    @classmethod
-    def from_env(cls) -> "HawkesConfig":
-        return cls(
-            symbol=os.getenv("HAWKES_SYMBOL", "VN30F1M"),
-            poll_interval=int(os.getenv("HAWKES_POLL_INTERVAL", "60")),
-            kappa=float(os.getenv("HAWKES_KAPPA", "0.1")),
-            quantile_lookback=int(os.getenv("HAWKES_QUANTILE_LOOKBACK", "100")),
-            q_lo_pct=float(os.getenv("HAWKES_Q_LO_PCT", "5.0")),
-            q_hi_pct=float(os.getenv("HAWKES_Q_HI_PCT", "95.0")),
-            kama_period=int(os.getenv("HAWKES_KAMA_PERIOD", "10")),
-            allow_short=_parse_bool(os.getenv("HAWKES_ALLOW_SHORT"), default=True),
-            sl_bars=int(os.getenv("HAWKES_SL_BARS", "10")),
-            calm_bars=int(os.getenv("HAWKES_CALM_BARS", "5")),
-            calm_threshold=float(os.getenv("HAWKES_CALM_THRESHOLD", "500.0")),
-            state_path=os.getenv("HAWKES_STATE_PATH", "./.state/hawkes_signal_state.json"),
-            ohlc_table=os.getenv("CLICKHOUSE_OHLC_5M_TABLE", "ohlc_5m"),
-            ticks_table=os.getenv("CLICKHOUSE_TICKS_TABLE", "ticks"),
-            alert_exits=_parse_bool(os.getenv("HAWKES_ALERT_EXITS"), default=False),
-        )
-
-
-@dataclass
 class LargeOrderConfig:
     """Large-order ("Layer 3") pipeline configuration.
 
@@ -640,7 +599,6 @@ class Config:
     price_alert: PriceAlertConfig
     tick_sync: TickSyncConfig
     reconciler: ReconcilerConfig
-    hawkes: HawkesConfig
     large_order: LargeOrderConfig
     trade_flow: TradeFlowConfig
     ingest: IngestTuningConfig
@@ -658,7 +616,6 @@ class Config:
             price_alert=PriceAlertConfig.from_env(),
             tick_sync=TickSyncConfig.from_env(),
             reconciler=ReconcilerConfig.from_env(),
-            hawkes=HawkesConfig.from_env(),
             large_order=LargeOrderConfig.from_env(),
             trade_flow=TradeFlowConfig.from_env(),
             ingest=IngestTuningConfig.from_env(),

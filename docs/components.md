@@ -136,7 +136,7 @@ scripts/     Backfills and one-off runs (backfill_ticks, run_pipeline, run_audit
 | --- | --- |
 | `tick_ingest` | Subscribe to DNSE MQTT tick topic, normalize, write to ClickHouse `ticks`. |
 | `ohlc_5m` | Aggregate ticks into 5-minute OHLC bars. |
-| `hawkes_signal_worker` | Hawkes-process signal detection; notifies (Telegram). |
+| `ohlc_5m` | Aggregates ticks into 5-minute bars; `--poll` keeps the live session fresh. |
 | `isp` | Intraday statistical-profile alerts. |
 | `large_order_ingest` | **Not a worker** — CLI that creates/backfills the `large_order_blocks` materialized view over `ticks`. Run manually. |
 | `block_episode_ingest` | **Not a worker** — CLI that maintains the `trade_flow_seconds` MV + `trade_flow_windows` feature view. Scoring lives in the backend. Run manually. |

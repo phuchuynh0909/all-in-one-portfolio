@@ -2,7 +2,10 @@
 
 ## Overview
 
-Three independent workers run concurrently. Together they form a pipeline from raw market ticks to Telegram trading alerts.
+Three independent workers run concurrently, forming a pipeline from raw market
+ticks to stored bars and alerts: `tick_ingest.py` fills `ticks`, `ohlc_5m.py`
+rolls those into 5-minute bars for the backend's Future page, and
+`price_alerts.py` is what still pushes Telegram notifications.
 
 ```
   MQTT broker (DNSE/KRX)
@@ -24,13 +27,13 @@ Three independent workers run concurrently. Together they form a pipeline from r
               │                                    │
               ▼                                    ▼
 ┌─────────────────────────────┐    ┌──────────────────────────────────────────┐
-│  reconciler.py              │    │  hawkes_signal_worker.py  (poll loop)    │
-│  Runs once at 15:00 ICT.    │    │  Every HAWKES_POLL_INTERVAL seconds:     │
-│  Back-fills any ticks missed│    │  1. Re-aggregate ticks → ohlc_5m (upsert)│
-│  by the stream via DNSE API.│    │  2. Load full ohlc_5m bar history        │
-└─────────────────────────────┘    │  3. Compute Hawkes BSI + KAMA gate       │
-                                   │  4. Run signal state machine             │
-                                   │  5. New signal? → Telegram alert         │
+│  reconciler.py              │    │  ohlc_5m.py  (--poll loop)               │
+│  Runs once at 15:00 ICT.    │    │  Every --poll seconds:                   │
+│  Back-fills any ticks missed│    │  1. Resolve today's VN30F contract       │
+│  by the stream via DNSE API.│    │  2. Re-aggregate ticks → ohlc_5m (upsert)│
+└─────────────────────────────┘    │                                          │
+                                   │  Read intraday by the backend's Future   │
+                                   │  page (routes/future.py).                │
                                    └──────────────┬───────────────────────────┘
                                                   │ reads / writes
                                                   ▼
@@ -41,8 +44,9 @@ Three independent workers run concurrently. Together they form a pipeline from r
                                    ENGINE = ReplacingMergeTree(ver)
                                                   │
                                                   ▼
-                                         Telegram Bot API
-                                         (entry / exit alerts)
+                                    backend routes/future.py
+                                    (Future page intraday chart;
+                                     higher timeframes re-aggregated)
 ```
 
 ---
@@ -235,43 +239,50 @@ python reconciler.py --force  # bypass guard
 
 ---
 
-### 3. `hawkes_signal_worker.py` — live signal + Telegram alerts (always-on)
+### 3. `ohlc_5m.py` — 5-minute bar builder (always-on)
 
-Polls on a configurable interval (default 60 s). Each cycle:
+Runs as the `worker-ohlc-5m` compose service (`python -m workers.ohlc_5m --poll 60`).
+Each pass:
 
-1. **OHLC refresh** — runs an aggregate SQL over `ticks` for today's session and upserts the result into `ohlc_5m`. Safe to re-run; `ReplacingMergeTree(ver)` deduplicates on `(symbol, ts)`.
+1. **Contract resolution** — `core.vn30f_symbol.symbol_for_date` picks the front
+   VN30F contract for the session, so bars are built from one contract rather
+   than a `symbol LIKE '41I1%'` pattern that can straddle a roll.
 
-2. **Bar load** — reads full `ohlc_5m` history for the symbol via `load_ohlc_from_clickhouse`.
+2. **OHLC refresh** — an aggregate SQL over `ticks` for the session, upserted into
+   `ohlc_5m` under the output symbol `VN30F1M`. Safe to re-run: `ReplacingMergeTree(ver)`
+   deduplicates on `(symbol, ts)`, so every pass rewrites the whole session
+   harmlessly. The session date is resolved per pass, so a long-running process
+   rolls onto the next day by itself.
 
-3. **Hawkes BSI** — exponentially-decayed buy/sell imbalance:
-   ```
-   BSI[i] = BSI[i-1] * exp(-κ) + (buy_volume[i] - sell_volume[i])
-   q_lo[i] = p-th percentile of BSI over last N bars   (default p=5)
-   q_hi[i] = (1-p)-th percentile of BSI over last N bars (default p=95)
-   ```
+This table is what the backend's Future page reads intraday
+(`backend/app/api/v1/routes/future.py`, which also re-aggregates higher
+timeframes from it), so the worker existing is what keeps that chart live.
 
-4. **KAMA gate** — Kaufman Adaptive MA filters out noise:
-   - LONG requires `close > KAMA`
-   - SHORT requires `close < KAMA`
-
-5. **Signal state machine** (`generate_signals`):
-
-   | Event | Condition | Action |
-   |---|---|---|
-   | LONG entry | BSI crosses above q_hi AND price up since last q_lo cross AND calm gate AND KAMA | `long_entries[i+1] = True` |
-   | SHORT entry | BSI crosses below q_lo AND KAMA AND calm gate | `short_entries[i+1] = True` |
-   | LONG exit | BSI drops below q_lo OR stop-loss hit | `long_exits[i+1] = True` |
-   | SHORT exit | BSI rises above q_hi OR stop-loss hit | `short_exits[i+1] = True` |
-
-6. **Dedup** — signal state persisted in `.state/hawkes_signal_state.json`. A bar timestamp is stored after each alert; the same bar never triggers twice across restarts.
-
-7. **Telegram** — sends formatted message via `telegram_notifier.send_telegram_message`.
+Also registrable as a Prefect deployment (`python -m workers.ohlc_5m deploy`,
+cron `5 8 * * 1-5`) if an end-of-session batch is preferred to the poll loop —
+but that leaves the Future page an end-of-day view.
 
 **Run:**
 ```bash
-python hawkes_signal_worker.py
-python hawkes_signal_worker.py --symbol VN30F1M --poll 60
+python -m workers.ohlc_5m                          # once, today's session
+python -m workers.ohlc_5m --session-date 2026-08-28 # once, a past session
+python -m workers.ohlc_5m --poll 60                 # the always-on service
 ```
+
+---
+
+### 3a. `hawkes_signal_worker.py` — live signal + Telegram alerts (**retired**)
+
+Removed. It polled `ohlc_5m`, computed a Hawkes buy/sell-imbalance signal with a
+KAMA gate and a state machine, and pushed Telegram alerts. Its OHLC-refresh step
+became `ohlc_5m.py` above — that half had to survive, because it was the only
+writer of `ohlc_5m` and the Future page depends on the table.
+
+The strategy code itself is kept for research: `core/hawkes_indicators.py`
+(`compute_hawkes_bsi`, `compute_kama`, `generate_signals`) and its backtest
+`analysis/backtest_hawkes_quant.py`. The backend's separate BVC indicator for
+the Future page chart study is unaffected
+(`backend/app/services/indicators/hawkes_bvc.py`).
 
 ---
 
@@ -546,12 +557,9 @@ All workers read from environment variables (or `.env`). Key variables:
 | `CLICKHOUSE_USER` | — | all |
 | `CLICKHOUSE_PASSWORD` | — | all |
 | `CLICKHOUSE_DB` | `default` | all |
-| `HAWKES_SYMBOL` | `VN30F1M` | signal worker |
-| `HAWKES_POLL_INTERVAL` | `60` | signal worker |
-| `HAWKES_KAPPA` | `0.1` | signal worker |
-| `HAWKES_QUANTILE_LOOKBACK` | `100` | signal worker |
-| `HAWKES_ALLOW_SHORT` | `1` | signal worker |
-| `HAWKES_ALERT_EXITS` | `0` | signal worker |
+| `CLICKHOUSE_OHLC_5M_TABLE` | `ohlc_5m` | ohlc_5m worker |
+| `CLICKHOUSE_TICKS_TABLE` | `ticks` | ohlc_5m worker |
+| `OHLC_5M_SYNC_STATE_PATH` | `./.state/ohlc_5m_sync_state.json` | ohlc_5m worker |
 | `TELEGRAM_ENABLED` | `0` | signal worker, price_alerts |
 | `TELEGRAM_BOT_TOKEN` | — | signal worker, price_alerts |
 | `TELEGRAM_CHAT_ID` | — | signal worker, price_alerts |
@@ -568,9 +576,9 @@ Three processes, run in parallel:
 # Terminal 1 — tick stream (Bytewax)
 python -m bytewax.run workers.tick_ingest:flow
 
-# Terminal 2 — Hawkes signal + alerts
+# Terminal 2 — 5-minute bar builder
 TELEGRAM_ENABLED=1 TELEGRAM_BOT_TOKEN=xxx TELEGRAM_CHAT_ID=yyy \
-python workers/hawkes_signal_worker.py
+python -m workers.ohlc_5m --poll 60
 
 # Cron — daily reconciler (08:05 UTC = 15:05 ICT, weekdays)
 5 8 * * 1-5  cd /path/to/worker && python workers/reconciler.py
