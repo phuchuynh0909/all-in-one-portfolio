@@ -90,7 +90,10 @@ async def get_ohlc_5m(
 ):
     """
     Get OHLC data (5m/15m/30m/1h) with Hawkes BSI + rolling quantile bands for a futures symbol.
-    Higher timeframes are re-aggregated from the ohlc_5m table via ClickHouse.
+    Higher timeframes are re-aggregated from the ``ohlc_5m_live`` view via
+    ClickHouse. That view is the serving shape over the ``ohlc_5m_agg``
+    materialized view: it merges the argMin/argMax states into open/close and
+    relabels the front VN30F contract as VN30F1M, so no FINAL is needed here.
     """
     if timeframe not in _VALID_TIMEFRAMES:
         raise HTTPException(
@@ -115,7 +118,7 @@ async def get_ohlc_5m(
             SELECT
                 formatDateTime(ts, '%Y-%m-%dT%H:%i:%S', 'Asia/Ho_Chi_Minh') AS timestamp,
                 open, high, low, close, volume, buy_volume, sell_volume
-            FROM default.ohlc_5m FINAL
+            FROM default.ohlc_5m_live
             WHERE symbol = '{symbol}'
               {start_clause}
               {end_clause}
@@ -135,7 +138,7 @@ async def get_ohlc_5m(
                 sum(volume)       AS volume,
                 sum(buy_volume)   AS buy_volume,
                 sum(sell_volume)  AS sell_volume
-            FROM default.ohlc_5m FINAL
+            FROM default.ohlc_5m_live
             WHERE symbol = '{symbol}'
               {start_clause}
               {end_clause}
@@ -516,7 +519,7 @@ async def get_rl_exits(
         SELECT
             formatDateTime(ts, '%Y-%m-%dT%H:%i:%S', 'Asia/Ho_Chi_Minh') AS timestamp,
             open, high, low, close, volume, buy_volume, sell_volume
-        FROM default.ohlc_5m FINAL
+        FROM default.ohlc_5m_live
         WHERE symbol = '{symbol}'
           {start_clause}
           {end_clause}

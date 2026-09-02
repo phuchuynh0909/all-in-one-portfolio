@@ -1,7 +1,7 @@
 """Prefect flow: aggregate tick data into 5-minute OHLC candles."""
 
 from typing import Any, Generator, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from prefect import flow, task
 
 import os
@@ -203,6 +203,168 @@ def tick_to_ohlc_5m_pipeline(session_date: str | None = None) -> None:
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Materialized-view path
+#
+# The MV keeps the current session live with no polling. The poll loop below no
+# longer builds bars — it maintains `vn30f_front` and rewrites *finished*
+# sessions authoritatively from `ticks FINAL`, which is what corrects the
+# volume the MV can over-count when a tick is redelivered or the reconciler
+# patches drift (see model.py for the measured example). Finished sessions
+# only, so the rewrite never contends with the MV over today's partition.
+# ---------------------------------------------------------------------------
+
+FUTURES_SCOPE = "(symbol LIKE '41I1%' OR symbol LIKE 'VN30%')"
+
+
+def mv_select(ticks_table: str, where_extra: str = "") -> str:
+    """The one definition of a 5-minute bar, shared by the MV and the rewrite.
+
+    Grouped by the real contract symbol: relabelling to VN30F1M happens in the
+    serving view, via the `vn30f_front` join.
+    """
+    extra = f"\n  AND {where_extra}" if where_extra else ""
+    return f"""SELECT
+    symbol,
+    toStartOfFiveMinutes(toTimezone(sending_time, 'Asia/Ho_Chi_Minh')) AS ts,
+    argMinState(match_price, sending_time) AS open,
+    max(match_price) AS high,
+    min(match_price) AS low,
+    argMaxState(match_price, sending_time) AS close,
+    sum(match_qty) AS volume,
+    sum(if(side = 1, match_qty, 0)) AS buy_volume,
+    sum(if(side = 2, match_qty, 0)) AS sell_volume
+FROM {ticks_table}
+WHERE {FUTURES_SCOPE}{extra}
+GROUP BY symbol, ts"""
+
+
+def setup(cl, db: str) -> None:
+    """Create the aggregate table, the front-contract map, the MV and the view."""
+    from model import (
+        OHLC_5M_AGG_CREATE_TABLE_DDL,
+        OHLC_5M_AGG_TABLE,
+        OHLC_5M_LIVE_VIEW,
+        OHLC_5M_LIVE_VIEW_DDL,
+        OHLC_5M_MV,
+        OHLC_5M_MV_DDL,
+        TICKS_CLICKHOUSE_TABLE,
+        VN30F_FRONT_CREATE_TABLE_DDL,
+        VN30F_FRONT_TABLE,
+    )
+
+    cl.command(OHLC_5M_AGG_CREATE_TABLE_DDL.format(database=db, table=OHLC_5M_AGG_TABLE))
+    print(f"table  {db}.{OHLC_5M_AGG_TABLE}")
+
+    cl.command(VN30F_FRONT_CREATE_TABLE_DDL.format(database=db, table=VN30F_FRONT_TABLE))
+    print(f"table  {db}.{VN30F_FRONT_TABLE}")
+
+    # No FINAL in the MV select: it sees one insert block, never the table.
+    cl.command(
+        OHLC_5M_MV_DDL.format(
+            database=db,
+            mv=OHLC_5M_MV,
+            table=OHLC_5M_AGG_TABLE,
+            select=mv_select(f"{db}.{TICKS_CLICKHOUSE_TABLE}"),
+        )
+    )
+    print(f"mv     {db}.{OHLC_5M_MV}  (on {db}.{TICKS_CLICKHOUSE_TABLE})")
+
+    cl.command(
+        OHLC_5M_LIVE_VIEW_DDL.format(
+            database=db,
+            view=OHLC_5M_LIVE_VIEW,
+            table=OHLC_5M_AGG_TABLE,
+            front=VN30F_FRONT_TABLE,
+        )
+    )
+    print(f"view   {db}.{OHLC_5M_LIVE_VIEW}")
+    print(
+        "\nThe MV only sees rows inserted after it existed. Run "
+        "--backfill-from/--backfill-to for history; that also fills vn30f_front."
+    )
+
+
+def refresh_front_contracts(cl, db: str, start: date, end: date) -> int:
+    """Write one `vn30f_front` row per session date in [start, end].
+
+    The calendar rule lives in core.vn30f_symbol and nowhere else; this is how
+    it reaches SQL. Weekends are included and harmless: no bars exist to join.
+    """
+    from core.vn30f_symbol import symbol_for_date
+
+    from model import VN30F_FRONT_TABLE
+
+    rows, day = [], start
+    while day <= end:
+        rows.append((day, symbol_for_date(day)))
+        day += timedelta(days=1)
+
+    cl.insert(f"{db}.{VN30F_FRONT_TABLE}", rows, column_names=["session_date", "symbol"])
+    print(f"front  {len(rows)} session(s) {start} → {end}")
+    return len(rows)
+
+
+def rewrite_session(cl, db: str, session_date: date) -> int:
+    """Replace one finished session's bars with the authoritative aggregate.
+
+    DROP PARTITION then INSERT, reading `ticks FINAL` so duplicates are deduped
+    before aggregation. This is the pass that makes volume exact; the MV's live
+    rows for the day are discarded by the drop.
+    """
+    from model import OHLC_5M_AGG_TABLE, TICKS_CLICKHOUSE_TABLE
+
+    partition = session_date.strftime("%Y%m%d")
+    cl.command(f"ALTER TABLE {db}.{OHLC_5M_AGG_TABLE} DROP PARTITION {partition}")
+
+    day = session_date.isoformat()
+    window = (
+        f"sending_time >= toDateTime64('{day} 02:00:00', 6, 'UTC') "
+        f"AND sending_time <= toDateTime64('{day} 08:00:00', 6, 'UTC')"
+    )
+    cl.command(
+        f"INSERT INTO {db}.{OHLC_5M_AGG_TABLE} "
+        + mv_select(f"{db}.{TICKS_CLICKHOUSE_TABLE} FINAL", window)
+    )
+    n = cl.query(
+        f"SELECT count() FROM {db}.{OHLC_5M_AGG_TABLE} WHERE toDate(ts) = '{day}'"
+    ).result_rows[0][0]
+    print(f"rewrote {day}: {n} bar-rows (authoritative, from ticks FINAL)")
+    return n
+
+
+def backfill(cl, db: str, start: date, end: date) -> None:
+    """Fill the aggregate table for a past range, session by session.
+
+    Per session rather than one big INSERT so a failure leaves a clear
+    boundary, and so each DROP PARTITION stays small.
+    """
+    refresh_front_contracts(cl, db, start, end)
+    day = start
+    while day <= end:
+        try:
+            rewrite_session(cl, db, day)
+        except Exception as exc:  # noqa: BLE001 -- one empty/odd day must not stop the run
+            print(f"  {day}: skipped ({exc})")
+        day += timedelta(days=1)
+
+
+def maintain(cl, db: str, lookback_days: int = 2) -> None:
+    """One pass of the always-on service: contract map, then finished sessions.
+
+    Today is deliberately left to the MV — rewriting it would drop the
+    partition the MV is actively writing.
+    """
+    today = date.today()
+    refresh_front_contracts(cl, db, today, today + timedelta(days=14))
+    for back in range(1, lookback_days + 1):
+        day = today - timedelta(days=back)
+        try:
+            rewrite_session(cl, db, day)
+        except Exception as exc:  # noqa: BLE001
+            print(f"  {day}: rewrite skipped ({exc})")
+
+
 def _aggregate_once(args) -> None:
     """One aggregation pass for the window implied by ``args``.
 
@@ -296,19 +458,42 @@ def _aggregate_once(args) -> None:
 
 
 def _dispatch(args) -> None:
-    """Run once, or forever on an interval when ``--poll`` is given."""
+    """Route the CLI: setup, backfill, the legacy direct write, or maintain."""
     import time
+    from datetime import date as _date
 
-    if not args.poll:
+    db = _get_env("CLICKHOUSE_DB", "default")
+
+    if args.setup:
+        setup(_get_ch_client(), db)
+        return
+
+    if args.backfill_from:
+        start = _date.fromisoformat(args.backfill_from)
+        end = (
+            _date.fromisoformat(args.backfill_to) if args.backfill_to else _date.today()
+        )
+        backfill(_get_ch_client(), db, start, end)
+        return
+
+    # The pre-MV behaviour: aggregate straight into the old ohlc_5m table.
+    if args.legacy_table:
         _aggregate_once(args)
         return
 
-    print(f"Polling every {args.poll}s — Ctrl-C to stop.")
+    def _pass() -> None:
+        maintain(_get_ch_client(), db)
+
+    if not args.poll:
+        _pass()
+        return
+
+    print(f"Maintaining every {args.poll}s — Ctrl-C to stop.")
     while True:
         try:
-            _aggregate_once(args)
+            _pass()
         except Exception as exc:  # noqa: BLE001 -- a bad pass must not kill the loop
-            print(f"Aggregation pass failed (retrying in {args.poll}s): {exc}")
+            print(f"Maintenance pass failed (retrying in {args.poll}s): {exc}")
         time.sleep(args.poll)
 
 
@@ -335,6 +520,29 @@ def _run_cli() -> None:
         help="UTC end of custom window (pair with --date-from).",
     )
     parser.add_argument("--symbol", default=None, help="Filter to a single symbol.")
+    parser.add_argument(
+        "--setup",
+        action="store_true",
+        help="Create ohlc_5m_agg, vn30f_front, the MV and ohlc_5m_live, then exit.",
+    )
+    parser.add_argument(
+        "--backfill-from",
+        metavar="YYYY-MM-DD",
+        help="Backfill the aggregate table from this session (pair with --backfill-to).",
+    )
+    parser.add_argument(
+        "--backfill-to",
+        metavar="YYYY-MM-DD",
+        help="Last session to backfill (defaults to today).",
+    )
+    parser.add_argument(
+        "--legacy-table",
+        action="store_true",
+        help=(
+            "Write bars directly into the old ohlc_5m table instead of "
+            "maintaining the MV path. Retained for a rollback."
+        ),
+    )
     parser.add_argument(
         "--poll",
         type=int,

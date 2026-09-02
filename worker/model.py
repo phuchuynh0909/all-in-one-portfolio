@@ -335,3 +335,103 @@ TRADE_FLOW_WINDOWS_VIEW_DDL = """
 CREATE OR REPLACE VIEW {database}.{view} AS
 {select}
 """
+
+
+# ---------------------------------------------------------------------------
+# ohlc_5m — 5-minute bars, the *live* path, a materialized view over `ticks`.
+#
+# Same constraint as large_order_blocks above: a materialized view sees only
+# the rows of one INSERT, so partial aggregates must be mergeable. max/min are
+# SimpleAggregateFunction; open/close need argMin/argMax, which are not simple,
+# so they are stored as AggregateFunction state and merged on read.
+# `sumIf` is not simple either, but `sum(if(...))` is — hence the buy/sell
+# volume columns are plain sums over a conditional.
+#
+# Grouped by the REAL contract symbol, not relabelled to VN30F1M in the view.
+# Relabelling here would need the front-contract calendar (third Thursday, KRX
+# 41I1[Y][M]000 encoding) in static SQL; the previous LIKE '41I1%' pattern
+# merged both contracts into one bar on roll days. The front contract is
+# resolved in Python into `vn30f_front` and joined at read time instead.
+#
+# PARTITION BY day, not month: the authoritative end-of-session rewrite
+# replaces one finished session with DROP PARTITION, which a monthly partition
+# would make impossible.
+#
+# Volume caveat, and why the periodic rewrite still exists: the MV counts the
+# insert, and `ticks` is ReplacingMergeTree, so a redelivered tick or a
+# reconciler drift patch inflates sum() while leaving `ticks` correct. Verified:
+# the same tick inserted twice yields sum(match_qty)=10 under FINAL and
+# volume=20 through the MV. open/high/low/close are unaffected — max, min,
+# argMin and argMax are all idempotent under duplicates.
+# ---------------------------------------------------------------------------
+
+OHLC_5M_AGG_TABLE = "ohlc_5m_agg"
+OHLC_5M_MV = "ohlc_5m_mv"
+OHLC_5M_LIVE_VIEW = "ohlc_5m_live"
+VN30F_FRONT_TABLE = "vn30f_front"
+
+OHLC_5M_AGG_CREATE_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {database}.{table} (
+    symbol LowCardinality(String) CODEC(ZSTD(1)),
+    ts DateTime('Asia/Ho_Chi_Minh') CODEC(Delta, ZSTD(1)),
+    open  AggregateFunction(argMin, Float64, DateTime64(6, 'UTC')),
+    high  SimpleAggregateFunction(max, Float64) CODEC(ZSTD(1)),
+    low   SimpleAggregateFunction(min, Float64) CODEC(ZSTD(1)),
+    close AggregateFunction(argMax, Float64, DateTime64(6, 'UTC')),
+    volume      SimpleAggregateFunction(sum, Int64) CODEC(T64, ZSTD(1)),
+    buy_volume  SimpleAggregateFunction(sum, Int64) CODEC(T64, ZSTD(1)),
+    sell_volume SimpleAggregateFunction(sum, Int64) CODEC(T64, ZSTD(1))
+)
+ENGINE = AggregatingMergeTree
+ORDER BY (symbol, ts)
+PARTITION BY toYYYYMMDD(ts)
+"""
+
+# One row per trading session naming the front-month VN30F contract, written by
+# workers/ohlc_5m.py from core.vn30f_symbol so the calendar rule has exactly one
+# definition. ReplacingMergeTree so re-running the worker is a no-op.
+VN30F_FRONT_CREATE_TABLE_DDL = """
+CREATE TABLE IF NOT EXISTS {database}.{table} (
+    session_date Date,
+    symbol LowCardinality(String),
+    updated_at DateTime DEFAULT now()
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY session_date
+"""
+
+# `{select}` is rendered by workers/ohlc_5m.py so the bucketing and the futures
+# scope filter have one definition shared with the backfill and the rewrite.
+OHLC_5M_MV_DDL = """
+CREATE MATERIALIZED VIEW IF NOT EXISTS {database}.{mv}
+TO {database}.{table}
+AS
+{select}
+"""
+
+# Serving shape, column-compatible with the old `ohlc_5m` table so
+# backend/app/api/v1/routes/future.py needs only its table name changed.
+#
+# The GROUP BY is required, not cosmetic: AggregatingMergeTree merges parts in
+# the background, so a plain SELECT would read unmerged partials and report
+# several rows per bar. Aggregating on read is always correct — unlike FINAL, it
+# cannot be forgotten by a caller.
+OHLC_5M_LIVE_VIEW_DDL = """
+CREATE OR REPLACE VIEW {database}.{view} AS
+SELECT
+    'VN30F1M' AS symbol,
+    a.ts AS ts,
+    argMinMerge(a.open)  AS open,
+    max(a.high)          AS high,
+    min(a.low)           AS low,
+    argMaxMerge(a.close) AS close,
+    sum(a.volume)        AS volume,
+    sum(a.buy_volume)    AS buy_volume,
+    sum(a.sell_volume)   AS sell_volume
+FROM {database}.{table} AS a
+INNER JOIN (
+    SELECT session_date, symbol FROM {database}.{front} FINAL
+) AS f
+    ON f.symbol = a.symbol AND f.session_date = toDate(a.ts)
+GROUP BY a.ts
+"""

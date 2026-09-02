@@ -103,13 +103,16 @@ services:
       - shared_network
     restart: unless-stopped
 
-  # Keeps ohlc_5m current for the Future page, which reads it intraday
-  # (backend/app/api/v1/routes/future.py). Each pass re-aggregates the whole
-  # session; ReplacingMergeTree dedupes, so repeating is harmless.
+  # Maintenance only — the ohlc_5m_mv materialized view keeps the current
+  # session live with no polling. Each pass refreshes the vn30f_front contract
+  # map and rewrites the last finished sessions from `ticks FINAL`, which is
+  # what corrects the volume the MV can over-count on a redelivered tick.
+  # Today is deliberately left alone: rewriting it would drop the partition the
+  # MV is actively writing. Hourly is ample for a repair pass.
   worker-ohlc-5m:
     build: *worker-build
     image: *worker-image
-    command: ["python", "-m", "workers.ohlc_5m", "--poll", "60"]
+    command: ["python", "-m", "workers.ohlc_5m", "--poll", "3600"]
     volumes:
       - worker_state:/app/state_dir
     env_file:
