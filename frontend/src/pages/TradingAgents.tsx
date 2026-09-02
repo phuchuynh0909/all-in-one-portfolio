@@ -24,6 +24,11 @@ import {
   Autocomplete,
   Collapse,
   Link,
+  Dialog,
+  DialogTitle,
+  DialogContent,
+  DialogActions,
+  DialogContentText,
 } from '@mui/material';
 import CheckCircleIcon from '@mui/icons-material/CheckCircle';
 import RadioButtonUncheckedIcon from '@mui/icons-material/RadioButtonUnchecked';
@@ -41,6 +46,7 @@ import {
   fetchAnalysis,
   fetchTcbsStatus,
   startTcbsLogin,
+  completeTcbsLogin,
   modelChoices,
   type TADecision,
   type TAHealth,
@@ -193,6 +199,14 @@ const TradingAgents: React.FC = () => {
   // TCBS connector: null until the status call answers, so the banner never
   // flashes "not connected" at a page that simply has not asked yet.
   const [tcbs, setTcbs] = React.useState<TATcbsStatus | null>(null);
+
+  // The paste-back dialog: TCBS cannot redirect to us, so the user carries the
+  // authorization code over by hand. See handleConnectTcbs.
+  const [pasteOpen, setPasteOpen] = React.useState(false);
+  const [pasted, setPasted] = React.useState('');
+  const [pasteError, setPasteError] = React.useState<string | null>(null);
+  const [pasteSubmitting, setPasteSubmitting] = React.useState(false);
+  const [tcbsRedirectUri, setTcbsRedirectUri] = React.useState('');
   const [connecting, setConnecting] = React.useState(false);
   const [started, setStarted] = React.useState<{ symbol: string; date: string } | null>(null);
   const [elapsed, setElapsed] = React.useState<string>('');
@@ -330,17 +344,42 @@ const TradingAgents: React.FC = () => {
   };
 
   /**
-   * Send the user to TCBS to authorize the connector. The redirect comes back
-   * to this page, so the status call on mount reflects the new token.
+   * Open TCBS authorization in a new tab and wait for the user to paste back.
+   *
+   * Not a plain redirect: TCBS refuses every redirect_uri outside its own
+   * origin, so authorization ends on a loopback address nothing is serving.
+   * The browser shows a connection error with the code in the URL, and the
+   * user copies that address into the dialog below.
    */
   const handleConnectTcbs = async () => {
     setConnecting(true);
     setError(null);
     try {
-      window.location.href = await startTcbsLogin(window.location.href);
+      const { authorizationUrl, redirectUri } = await startTcbsLogin(window.location.href);
+      setTcbsRedirectUri(redirectUri);
+      setPasteOpen(true);
+      setPasted('');
+      setPasteError(null);
+      window.open(authorizationUrl, '_blank', 'noopener,noreferrer');
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
+    } finally {
       setConnecting(false);
+    }
+  };
+
+  /** Hand the copied redirect URL to the backend, which finishes the exchange. */
+  const handleSubmitPastedUrl = async () => {
+    setPasteSubmitting(true);
+    setPasteError(null);
+    try {
+      setTcbs(await completeTcbsLogin(pasted));
+      setPasteOpen(false);
+      setPasted('');
+    } catch (e) {
+      setPasteError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setPasteSubmitting(false);
     }
   };
 
@@ -918,6 +957,55 @@ const TradingAgents: React.FC = () => {
           </>
         )}
       </>
+
+      <Dialog
+        open={pasteOpen}
+        onClose={() => (pasteSubmitting ? undefined : setPasteOpen(false))}
+        maxWidth="sm"
+        fullWidth
+      >
+        <DialogTitle>Finish connecting TCBS</DialogTitle>
+        <DialogContent>
+          <DialogContentText component="div" sx={{ mb: 2 }}>
+            Authorize in the tab that just opened. When you are done, your browser will
+            try to load{' '}
+            <Box component="code" sx={{ px: 0.5, borderRadius: 0.5, bgcolor: 'action.hover' }}>
+              {tcbsRedirectUri || 'http://127.0.0.1:8765/callback'}
+            </Box>{' '}
+            and show a connection error.
+            <Box sx={{ mt: 1, fontWeight: 600 }}>That error is expected — it means it worked.</Box>
+            Copy the whole address from that tab&rsquo;s address bar and paste it below.
+          </DialogContentText>
+          <TextField
+            label="Pasted URL"
+            placeholder="http://127.0.0.1:8765/callback?code=...&state=..."
+            value={pasted}
+            onChange={(e) => setPasted(e.target.value)}
+            fullWidth
+            multiline
+            minRows={2}
+            size="small"
+            autoFocus
+          />
+          {pasteError && (
+            <Alert severity="error" sx={{ mt: 2 }}>
+              {pasteError}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPasteOpen(false)} disabled={pasteSubmitting}>
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSubmitPastedUrl}
+            disabled={pasteSubmitting || !pasted.trim()}
+          >
+            {pasteSubmitting ? 'Connecting…' : 'Connect'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </PageContainer>
   );
 };

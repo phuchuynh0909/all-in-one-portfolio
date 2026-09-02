@@ -1,4 +1,4 @@
-import { API_BASE_URL, apiGet } from '../api';
+import { API_BASE_URL, apiGet, apiPost } from '../api';
 
 /**
  * Every model field takes a bare model name (served by the backend's default
@@ -182,15 +182,26 @@ export const fetchTcbsStatus = async (): Promise<TATcbsStatus> =>
 
 /**
  * Begin a TCBS login. The URL is fetched over XHR (so the bearer token travels
- * with it) and the caller then navigates to it; TCBS sends the browser back to
- * `returnTo` once the account login and iOTP prompt are done.
+ * with it) and the caller opens it in a new tab.
+ *
+ * `redirect_uri` is a loopback address with nothing listening: TCBS rejects
+ * every non-loopback redirect, so authorization ends on a connection-refused
+ * page with the code in the address bar. The caller shows that address to the
+ * user, who pastes the failed URL into `completeTcbsLogin`.
  */
-export const startTcbsLogin = async (returnTo: string): Promise<string> => {
-  const { authorization_url } = await apiGet<{ authorization_url: string }>(
-    `/trading-agents/tcbs/authorize?return_to=${encodeURIComponent(returnTo)}`,
-  );
-  return authorization_url;
+export const startTcbsLogin = async (
+  returnTo: string,
+): Promise<{ authorizationUrl: string; redirectUri: string }> => {
+  const { authorization_url, redirect_uri } = await apiGet<{
+    authorization_url: string;
+    redirect_uri: string;
+  }>(`/trading-agents/tcbs/authorize?return_to=${encodeURIComponent(returnTo)}`);
+  return { authorizationUrl: authorization_url, redirectUri: redirect_uri };
 };
+
+/** Finish the login from the URL the user copied out of the address bar. */
+export const completeTcbsLogin = async (pasted: string): Promise<TATcbsStatus> =>
+  apiPost<TATcbsStatus>('/trading-agents/tcbs/complete', { pasted });
 
 export interface ModelChoice {
   /** What to send: always provider-qualified, so the pick is unambiguous. */

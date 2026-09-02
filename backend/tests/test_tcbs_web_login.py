@@ -111,7 +111,7 @@ def test_authorize_returns_a_url_and_remembers_the_flow(client, flow):
     assert f"state={state}" in body["authorization_url"]
 
 
-def test_authorize_registers_the_callback_as_the_redirect(client, flow, monkeypatch):
+def test_authorize_registers_the_same_redirect_it_advertises(client, flow, monkeypatch):
     seen = {}
     monkeypatch.setattr(
         routes.tcbs_oauth,
@@ -119,8 +119,11 @@ def test_authorize_registers_the_callback_as_the_redirect(client, flow, monkeypa
         lambda endpoint, redirect_uri: seen.update(redirect=redirect_uri)
         or ("cid-1", "csec-1"),
     )
-    client.get(AUTHORIZE)
-    assert seen["redirect"].endswith("/api/v1/trading-agents/tcbs/callback")
+    body = client.get(AUTHORIZE).json()
+    # Whatever redirect_uri we advertise, registration must use the same one:
+    # TCBS validates the pair, and a mismatch fails at the exchange.
+    assert seen["redirect"] == body["redirect_uri"]
+    assert seen["redirect"].startswith("http://127.0.0.1:")
 
 
 def test_callback_stores_the_tokens_and_returns_to_the_app(client, flow):
@@ -218,3 +221,112 @@ def _start(client, return_to: str | None = None) -> str:
     """Run authorize and return the state it minted."""
     client.get(AUTHORIZE, params={"return_to": return_to} if return_to else None)
     return next(iter(routes._PENDING))
+
+
+# --- the paste-the-code flow ------------------------------------------------
+#
+# TCBS's authorization server refuses any non-loopback redirect_uri (verified
+# against the live server: a hosted https callback gets 400 "does not match the
+# proxy origin", while http://127.0.0.1:<port>/callback is accepted even with
+# nothing listening). So the browser is sent to a loopback address that will
+# fail to load, and the user pastes the resulting URL back into the app.
+
+COMPLETE = "/api/v1/trading-agents/tcbs/complete"
+
+
+def test_authorize_uses_a_loopback_redirect_uri(client, flow):
+    """The whole point: a hosted redirect_uri is rejected by TCBS."""
+    body = client.get(AUTHORIZE).json()
+    assert body["redirect_uri"].startswith("http://127.0.0.1:")
+    assert body["redirect_uri"].endswith("/callback")
+    state = next(iter(routes._PENDING))
+    assert routes._PENDING[state]["redirect_uri"] == body["redirect_uri"]
+
+
+def test_redirect_base_still_forces_the_hosted_callback(client, flow, monkeypatch):
+    """The escape hatch for when TCBS fixes their proxy configuration."""
+    monkeypatch.setenv("TCBS_REDIRECT_BASE", "https://api.example.com")
+    body = client.get(AUTHORIZE).json()
+    assert body["redirect_uri"] == (
+        "https://api.example.com/api/v1/trading-agents/tcbs/callback"
+    )
+
+
+def test_complete_accepts_the_whole_pasted_url(client, flow):
+    state = _start(client)
+    pasted = f"http://127.0.0.1:8765/callback?code=abc123&state={state}"
+
+    res = client.post(COMPLETE, json={"pasted": pasted})
+
+    assert res.status_code == 200, res.text
+    assert res.json()["connected"] is True
+    assert flow["client_id"] == "cid-1"
+    assert flow["payload"] == {"access_token": "tok-1"}
+
+
+def test_complete_accepts_a_bare_query_fragment(client, flow):
+    """People copy inconsistently; a bare query string must work too."""
+    state = _start(client)
+
+    res = client.post(COMPLETE, json={"pasted": f"?code=abc123&state={state}"})
+
+    assert res.status_code == 200, res.text
+    assert flow["payload"] == {"access_token": "tok-1"}
+
+
+def test_complete_is_single_use(client, flow):
+    """A pasted URL is a credential; replaying it must miss."""
+    state = _start(client)
+    pasted = f"http://127.0.0.1:8765/callback?code=abc123&state={state}"
+
+    assert client.post(COMPLETE, json={"pasted": pasted}).status_code == 200
+    replay = client.post(COMPLETE, json={"pasted": pasted})
+    assert replay.status_code == 400
+
+
+def test_complete_rejects_an_unknown_state(client, flow):
+    res = client.post(
+        COMPLETE,
+        json={"pasted": "http://127.0.0.1:8765/callback?code=abc&state=never-minted"},
+    )
+    assert res.status_code == 400
+    assert "expired" in res.json()["detail"].lower()
+
+
+def test_complete_surfaces_an_error_from_the_pasted_url(client, flow):
+    """TCBS reports refusal in the query string, not by failing to redirect."""
+    state = _start(client)
+    pasted = (
+        f"http://127.0.0.1:8765/callback?error=access_denied"
+        f"&error_description=User+said+no&state={state}"
+    )
+
+    res = client.post(COMPLETE, json={"pasted": pasted})
+
+    assert res.status_code == 400
+    assert "access_denied" in res.json()["detail"]
+
+
+def test_complete_rejects_a_url_with_no_code(client, flow):
+    state = _start(client)
+    res = client.post(COMPLETE, json={"pasted": f"http://127.0.0.1:8765/callback?state={state}"})
+    assert res.status_code == 400
+
+
+def test_complete_rejects_unparseable_junk(client, flow):
+    _start(client)
+    res = client.post(COMPLETE, json={"pasted": "i forgot to copy anything"})
+    assert res.status_code == 400
+
+
+def test_complete_requires_authentication(flow):
+    """Unlike the GET callback, this one is called from inside the app."""
+    from app.api.deps import require_user
+
+    app.dependency_overrides.pop(require_user, None)  # undo the autouse stub
+    try:
+        with TestClient(app) as anon:
+            res = anon.post(COMPLETE, json={"pasted": "?code=a&state=b"})
+        assert res.status_code == 401
+    finally:
+        pass  # the autouse fixture reinstates the override for the next test

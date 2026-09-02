@@ -405,22 +405,148 @@ def tcbs_authorize(request: Request, return_to: Optional[str] = None) -> dict:
             redirect_uri=redirect_uri,
             state=state,
             challenge=challenge,
-        )
+        ),
+        # Handed back so the UI can name the address that is about to fail to
+        # load, and say that failing is the expected outcome.
+        "redirect_uri": redirect_uri,
     }
 
 
-def _redirect_uri(request: Request) -> str:
-    """The callback URL TCBS should send the browser back to.
+#: Port in the loopback redirect_uri. Nothing listens on it -- see
+#: ``_redirect_uri`` for why that is deliberate rather than broken.
+_LOOPBACK_PORT = os.getenv("TCBS_LOOPBACK_PORT", "8765")
 
-    Derived from the request so development and production each work without
-    configuration -- uvicorn runs with ``--proxy-headers``, so the forwarded
-    scheme and host are honoured. ``TCBS_REDIRECT_BASE`` overrides it for a
-    proxy that does not forward them.
+
+def _redirect_uri(request: Request) -> str:
+    """Where TCBS should send the browser after authorization.
+
+    A loopback address, and deliberately one with nothing listening on it.
+
+    TCBS's authorization server refuses any redirect_uri outside its own
+    origin: a hosted ``https://api.../callback`` is registered happily by the
+    dynamic-registration endpoint and then rejected at ``/authorize`` with
+    "redirect_uri origin does not match the proxy origin". Loopback is exempt
+    (the RFC 8252 native-app carve-out), and it is accepted whether or not
+    anything is bound to the port.
+
+    So the browser lands on a connection-refused page with the authorization
+    code sitting in the address bar, and the user pastes that URL into
+    ``POST /tcbs/complete``. Ugly, but it is the only shape TCBS accepts.
+
+    ``TCBS_REDIRECT_BASE`` restores the ordinary hosted redirect for the day
+    TCBS sets ``PROXY_BASE_URL`` on their proxy and the rejection stops.
     """
     base = os.getenv("TCBS_REDIRECT_BASE", "").rstrip("/")
-    if not base:
-        base = str(request.base_url).rstrip("/")
-    return f"{base}/api/v1/trading-agents/tcbs/callback"
+    if base:
+        return f"{base}/api/v1/trading-agents/tcbs/callback"
+    return f"http://127.0.0.1:{_LOOPBACK_PORT}/callback"
+
+
+class TcbsCompleteRequest(BaseModel):
+    """Whatever the user copied out of the address bar."""
+
+    pasted: str = Field(..., min_length=1, max_length=4096)
+
+
+def _parse_pasted(pasted: str) -> dict[str, str]:
+    """Pull the OAuth parameters out of a pasted URL.
+
+    Tolerant on purpose: people paste the whole address, sometimes only the
+    query string, occasionally with surrounding whitespace or quotes. Anything
+    with a recognisable query is accepted; anything else is a 400 telling them
+    what to copy.
+    """
+    import urllib.parse
+
+    text = pasted.strip().strip('"\'')
+    query = text.split("?", 1)[1] if "?" in text else text
+    query = query.lstrip("#")
+    params = {
+        key: values[0]
+        for key, values in urllib.parse.parse_qs(query, keep_blank_values=False).items()
+        if values
+    }
+    if not params:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                "That does not look like the redirect URL. Copy the whole "
+                "address from the browser bar after authorizing -- it contains "
+                "'?code=' and '&state='."
+            ),
+        )
+    return params
+
+
+@router.post("/tcbs/complete")
+def tcbs_complete(payload: TcbsCompleteRequest) -> dict:
+    """Finish a login from the URL the user pasted.
+
+    The counterpart to ``tcbs_callback`` for the loopback flow: TCBS redirects
+    the browser to an address nothing is serving, so the code never reaches us
+    on its own and the user carries it here by hand. Guarded normally -- unlike
+    the callback, this is called from inside the app with a bearer token.
+    """
+    _expire_pending()
+    params = _parse_pasted(payload.pasted)
+
+    state = params.get("state")
+    # Popped, not read: a pasted URL is a credential, and a replay must miss.
+    flow = _PENDING.pop(state, None) if state else None
+    if flow is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Unknown or expired login state. Start the login again.",
+        )
+
+    if params.get("error"):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"TCBS refused the login: {params['error']} "
+                f"({params.get('error_description', '')})".strip()
+            ),
+        )
+    if not params.get("code"):
+        raise HTTPException(
+            status_code=400,
+            detail="That URL carries no authorization code. Copy the whole address.",
+        )
+
+    _complete_flow(flow, params["code"])
+    return tcbs_oauth.describe(load_credentials())
+
+
+def _complete_flow(flow: dict, code: str) -> None:
+    """Trade ``code`` for tokens and store them.
+
+    Shared by the redirect callback and the paste endpoint so the exchange,
+    the store, and the session reset exist once rather than twice.
+    """
+    try:
+        payload = tcbs_oauth.exchange_code(
+            flow["meta"],
+            code=code,
+            redirect_uri=flow["redirect_uri"],
+            client_id=flow["client_id"],
+            client_secret=flow["client_secret"],
+            verifier=flow["verifier"],
+        )
+        tcbs_oauth.store_tokens(flow["client_id"], flow["client_secret"], payload)
+    except Exception as exc:  # noqa: BLE001 -- surfaced to the user as a 502
+        logger.warning("TCBS token exchange failed: {}", exc)
+        raise HTTPException(status_code=502, detail=f"TCBS token exchange failed: {exc}")
+
+    # A new token means the client is holding a session authorized by the old
+    # one; drop it so the next call reconnects with the new credentials.
+    try:
+        from app.services import tcbs_mcp_client
+
+        tcbs_mcp_client.reset()
+    except Exception as exc:  # noqa: BLE001 -- a stale session is not fatal
+        logger.debug("TCBS session reset after login failed (ignored): {}", exc)
+
+    logger.info("TCBS connector authorized")
 
 
 @router.get("/tcbs/callback")
@@ -450,30 +576,7 @@ def tcbs_callback(
     if not code:
         raise HTTPException(status_code=400, detail="TCBS returned no authorization code.")
 
-    try:
-        payload = tcbs_oauth.exchange_code(
-            flow["meta"],
-            code=code,
-            redirect_uri=flow["redirect_uri"],
-            client_id=flow["client_id"],
-            client_secret=flow["client_secret"],
-            verifier=flow["verifier"],
-        )
-        tcbs_oauth.store_tokens(flow["client_id"], flow["client_secret"], payload)
-    except Exception as exc:  # noqa: BLE001 -- surfaced to the user as a 502
-        logger.warning("TCBS token exchange failed: {}", exc)
-        raise HTTPException(status_code=502, detail=f"TCBS token exchange failed: {exc}")
-
-    # A new token means the client is holding a session authorized by the old
-    # one; drop it so the next call reconnects with the new credentials.
-    try:
-        from app.services import tcbs_mcp_client
-
-        tcbs_mcp_client.reset()
-    except Exception as exc:  # noqa: BLE001 -- a stale session is not fatal
-        logger.debug("TCBS session reset after login failed (ignored): {}", exc)
-
-    logger.info("TCBS connector authorized")
+    _complete_flow(flow, code)
     if flow["return_to"]:
         return RedirectResponse(flow["return_to"], status_code=302)
     from fastapi.responses import HTMLResponse
