@@ -14,6 +14,7 @@ import {
   Table,
   TableBody,
   TableCell,
+  TableContainer,
   TableHead,
   TableRow,
   TextField,
@@ -456,7 +457,7 @@ export default function MvfLstmPanel() {
               <StatTile
                 label="As of"
                 value={result.as_of}
-                hint={`Hold ~${result.horizon} trading days`}
+                hint={`Trained through ${result.train_cutoff} · hold ~${result.horizon} trading days`}
               />
             </Box>
 
@@ -506,6 +507,60 @@ export default function MvfLstmPanel() {
               {result.excluded.length > 0 &&
                 ` Zero-weighted by the optimizer: ${result.excluded.join(', ')}.`}
             </Typography>
+          </Box>
+        )}
+
+        {result?.allocation_history && result.allocation_history.length > 0 && (
+          <Box sx={{ mt: 3 }}>
+            <Typography variant="subtitle1" sx={{ fontWeight: 600 }}>
+              Weekly allocation history
+            </Typography>
+            <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 1 }}>
+              Model predictions for each week after the training cutoff. Values are target portfolio
+              weights at each weekly rebalance date.
+            </Typography>
+            <TableContainer sx={{ maxHeight: 520, overflowX: 'auto' }}>
+              <Table
+                stickyHeader
+                size="small"
+                sx={{
+                  minWidth: Math.max(900, 280 + result.universe.length * 88),
+                  '& td, & th': { whiteSpace: 'nowrap' },
+                }}
+              >
+                <TableHead>
+                  <TableRow>
+                    <TableCell>Week</TableCell>
+                    {result.universe.map((ticker) => (
+                      <TableCell key={ticker} align="right">
+                        {ticker}
+                      </TableCell>
+                    ))}
+                    <TableCell align="right">Pred. return</TableCell>
+                    <TableCell align="right">Ann. vol</TableCell>
+                    <TableCell align="right">Sharpe</TableCell>
+                  </TableRow>
+                </TableHead>
+                <TableBody sx={{ '& td': { fontVariantNumeric: 'tabular-nums' } }}>
+                  {result.allocation_history.map((snapshot) => {
+                    const weights = new Map(snapshot.holdings.map((holding) => [holding.ticker, holding.weight]));
+                    return (
+                      <TableRow key={snapshot.as_of} hover>
+                        <TableCell sx={{ fontWeight: 600 }}>{snapshot.as_of}</TableCell>
+                        {result.universe.map((ticker) => (
+                          <TableCell key={ticker} align="right">
+                            {pct(weights.get(ticker) ?? 0)}
+                          </TableCell>
+                        ))}
+                        <TableCell align="right">{pct(snapshot.predicted_return)}</TableCell>
+                        <TableCell align="right">{pct(snapshot.predicted_volatility)}</TableCell>
+                        <TableCell align="right">{snapshot.predicted_sharpe.toFixed(2)}</TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
           </Box>
         )}
       </CardContent>

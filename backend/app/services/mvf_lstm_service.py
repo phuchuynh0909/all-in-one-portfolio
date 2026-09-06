@@ -42,7 +42,7 @@ from sklearn.covariance import LedoitWolf
 from torch.utils.data import DataLoader, TensorDataset
 
 from app.core.settings import settings
-from app.schemas.mvf import MvfHolding, MvfRequest, MvfResult
+from app.schemas.mvf import MvfAllocationSnapshot, MvfHolding, MvfRequest, MvfResult
 from app.services.indicators.gkyz_volatility import gkyz_volatility_nb
 from app.services.stock_service import _load_delta_stocks
 
@@ -407,6 +407,122 @@ def _max_sharpe(mu: pd.Series, sigma: pd.DataFrame, rf: float,
         logger.warning("MVF max-Sharpe SLSQP did not converge: {}", res.message)
     return pd.Series(_project(res.x, w_max), index=mu.index)
 
+@dataclass
+class _Allocation:
+    as_of: pd.Timestamp
+    predicted_return: float
+    predicted_volatility: float
+    predicted_sharpe: float
+    weight_sum: float
+    holdings: list[MvfHolding]
+    deployed_value: float
+    cash_residual: float
+    excluded: list[str]
+
+
+def _weekly_dates(index: pd.DatetimeIndex, cutoff: pd.Timestamp) -> list[pd.Timestamp]:
+    """Return the last available price date in each Friday-ended week after cutoff."""
+    dates = pd.DatetimeIndex(index)
+    dates = dates[dates > cutoff]
+    if len(dates) == 0:
+        return []
+    periods = dates.to_period("W-FRI")
+    return [dates[periods == period][-1] for period in periods.unique()]
+
+
+def _allocation_at(
+    req: MvfRequest,
+    prep: _Prepared,
+    models: dict[str, PriceLSTM],
+    z_all: pd.DataFrame,
+    mu_r: pd.Series,
+    sd_r: pd.Series,
+    as_of: pd.Timestamp,
+    *,
+    log_cov_warning: bool = False,
+) -> _Allocation:
+    """Predict and optimize one allocation using data available at ``as_of``."""
+    observed = prep.prices.index[prep.prices.index <= as_of][-1]
+    last_price = prep.prices.loc[observed]
+    paths = pd.DataFrame({
+        sym: _forecast_path(
+            models[sym],
+            _asset_feat(prep, sym, z_all[sym].loc[:observed]),
+            req.seq_len,
+            req.horizon,
+            float(mu_r[sym]),
+            float(sd_r[sym]),
+            float(last_price[sym]),
+        )
+        for sym in prep.universe
+    })
+
+    universe = prep.universe
+    total_ret = paths.iloc[-1] / last_price[universe] - 1.0
+    mu_pred = (1 + total_ret) ** (ANN / req.horizon) - 1
+
+    cov_window = prep.log_ret.loc[:observed].iloc[-req.cov_lookback:][universe].dropna()
+    if log_cov_warning and len(cov_window) < len(universe):
+        logger.warning(
+            "MVF covariance window has {} rows for {} assets; Σ is poorly "
+            "conditioned — consider dropping the youngest names",
+            len(cov_window),
+            len(universe),
+        )
+    sigma = _shrunk_cov(cov_window, req.cov_shrink)
+    rf_ann = req.risk_free_rate * ANN
+    weights = _max_sharpe(mu_pred, sigma, rf_ann, req.max_weight)
+    predicted_return, predicted_volatility, predicted_sharpe = _port_stats(
+        weights.to_numpy(float),
+        mu_pred.to_numpy(float),
+        sigma.to_numpy(float),
+        rf_ann,
+    )
+
+    asset_vol = pd.Series(np.sqrt(np.diag(sigma)), index=universe)
+    held = weights[weights > 1e-4].sort_values(ascending=False)
+    holdings: list[MvfHolding] = []
+    for sym, weight in held.items():
+        target = float(weight) * req.capital
+        price = float(last_price[sym])
+        shares = int(np.floor(target / price)) if price > 0 else 0
+        holdings.append(MvfHolding(
+            ticker=str(sym),
+            weight=float(weight),
+            pred_ann_return=float(mu_pred[sym]),
+            ann_vol=float(asset_vol[sym]),
+            last_price=price,
+            shares=shares,
+            target_value=target,
+            alloc_value=shares * price,
+        ))
+
+    deployed = sum(holding.alloc_value for holding in holdings)
+    return _Allocation(
+        as_of=observed,
+        predicted_return=predicted_return,
+        predicted_volatility=predicted_volatility,
+        predicted_sharpe=predicted_sharpe,
+        weight_sum=float(weights.sum()),
+        holdings=holdings,
+        deployed_value=deployed,
+        cash_residual=req.capital - deployed,
+        excluded=[sym for sym in universe if sym not in held.index],
+    )
+
+
+def _snapshot(allocation: _Allocation) -> MvfAllocationSnapshot:
+    return MvfAllocationSnapshot(
+        as_of=allocation.as_of.strftime("%Y-%m-%d"),
+        predicted_return=allocation.predicted_return,
+        predicted_volatility=allocation.predicted_volatility,
+        predicted_sharpe=allocation.predicted_sharpe,
+        weight_sum=allocation.weight_sum,
+        holdings=allocation.holdings,
+    )
+
+
+
 
 # ── the streamed run ─────────────────────────────────────────────────────────
 def stream_mvf(req: MvfRequest) -> Generator[tuple[str, dict], None, None]:
@@ -459,77 +575,59 @@ def stream_mvf(req: MvfRequest) -> Generator[tuple[str, dict], None, None]:
                         "source": source}
 
     yield "forecasting", {"horizon": req.horizon}
-    as_of = prep.prices.index[-1]
-    last_price = prep.prices.iloc[-1]
-    paths = pd.DataFrame({
-        sym: _forecast_path(models[sym], _asset_feat(prep, sym, z_all[sym]),
-                            req.seq_len, req.horizon,
-                            float(mu_r[sym]), float(sd_r[sym]), float(last_price[sym]))
-        for sym in universe
-    })
-
     yield "optimizing", {"max_weight": req.max_weight}
-    # μ: forward-looking — the LSTM's total predicted horizon return, annualized.
-    total_ret = paths.iloc[-1] / last_price[universe] - 1.0
-    mu_pred = (1 + total_ret) ** (ANN / req.horizon) - 1
 
-    # Σ: trailing historical daily returns. A single deterministic forecast path
-    # gives a degenerate covariance and carries no cross-asset correlation, so the
-    # co-movement estimate stays historical (and shrunk).
-    # Rows where any asset has no return yet (a listing younger than the
-    # lookback) cannot contribute to a covariance, so they are dropped rather
-    # than shortening the lookback for everyone.
-    cov_window = prep.log_ret.iloc[-req.cov_lookback:][universe].dropna()
-    if len(cov_window) < len(universe):
-        logger.warning(
-            "MVF covariance window has {} rows for {} assets; Σ is poorly "
-            "conditioned — consider dropping the youngest names",
-            len(cov_window), len(universe),
+    latest = _allocation_at(
+        req,
+        prep,
+        models,
+        z_all,
+        mu_r,
+        sd_r,
+        prep.prices.index[-1],
+        log_cov_warning=True,
+    )
+    allocation_history = [
+        _snapshot(
+            _allocation_at(
+                req,
+                prep,
+                models,
+                z_all,
+                mu_r,
+                sd_r,
+                weekly_date,
+            )
         )
-    sigma = _shrunk_cov(cov_window, req.cov_shrink)
+        for weekly_date in _weekly_dates(prep.prices.index, cutoff)
+    ]
+    if (
+        latest.as_of > cutoff
+        and (
+            not allocation_history
+            or allocation_history[-1].as_of != latest.as_of.strftime("%Y-%m-%d")
+        )
+    ):
+        allocation_history.append(_snapshot(latest))
 
-    rf_ann = req.risk_free_rate * ANN
-    w = _max_sharpe(mu_pred, sigma, rf_ann, req.max_weight)
-    ret, vol, sharpe = _port_stats(w.to_numpy(float), mu_pred.to_numpy(float),
-                                   sigma.to_numpy(float), rf_ann)
-
-    asset_vol = pd.Series(np.sqrt(np.diag(sigma)), index=universe)
-    held = w[w > 1e-4].sort_values(ascending=False)
-
-    holdings: list[MvfHolding] = []
-    for sym, weight in held.items():
-        target = float(weight) * req.capital
-        price = float(last_price[sym])
-        shares = int(np.floor(target / price)) if price > 0 else 0
-        holdings.append(MvfHolding(
-            ticker=str(sym),
-            weight=float(weight),
-            pred_ann_return=float(mu_pred[sym]),
-            ann_vol=float(asset_vol[sym]),
-            last_price=price,
-            shares=shares,
-            target_value=target,
-            alloc_value=shares * price,
-        ))
-
-    deployed = sum(h.alloc_value for h in holdings)
     result = MvfResult(
-        as_of=as_of.strftime("%Y-%m-%d"),
+        as_of=latest.as_of.strftime("%Y-%m-%d"),
         train_cutoff=cutoff.strftime("%Y-%m-%d"),
         bars=len(prep.log_ret),
         universe=universe,
         dropped=prep.dropped,
-        excluded=[s for s in universe if s not in held.index],
+        excluded=latest.excluded,
         horizon=req.horizon,
         max_weight=req.max_weight,
-        predicted_return=ret,
-        predicted_volatility=vol,
-        predicted_sharpe=sharpe,
-        weight_sum=float(w.sum()),
+        predicted_return=latest.predicted_return,
+        predicted_volatility=latest.predicted_volatility,
+        predicted_sharpe=latest.predicted_sharpe,
+        weight_sum=latest.weight_sum,
         capital=req.capital,
-        deployed_value=deployed,
-        cash_residual=req.capital - deployed,
-        holdings=holdings,
+        deployed_value=latest.deployed_value,
+        cash_residual=latest.cash_residual,
+        holdings=latest.holdings,
+        allocation_history=allocation_history,
     )
     yield "result", result.model_dump()
     yield "done", {}

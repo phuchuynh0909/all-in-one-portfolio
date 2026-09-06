@@ -370,7 +370,7 @@ def tcbs_authorize(request: Request, return_to: Optional[str] = None) -> dict:
     """
     _expire_pending()
 
-    redirect_uri = _redirect_uri(request)
+    redirect_uri = _redirect_uri()
     try:
         meta = tcbs_oauth.discover_auth_server()
         if "registration_endpoint" not in meta:
@@ -417,28 +417,13 @@ def tcbs_authorize(request: Request, return_to: Optional[str] = None) -> dict:
 _LOOPBACK_PORT = os.getenv("TCBS_LOOPBACK_PORT", "8765")
 
 
-def _redirect_uri(request: Request) -> str:
-    """Where TCBS should send the browser after authorization.
+def _redirect_uri() -> str:
+    """Use TCBS's loopback-only native-app callback shape.
 
-    A loopback address, and deliberately one with nothing listening on it.
-
-    TCBS's authorization server refuses any redirect_uri outside its own
-    origin: a hosted ``https://api.../callback`` is registered happily by the
-    dynamic-registration endpoint and then rejected at ``/authorize`` with
-    "redirect_uri origin does not match the proxy origin". Loopback is exempt
-    (the RFC 8252 native-app carve-out), and it is accepted whether or not
-    anything is bound to the port.
-
-    So the browser lands on a connection-refused page with the authorization
-    code sitting in the address bar, and the user pastes that URL into
-    ``POST /tcbs/complete``. Ugly, but it is the only shape TCBS accepts.
-
-    ``TCBS_REDIRECT_BASE`` restores the ordinary hosted redirect for the day
-    TCBS sets ``PROXY_BASE_URL`` on their proxy and the rejection stops.
+    TCBS rejects hosted callback origins at its authorization endpoint. Nothing
+    listens on this loopback port: after consent, the browser exposes the code
+    in its failed navigation URL, which the user pastes into ``/tcbs/complete``.
     """
-    base = os.getenv("TCBS_REDIRECT_BASE", "").rstrip("/")
-    if base:
-        return f"{base}/api/v1/trading-agents/tcbs/callback"
     return f"http://127.0.0.1:{_LOOPBACK_PORT}/callback"
 
 

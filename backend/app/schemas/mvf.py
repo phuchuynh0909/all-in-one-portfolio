@@ -49,6 +49,17 @@ class MvfHolding(BaseModel):
     alloc_value: float              # shares × last_price
 
 
+class MvfAllocationSnapshot(BaseModel):
+    """One weekly allocation prediction made after the training cutoff."""
+
+    as_of: str
+    predicted_return: float
+    predicted_volatility: float
+    predicted_sharpe: float
+    weight_sum: float
+    holdings: List[MvfHolding]
+
+
 class MvfResult(BaseModel):
     as_of: str                      # last bar the forecast starts from, YYYY-MM-DD
     train_cutoff: str               # last bar the LSTMs were fitted on, YYYY-MM-DD
@@ -66,3 +77,4 @@ class MvfResult(BaseModel):
     deployed_value: float
     cash_residual: float
     holdings: List[MvfHolding]
+    allocation_history: List[MvfAllocationSnapshot] = Field(default_factory=list)

@@ -27,3 +27,6 @@ lstm_cache/*
 # Experiment store output (Parquet + DuckDB views); never committed.
 data/experiments/
 frontend/public/experiment-data
+
+# Local zvec-grep workspace index and daemon state.
+.zvec-grep/

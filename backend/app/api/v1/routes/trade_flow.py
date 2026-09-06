@@ -7,7 +7,11 @@ from clickhouse_connect.driver import Client
 from fastapi import APIRouter, Depends, Query
 
 from app.db.clickhouse import get_clickhouse_client
-from app.services.trade_flow_service import TradeFlowResponse, TradeFlowService
+from app.services.trade_flow_service import (
+    PriceDepthResponse,
+    TradeFlowResponse,
+    TradeFlowService,
+)
 
 router = APIRouter()
 
@@ -29,6 +33,19 @@ def get_trade_flow_service(
         min_windows_to_fit=int(os.getenv("BLOCK_EP_MIN_WINDOWS_TO_FIT", "400")),
         contamination=float(os.getenv("BLOCK_EP_CONTAMINATION", "0.03")),
     )
+
+@router.get(
+    "/trade-flow/depth",
+    response_model=PriceDepthResponse,
+    tags=["Trade Flow"],
+)
+async def get_trade_flow_depth(
+    symbol: str = Query(..., description="Symbol, e.g. HPG"),
+    service: TradeFlowService = Depends(get_trade_flow_service),
+) -> PriceDepthResponse:
+    """Executed buy/sell size by price for the symbol's latest trading session."""
+    return service.get_price_depth(symbol.strip().upper())
+
 
 
 @router.get(

@@ -120,6 +120,8 @@ class Settings(BaseSettings):
         override = os.getenv("MYSQL_URL")
         if override:
             return override
+
+        print(f"Building MySQL URL from parts: user={self.mysql_user}, host={self.mysql_host}, port={self.mysql_port}, db={self.mysql_db}")
         return _build_mysql_url(
             user=self.mysql_user,
             password=self.mysql_password,

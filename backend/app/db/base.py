@@ -45,6 +45,8 @@ engine = create_engine(
     **_engine_kwargs(settings.database_url),
 )
 
+print(f"Database engine created with URL: {settings.database_url}")
+
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 

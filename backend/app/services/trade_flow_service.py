@@ -144,6 +144,21 @@ class TradeFlowResponse(BaseModel):
     note: Optional[str] = None
     windows: List[TradeFlowWindow]
 
+class PriceDepthLevel(BaseModel):
+    price: float
+    buy_size: int
+    sell_size: int
+
+
+class PriceDepthResponse(BaseModel):
+    symbol: str
+    session_date: Optional[str]
+    levels: List[PriceDepthLevel]
+    total_buy_size: int
+    total_sell_size: int
+    note: Optional[str] = None
+
+
 
 def _is_unknown_table(exc: Exception) -> bool:
     """True for ClickHouse 'table does not exist' (code 60).
@@ -245,6 +260,61 @@ class TradeFlowService:
                 return pd.DataFrame()
             raise
         return pd.DataFrame(result.result_rows, columns=result.column_names)
+
+    def get_price_depth(self, symbol: str) -> PriceDepthResponse:
+        """Return executed buy/sell size grouped by price for the latest session."""
+        sql = """
+            SELECT
+                formatDateTime(
+                    toDate(sending_time, 'Asia/Ho_Chi_Minh'),
+                    '%Y-%m-%d'
+                ) AS session_date,
+                match_price AS price,
+                sumIf(toInt64(match_qty), side = 1) AS buy_size,
+                sumIf(toInt64(match_qty), side = 2) AS sell_size
+            FROM ticks
+            WHERE symbol = {symbol:String}
+              AND side IN (1, 2)
+              AND toDate(sending_time, 'Asia/Ho_Chi_Minh') = (
+                  SELECT max(toDate(sending_time, 'Asia/Ho_Chi_Minh'))
+                  FROM ticks
+                  WHERE symbol = {symbol:String}
+              )
+            GROUP BY session_date, price
+            ORDER BY price DESC
+            LIMIT 200
+        """
+        try:
+            result = self.client.query(sql, parameters={"symbol": symbol})
+        except DatabaseError as exc:
+            if _is_unknown_table(exc):
+                return PriceDepthResponse(
+                    symbol=symbol,
+                    session_date=None,
+                    levels=[],
+                    total_buy_size=0,
+                    total_sell_size=0,
+                    note="No trade tape is available for price depth.",
+                )
+            raise
+
+        levels = [
+            PriceDepthLevel(
+                price=float(row[1]),
+                buy_size=int(row[2] or 0),
+                sell_size=int(row[3] or 0),
+            )
+            for row in result.result_rows
+        ]
+        return PriceDepthResponse(
+            symbol=symbol,
+            session_date=str(result.result_rows[0][0]) if result.result_rows else None,
+            levels=levels,
+            total_buy_size=sum(level.buy_size for level in levels),
+            total_sell_size=sum(level.sell_size for level in levels),
+            note=None if levels else "No executed buy/sell volume for the latest session.",
+        )
+
 
     # -- scoring ------------------------------------------------------------
     def get_anomalies(

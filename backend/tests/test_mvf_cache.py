@@ -55,6 +55,14 @@ def test_train_cutoff_is_previous_calendar_year_end():
     assert svc._train_cutoff(pd.Timestamp("2026-01-02")) == pd.Timestamp("2025-12-31")
     assert svc._train_cutoff(pd.Timestamp("2026-12-31")) == pd.Timestamp("2025-12-31")
 
+def test_weekly_dates_use_last_available_bar_after_cutoff():
+    dates = pd.bdate_range("2025-12-29", "2026-01-16")
+    assert [d.strftime("%Y-%m-%d") for d in svc._weekly_dates(dates, pd.Timestamp("2025-12-31"))] == [
+        "2026-01-02",
+        "2026-01-09",
+        "2026-01-16",
+    ]
+
 
 def test_panels_window_starts_at_cutoff_minus_years(monkeypatch, req):
     seen: dict[str, object] = {}
@@ -147,13 +155,19 @@ def test_short_history_symbol_trains_without_caching(monkeypatch, req):
     assert not list((svc._CACHE_DIR).glob("mvf_NEW_*.pt")), "NEW must not be cached"
 
 
-def test_result_reports_the_training_cutoff(monkeypatch, req):
+def test_result_reports_the_training_cutoff_and_weekly_history(monkeypatch, req):
     monkeypatch.setattr(
         svc, "_load_delta_stocks",
         lambda symbols, start, columns: _long_ohlcv(list(symbols), "2021-01-01", "2026-08-30"),
     )
     result = next(p for k, p in svc.stream_mvf(req) if k == "result")
     assert result["train_cutoff"] == "2025-12-31"
+
+    history = result["allocation_history"]
+    dates = [snapshot["as_of"] for snapshot in history]
+    assert dates == sorted(set(dates))
+    assert all("2025-12-31" < date <= result["as_of"] for date in dates)
+    assert dates[-1] == result["as_of"]
 
 
 def test_a_young_listing_does_not_truncate_its_peers(monkeypatch, req):

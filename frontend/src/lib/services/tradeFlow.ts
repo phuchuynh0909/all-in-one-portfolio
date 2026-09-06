@@ -48,6 +48,25 @@ export interface TradeFlowResponse {
   windows: TradeFlowWindow[];
 }
 
+export interface PriceDepthLevel {
+  price: number;
+  buy_size: number;
+  sell_size: number;
+}
+
+export interface PriceDepthResponse {
+  symbol: string;
+  session_date: string | null;
+  levels: PriceDepthLevel[];
+  total_buy_size: number;
+  total_sell_size: number;
+  note: string | null;
+}
+
+export const fetchPriceDepth = (symbol: string): Promise<PriceDepthResponse> =>
+  apiGet<PriceDepthResponse>(`/trade-flow/depth?symbol=${encodeURIComponent(symbol)}`);
+
+
 export interface GetTradeFlowParams {
   fromDate?: string;   // YYYY-MM-DD
   toDate?: string;     // YYYY-MM-DD

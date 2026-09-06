@@ -13,7 +13,7 @@ import {
   Stack,
   Chip,
 } from '@mui/material';
-import { Article, Notes, Radar, SmartToy, ViewList } from '@mui/icons-material';
+import { Article, BarChart, Notes, Radar, SmartToy, ViewList } from '@mui/icons-material';
 import { syncStock } from '../lib/services/workflows';
 import type { Report } from '../lib/services/report';
 import StockChart from '../components/chart/StockChart';
@@ -23,6 +23,7 @@ import NotesPanel from '../components/chart/NotesPanel';
 import ReportsPanel from '../components/chart/ReportsPanel';
 import AgentDecisionsPanel from '../components/chart/AgentDecisionsPanel';
 import ChartSideRail from '../components/chart/ChartSideRail';
+import PriceDepthPanel from '../components/chart/PriceDepthPanel';
 import type { ResolvedWatchList } from '../lib/tv/watchlist';
 
 /** Drag-resize bounds for the right side panel (watchlist + anomalies). */
@@ -34,7 +35,7 @@ const SIDE_PANEL_WIDTH_KEY = 'chartSidePanelWidth';
 const SIDE_PANEL_KEY = 'chartSidePanel';
 
 /** Which panel the right-hand column is showing, or null when it is closed. */
-type SidePanel = 'watchlist' | 'anomalies' | 'notes' | 'reports' | 'agents';
+type SidePanel = 'watchlist' | 'anomalies' | 'notes' | 'reports' | 'agents' | 'priceDepth';
 
 export default function ChartPage() {
   const [currentSymbol, setCurrentSymbol] = useState('VNINDEX');
@@ -47,7 +48,7 @@ export default function ChartPage() {
   const [sidePanel, setSidePanel] = useState<SidePanel | null>(() => {
     try {
       const stored = localStorage.getItem(SIDE_PANEL_KEY);
-      const known: SidePanel[] = ['watchlist', 'anomalies', 'notes', 'reports', 'agents'];
+      const known: SidePanel[] = ['watchlist', 'anomalies', 'notes', 'reports', 'agents', 'priceDepth'];
       if (known.includes(stored as SidePanel)) return stored as SidePanel;
       if (stored === 'none') return null;
     } catch {
@@ -237,6 +238,7 @@ export default function ChartPage() {
               {activePanel === 'reports' ? (
                 <ReportsPanel symbol={currentSymbol} onSelect={setSelectedReport} />
               ) : null}
+              {activePanel === 'priceDepth' ? <PriceDepthPanel symbol={currentSymbol} /> : null}
               {activePanel === 'agents' ? <AgentDecisionsPanel symbol={currentSymbol} /> : null}
             </Box>
           </Paper>
@@ -282,6 +284,13 @@ export default function ChartPage() {
               icon: <SmartToy sx={{ fontSize: 19 }} />,
               active: activePanel === 'agents',
               onClick: () => handleSelectSidePanel('agents'),
+            },
+            {
+              id: 'priceDepth',
+              label: activePanel === 'priceDepth' ? 'Hide price depth' : `Price depth for ${currentSymbol}`,
+              icon: <BarChart sx={{ fontSize: 19 }} />,
+              active: activePanel === 'priceDepth',
+              onClick: () => handleSelectSidePanel('priceDepth'),
             },
           ]}
         />

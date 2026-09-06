@@ -243,14 +243,14 @@ def test_authorize_uses_a_loopback_redirect_uri(client, flow):
     assert routes._PENDING[state]["redirect_uri"] == body["redirect_uri"]
 
 
-def test_redirect_base_still_forces_the_hosted_callback(client, flow, monkeypatch):
-    """The escape hatch for when TCBS fixes their proxy configuration."""
+def test_authorize_ignores_a_hosted_redirect_override(client, flow, monkeypatch):
+    """TCBS rejects hosted callbacks, including a stale deployment override."""
     monkeypatch.setenv("TCBS_REDIRECT_BASE", "https://api.example.com")
-    body = client.get(AUTHORIZE).json()
-    assert body["redirect_uri"] == (
-        "https://api.example.com/api/v1/trading-agents/tcbs/callback"
-    )
 
+    body = client.get(AUTHORIZE).json()
+
+    assert body["redirect_uri"].startswith("http://127.0.0.1:")
+    assert body["redirect_uri"].endswith("/callback")
 
 def test_complete_accepts_the_whole_pasted_url(client, flow):
     state = _start(client)

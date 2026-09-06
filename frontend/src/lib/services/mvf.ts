@@ -28,8 +28,18 @@ export interface MvfHolding {
   alloc_value: number;
 }
 
+export interface MvfAllocationSnapshot {
+  as_of: string;
+  predicted_return: number;
+  predicted_volatility: number;
+  predicted_sharpe: number;
+  weight_sum: number;
+  holdings: MvfHolding[];
+}
+
 export interface MvfResult {
   as_of: string;
+  train_cutoff: string;
   bars: number;
   universe: string[];
   dropped: string[];
@@ -44,6 +54,7 @@ export interface MvfResult {
   deployed_value: number;
   cash_residual: number;
   holdings: MvfHolding[];
+  allocation_history: MvfAllocationSnapshot[];
 }
 
 export interface MvfStarted {
