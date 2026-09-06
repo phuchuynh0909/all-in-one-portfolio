@@ -23,15 +23,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libhdf5-dev \
  && rm -rf /var/lib/apt/lists/*
 
-# Build TA-Lib 0.6.4 from source (newer version from GitHub)
-RUN wget -q https://github.com/TA-Lib/ta-lib/releases/download/v0.6.4/ta-lib-0.6.4-src.tar.gz \
- && tar -xzf ta-lib-0.6.4-src.tar.gz \
- && cd ta-lib-0.6.4 \
- && ./configure --prefix=/usr \
- && make -j$(nproc) \
- && make install \
- && cd .. \
- && rm -rf ta-lib-0.6.4 ta-lib-0.6.4-src.tar.gz
+# Use TA-Lib's architecture-specific Debian package rather than compiling the
+# C library. Keep the package for the runtime stage so both stages use exactly
+# the same 0.7.1 library and headers.
+ARG TARGETARCH
+RUN case "$TARGETARCH" in \
+      amd64|arm64) wget -q \
+        "https://github.com/TA-Lib/ta-lib/releases/download/v0.7.1/ta-lib_0.7.1_${TARGETARCH}.deb" \
+        -O /tmp/ta-lib.deb ;; \
+      *) echo "Unsupported TA-Lib architecture: $TARGETARCH" >&2; exit 1 ;; \
+    esac \
+ && dpkg-deb -x /tmp/ta-lib.deb /
 
 # Install uv
 COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
@@ -81,8 +83,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PATH="/opt/venv/bin:$PATH"
 
-# Copy TA-Lib shared libraries from builder (compiled from source)
-COPY --from=builder /usr/lib/libta_lib* /usr/lib/
+# Install the official TA-Lib binary package selected in the base stage.
+COPY --from=base /tmp/ta-lib.deb /tmp/ta-lib.deb
+RUN dpkg-deb -x /tmp/ta-lib.deb / && rm /tmp/ta-lib.deb
 
 # Install only runtime dependencies
 # - libhdf5-103-1: HDF5 runtime for PyTables
