@@ -71,8 +71,6 @@ attrs==26.1.0
     #   jsonlines
     #   jsonschema
     #   referencing
-backports-zstd==1.7.0
-    # via clickhouse-connect
 banks==2.5.0
     # via llama-index-core
 bcrypt==5.0.0
@@ -678,9 +676,7 @@ patsy==1.0.2
 pdftext==0.7.1
     # via marker-pdf
 pendulum==3.2.0
-    # via
-    #   fastapi-cache2
-    #   prefect
+    # via fastapi-cache2
 pexpect==4.9.0
     # via ipython
 pillow==10.4.0
@@ -1175,24 +1171,17 @@ typer==0.26.8
     #   transformers
 typing-extensions==4.16.0
     # via
-    #   aiohttp
-    #   aiosignal
     #   alembic
     #   anthropic
-    #   anyio
     #   anywidget
-    #   arro3-core
     #   beautifulsoup4
     #   docling-core
-    #   exceptiongroup
     #   fastapi
     #   fastapi-cache2
     #   google-genai
     #   grpcio
     #   gymnasium
-    #   httpx2
     #   huggingface-hub
-    #   ipython
     #   langchain-core
     #   langchain-protocol
     #   langsmith
@@ -1209,13 +1198,10 @@ typing-extensions==4.16.0
     #   pydantic-core
     #   pydantic-extra-types
     #   pydocket
-    #   pytest-asyncio
     #   python-docx
     #   python-oxmsg
     #   python-pptx
-    #   referencing
     #   sqlalchemy
-    #   starlette
     #   torch
     #   typing-inspect
     #   typing-inspection
@@ -1269,6 +1255,8 @@ websockets==16.1.1
     #   langsmith
     #   prefect
     #   uvicorn
+whenever==0.10.5
+    # via prefect
 widgetsnbextension==4.0.16
     # via ipywidgets
 wrapt==2.3.0

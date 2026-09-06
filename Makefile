@@ -76,8 +76,8 @@ prune-build-cache:
 	docker builder prune -af
 
 # Regenerate backend/requirements.lock.txt from backend/requirements.txt.
-# Resolved inside the builder image on purpose: the environment markers then
-# match the target (linux, py3.11) and the TA-Lib C library is present for any
+# Resolved inside the lock image on purpose: the environment markers then
+# match the target (linux, py3.14) and the TA-Lib C library is present for any
 # package that needs to build to report its metadata. Resolving on the host
 # would produce a lock for macOS/arm64 that does not describe the image.
 #
@@ -92,7 +92,7 @@ prune-build-cache:
 # NOTE: this pins the image to CPU torch. Deploying to a real GPU host needs its
 # own lock generated without these flags, not this one.
 lock-backend:
-	docker build --target builder -t portfolio-backend-builder:lock backend/
+	docker build --target lock -t portfolio-backend-builder:lock backend/
 	docker run --rm -v "$(PWD)/backend:/out" portfolio-backend-builder:lock \
 	  sh -c "cd /out && uv pip compile requirements.txt -o requirements.lock.txt \
 	         --extra-index-url https://download.pytorch.org/whl/cpu \

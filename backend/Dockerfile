@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
-# Stage 1: Build dependencies with uv
-FROM python:3.11-slim AS builder
+# Base image shared by lock resolution and the production dependency build.
+FROM python:3.14-slim-bookworm AS base
 
 WORKDIR /app
 
@@ -41,9 +41,17 @@ RUN uv venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
     VIRTUAL_ENV="/opt/venv"
 
+# The lock must be resolved before the dependency layer consumes it. Otherwise
+# an incompatible old lock prevents `make lock-backend` from producing its 3.14
+# replacement.
+FROM base AS lock
+
+# Stage 1: Build production dependencies from the generated lock.
+FROM base AS builder
+
 # Install the fully pinned dependency set (346 packages, all ==).
 # requirements.lock.txt is generated from requirements.txt by `make lock-backend`,
-# resolved inside this very image so the environment markers match linux/py3.11.
+# resolved inside this very image so the environment markers match linux/py3.14.
 # Editing requirements.txt alone does NOT change this layer — regenerate the lock.
 #
 # The `-e ./libs/backtesting.py` line is stripped here on purpose: copying that
@@ -65,7 +73,7 @@ RUN --mount=type=cache,id=all-in-one-uv-cache,target=/root/.cache/uv \
 
 
 # Stage 2: Production image
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.14-slim-bookworm AS runtime
 
 WORKDIR /app
 
