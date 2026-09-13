@@ -54,17 +54,25 @@ export interface PriceDepthLevel {
   sell_size: number;
 }
 
+export type PriceDepthDays = 1 | 5 | 10;
+
 export interface PriceDepthResponse {
   symbol: string;
   session_date: string | null;
+  session_count: number;
   levels: PriceDepthLevel[];
   total_buy_size: number;
   total_sell_size: number;
   note: string | null;
 }
 
-export const fetchPriceDepth = (symbol: string): Promise<PriceDepthResponse> =>
-  apiGet<PriceDepthResponse>(`/trade-flow/depth?symbol=${encodeURIComponent(symbol)}`);
+export const fetchPriceDepth = (
+  symbol: string,
+  days: PriceDepthDays = 1,
+): Promise<PriceDepthResponse> =>
+  apiGet<PriceDepthResponse>(
+    `/trade-flow/depth?symbol=${encodeURIComponent(symbol)}&days=${days}`,
+  );
 
 
 export interface GetTradeFlowParams {

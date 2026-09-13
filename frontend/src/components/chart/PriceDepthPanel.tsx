@@ -1,14 +1,18 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Box, CircularProgress, Stack, Typography } from '@mui/material';
+import { Box, CircularProgress, Stack, ToggleButton, ToggleButtonGroup, Typography } from '@mui/material';
 
-import { fetchPriceDepth, type PriceDepthLevel } from '../../lib/services/tradeFlow';
+import { fetchPriceDepth, type PriceDepthDays, type PriceDepthLevel } from '../../lib/services/tradeFlow';
 
 const BUY = 'var(--color-long)';
 const SELL = 'var(--color-short)';
 const TEXT = 'var(--color-text-primary)';
 const MUTED = 'var(--color-text-tertiary)';
-
+const DEPTH_PERIODS: { days: PriceDepthDays; label: string }[] = [
+  { days: 1, label: 'Current' },
+  { days: 5, label: '5D' },
+  { days: 10, label: '10D' },
+];
 function formatPrice(value: number): string {
   return value.toLocaleString('en-US', { maximumFractionDigits: 2 });
 }
@@ -55,9 +59,10 @@ function SideBar({
 }
 
 export default function PriceDepthPanel({ symbol }: { symbol: string }) {
+  const [days, setDays] = useState<PriceDepthDays>(1);
   const { data, error, isFetching } = useQuery({
-    queryKey: ['priceDepth', symbol],
-    queryFn: () => fetchPriceDepth(symbol),
+    queryKey: ['priceDepth', symbol, days],
+    queryFn: () => fetchPriceDepth(symbol, days),
     enabled: Boolean(symbol),
     staleTime: 30_000,
     refetchInterval: 30_000,
@@ -74,14 +79,46 @@ export default function PriceDepthPanel({ symbol }: { symbol: string }) {
 
   return (
     <Box sx={{ display: 'flex', flexDirection: 'column', minHeight: 0, minWidth: 0, width: '100%' }}>
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ px: 0.75, pb: 0.5, flexShrink: 0 }}>
-        <Typography sx={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.3 }}>
-          PRICE DEPTH
-        </Typography>
-        <Typography sx={{ fontSize: 11.5, color: 'primary.light', fontWeight: 700 }}>
-          {symbol}
-        </Typography>
-        {isFetching && <CircularProgress size={10} />}
+      <Stack
+        direction="row"
+        alignItems="center"
+        justifyContent="space-between"
+        spacing={0.75}
+        sx={{ px: 0.75, pb: 0.5, flexShrink: 0 }}
+      >
+        <Stack direction="row" alignItems="center" spacing={0.75}>
+          <Typography sx={{ fontSize: 11.5, fontWeight: 700, letterSpacing: 0.3 }}>
+            PRICE DEPTH
+          </Typography>
+          <Typography sx={{ fontSize: 11.5, color: 'primary.light', fontWeight: 700 }}>
+            {symbol}
+          </Typography>
+          {isFetching && <CircularProgress size={10} />}
+        </Stack>
+        <ToggleButtonGroup
+          aria-label="Price depth accumulation period"
+          value={days}
+          exclusive
+          size="small"
+          onChange={(_, next: PriceDepthDays | null) => {
+            if (next !== null) setDays(next);
+          }}
+          sx={{
+            '& .MuiToggleButton-root': {
+              px: 0.65,
+              py: 0.15,
+              fontSize: 9,
+              fontWeight: 700,
+              lineHeight: 1.4,
+            },
+          }}
+        >
+          {DEPTH_PERIODS.map((period) => (
+            <ToggleButton key={period.days} value={period.days}>
+              {period.label}
+            </ToggleButton>
+          ))}
+        </ToggleButtonGroup>
       </Stack>
 
       <Stack direction="row" justifyContent="space-between" sx={{ px: 0.75, pb: 0.75, flexShrink: 0 }}>
@@ -171,8 +208,10 @@ export default function PriceDepthPanel({ symbol }: { symbol: string }) {
       </Box>
 
       <Typography sx={{ px: 0.75, pt: 0.75, color: MUTED, fontSize: 10, flexShrink: 0 }}>
-        {data?.session_date ? `Latest session ${data.session_date}` : 'Latest trading session'}
-        {' · executed aggressor size, not resting orders'}
+        {data?.session_count
+          ? `${data.session_count} session${data.session_count === 1 ? '' : 's'} through ${data.session_date}`
+          : 'No trading sessions available'}
+        {' · accumulated executed aggressor size, not resting orders'}
       </Typography>
     </Box>
   );

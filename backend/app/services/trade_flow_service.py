@@ -153,6 +153,7 @@ class PriceDepthLevel(BaseModel):
 class PriceDepthResponse(BaseModel):
     symbol: str
     session_date: Optional[str]
+    session_count: int
     levels: List[PriceDepthLevel]
     total_buy_size: int
     total_sell_size: int
@@ -261,36 +262,43 @@ class TradeFlowService:
             raise
         return pd.DataFrame(result.result_rows, columns=result.column_names)
 
-    def get_price_depth(self, symbol: str) -> PriceDepthResponse:
-        """Return executed buy/sell size grouped by price for the latest session."""
+    def get_price_depth(self, symbol: str, days: int = 1) -> PriceDepthResponse:
+        """Return executed buy/sell size by price over recent trading sessions."""
         sql = """
+            WITH recent_sessions AS (
+                SELECT DISTINCT toDate(sending_time, 'Asia/Ho_Chi_Minh') AS session_date
+                FROM ticks
+                WHERE symbol = {symbol:String}
+                ORDER BY session_date DESC
+                LIMIT {days:UInt8}
+            )
             SELECT
-                formatDateTime(
-                    toDate(sending_time, 'Asia/Ho_Chi_Minh'),
-                    '%Y-%m-%d'
-                ) AS session_date,
+                (
+                    SELECT formatDateTime(max(session_date), '%Y-%m-%d')
+                    FROM recent_sessions
+                ) AS latest_session_date,
+                (SELECT count() FROM recent_sessions) AS session_count,
                 match_price AS price,
                 sumIf(toInt64(match_qty), side = 1) AS buy_size,
                 sumIf(toInt64(match_qty), side = 2) AS sell_size
             FROM ticks
             WHERE symbol = {symbol:String}
               AND side IN (1, 2)
-              AND toDate(sending_time, 'Asia/Ho_Chi_Minh') = (
-                  SELECT max(toDate(sending_time, 'Asia/Ho_Chi_Minh'))
-                  FROM ticks
-                  WHERE symbol = {symbol:String}
+              AND toDate(sending_time, 'Asia/Ho_Chi_Minh') IN (
+                  SELECT session_date FROM recent_sessions
               )
-            GROUP BY session_date, price
+            GROUP BY price
             ORDER BY price DESC
             LIMIT 200
         """
         try:
-            result = self.client.query(sql, parameters={"symbol": symbol})
+            result = self.client.query(sql, parameters={"symbol": symbol, "days": days})
         except DatabaseError as exc:
             if _is_unknown_table(exc):
                 return PriceDepthResponse(
                     symbol=symbol,
                     session_date=None,
+                    session_count=0,
                     levels=[],
                     total_buy_size=0,
                     total_sell_size=0,
@@ -300,19 +308,20 @@ class TradeFlowService:
 
         levels = [
             PriceDepthLevel(
-                price=float(row[1]),
-                buy_size=int(row[2] or 0),
-                sell_size=int(row[3] or 0),
+                price=float(row[2]),
+                buy_size=int(row[3] or 0),
+                sell_size=int(row[4] or 0),
             )
             for row in result.result_rows
         ]
         return PriceDepthResponse(
             symbol=symbol,
             session_date=str(result.result_rows[0][0]) if result.result_rows else None,
+            session_count=int(result.result_rows[0][1]) if result.result_rows else 0,
             levels=levels,
             total_buy_size=sum(level.buy_size for level in levels),
             total_sell_size=sum(level.sell_size for level in levels),
-            note=None if levels else "No executed buy/sell volume for the latest session.",
+            note=None if levels else "No executed buy/sell volume for the selected sessions.",
         )
 
 

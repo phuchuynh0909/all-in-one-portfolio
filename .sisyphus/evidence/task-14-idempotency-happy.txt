@@ -1,2 +1,0 @@
-test_idempotency: PASS
-test_boundary_ticks: PASS

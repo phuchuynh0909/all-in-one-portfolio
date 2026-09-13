@@ -3,8 +3,8 @@ import os
 from datetime import date, timedelta
 from typing import Optional
 
-from clickhouse_connect.driver import Client
-from fastapi import APIRouter, Depends, Query
+from clickhouse_connect.driver.client import Client
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from app.db.clickhouse import get_clickhouse_client
 from app.services.trade_flow_service import (
@@ -41,10 +41,13 @@ def get_trade_flow_service(
 )
 async def get_trade_flow_depth(
     symbol: str = Query(..., description="Symbol, e.g. HPG"),
+    days: int = Query(1, description="Trading sessions to accumulate: 1, 5, or 10"),
     service: TradeFlowService = Depends(get_trade_flow_service),
 ) -> PriceDepthResponse:
-    """Executed buy/sell size by price for the symbol's latest trading session."""
-    return service.get_price_depth(symbol.strip().upper())
+    """Executed buy/sell size accumulated over recent trading sessions."""
+    if days not in (1, 5, 10):
+        raise HTTPException(status_code=422, detail="days must be one of: 1, 5, 10")
+    return service.get_price_depth(symbol.strip().upper(), days)
 
 
 
