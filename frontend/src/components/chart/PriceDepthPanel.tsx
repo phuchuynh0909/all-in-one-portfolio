@@ -125,6 +125,9 @@ export default function PriceDepthPanel({ symbol }: { symbol: string }) {
         <Typography sx={{ color: SELL, fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
           SELL {formatSize(data?.total_sell_size ?? 0)}
         </Typography>
+        <Typography sx={{ color: TEXT, fontSize: 10, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+          TOTAL {formatSize((data?.total_buy_size ?? 0) + (data?.total_sell_size ?? 0))}
+        </Typography>
         <Typography sx={{ color: BUY, fontSize: 10, fontVariantNumeric: 'tabular-nums' }}>
           BUY {formatSize(data?.total_buy_size ?? 0)}
         </Typography>

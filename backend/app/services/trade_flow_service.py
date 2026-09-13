@@ -45,6 +45,7 @@ from loguru import logger
 from pydantic import BaseModel
 
 WINDOWS_VIEW = "trade_flow_windows"
+PRICE_DEPTH_LOT_SIZE = 10
 
 # Features fed to Isolation Forest. Mirrors core.trade_flow.FEATURE_COLUMNS in
 # the worker; kept explicit here so the API does not silently change shape when
@@ -263,7 +264,7 @@ class TradeFlowService:
         return pd.DataFrame(result.result_rows, columns=result.column_names)
 
     def get_price_depth(self, symbol: str, days: int = 1) -> PriceDepthResponse:
-        """Return executed buy/sell size by price over recent trading sessions."""
+        """Return executed buy/sell share volume by price over recent sessions."""
         sql = """
             WITH recent_sessions AS (
                 SELECT DISTINCT toDate(sending_time, 'Asia/Ho_Chi_Minh') AS session_date
@@ -271,6 +272,18 @@ class TradeFlowService:
                 WHERE symbol = {symbol:String}
                 ORDER BY session_date DESC
                 LIMIT {days:UInt8}
+            ), depth_levels AS (
+                SELECT
+                    match_price AS price,
+                    sumIf(toInt64(match_qty), side = 1) AS buy_size,
+                    sumIf(toInt64(match_qty), side = 2) AS sell_size
+                FROM ticks FINAL
+                WHERE symbol = {symbol:String}
+                  AND side IN (1, 2)
+                  AND toDate(sending_time, 'Asia/Ho_Chi_Minh') IN (
+                      SELECT session_date FROM recent_sessions
+                  )
+                GROUP BY price
             )
             SELECT
                 (
@@ -278,16 +291,12 @@ class TradeFlowService:
                     FROM recent_sessions
                 ) AS latest_session_date,
                 (SELECT count() FROM recent_sessions) AS session_count,
-                match_price AS price,
-                sumIf(toInt64(match_qty), side = 1) AS buy_size,
-                sumIf(toInt64(match_qty), side = 2) AS sell_size
-            FROM ticks
-            WHERE symbol = {symbol:String}
-              AND side IN (1, 2)
-              AND toDate(sending_time, 'Asia/Ho_Chi_Minh') IN (
-                  SELECT session_date FROM recent_sessions
-              )
-            GROUP BY price
+                price,
+                buy_size,
+                sell_size,
+                sum(buy_size) OVER () AS total_buy_size,
+                sum(sell_size) OVER () AS total_sell_size
+            FROM depth_levels
             ORDER BY price DESC
             LIMIT 200
         """
@@ -309,18 +318,23 @@ class TradeFlowService:
         levels = [
             PriceDepthLevel(
                 price=float(row[2]),
-                buy_size=int(row[3] or 0),
-                sell_size=int(row[4] or 0),
+                buy_size=int(row[3] or 0) * PRICE_DEPTH_LOT_SIZE,
+                sell_size=int(row[4] or 0) * PRICE_DEPTH_LOT_SIZE,
             )
             for row in result.result_rows
         ]
+        first_row = result.result_rows[0] if result.result_rows else None
         return PriceDepthResponse(
             symbol=symbol,
-            session_date=str(result.result_rows[0][0]) if result.result_rows else None,
-            session_count=int(result.result_rows[0][1]) if result.result_rows else 0,
+            session_date=str(first_row[0]) if first_row else None,
+            session_count=int(first_row[1]) if first_row else 0,
             levels=levels,
-            total_buy_size=sum(level.buy_size for level in levels),
-            total_sell_size=sum(level.sell_size for level in levels),
+            total_buy_size=(
+                int(first_row[5] or 0) * PRICE_DEPTH_LOT_SIZE if first_row else 0
+            ),
+            total_sell_size=(
+                int(first_row[6] or 0) * PRICE_DEPTH_LOT_SIZE if first_row else 0
+            ),
             note=None if levels else "No executed buy/sell volume for the selected sessions.",
         )
 
