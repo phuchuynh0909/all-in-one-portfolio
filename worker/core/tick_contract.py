@@ -19,29 +19,22 @@ SIDE_BUY = 1
 SIDE_SELL = 2
 SIDE_UNKNOWN = 0
 
-# Board of the order book a trade matched on: "G1" is the main continuous book,
-# "G4"/"G7" odd lot, "T1".."T6" put-through (negotiated off-book, and priced
-# accordingly). Feeds spell it two ways — the OpenAPI Trade-Extra frames send
-# "G1" while the legacy stream and the mock source send "BOARD_ID_G1" — so the
-# prefix is stripped here, before the value reaches a column that queries filter
-# on. Two spellings in one LowCardinality column would make `board_id = 'G1'`
-# quietly miss half the rows.
+# Board of the order book a trade matched on. WebSocket frames use "G1", the
+# legacy stream uses "BOARD_ID_G1", and the GraphQL history endpoint returns
+# numeric board 2 for that same continuous book.
 _BOARD_ID_PREFIX = "BOARD_ID_"
-
-# Rows written before board_id existed carry this. It is deliberately not "G1":
-# those rows were ingested from a nine-board subscription, so their board is
-# genuinely unknown rather than known to be the main book.
+_NUMERIC_BOARD_IDS = {"2": "G1"}
 BOARD_UNKNOWN = ""
 
 
 def normalize_board(value) -> str:
-    """Map a raw ``boardId`` to its bare form ("BOARD_ID_G1" -> "G1")."""
+    """Map every known feed spelling to the WebSocket's bare board id."""
     if value is None:
         return BOARD_UNKNOWN
     text = str(value).strip().upper()
     if text.startswith(_BOARD_ID_PREFIX):
         text = text[len(_BOARD_ID_PREFIX):]
-    return text
+    return _NUMERIC_BOARD_IDS.get(text, text)
 
 
 def normalize_tick(raw: dict) -> Optional[dict]:
@@ -52,14 +45,14 @@ def normalize_tick(raw: dict) -> Optional[dict]:
         raw: Raw tick dict from either API or stream parser
 
     Returns:
-        Canonical tick dict with keys:
         - symbol (str)
         - sending_time (datetime UTC-aware)
         - match_price (float)
-        - match_qty (int | None)
-        - side (int | None)
+        - match_qty (int)
+        - side (int)
         - received_at (datetime UTC-aware)
-
+        - board_id (str)
+        - event_sequence (int): DNSE totalVolumeTraded
         Returns None (and logs warning) for malformed/unrecoverable rows.
     """
     try:
@@ -181,6 +174,24 @@ def normalize_tick(raw: dict) -> Optional[dict]:
                 "Cannot detect input style: missing both 'sendingTime' and 'ts'"
             )
             return None
+        event_sequence_raw = raw.get(
+            "totalVolumeTraded", raw.get("event_sequence")
+        )
+        if event_sequence_raw is None or event_sequence_raw == "":
+            logger.warning("Missing totalVolumeTraded/event_sequence in tick payload")
+            return None
+        try:
+            event_sequence = int(float(event_sequence_raw))
+        except (ValueError, TypeError):
+            logger.warning(
+                "Failed to coerce totalVolumeTraded/event_sequence to int: %s",
+                event_sequence_raw,
+            )
+            return None
+        if event_sequence < 0:
+            logger.warning("Negative event sequence: %s", event_sequence)
+            return None
+
 
         received_at = datetime.now(timezone.utc)
 
@@ -191,9 +202,8 @@ def normalize_tick(raw: dict) -> Optional[dict]:
             "match_qty": match_qty if match_qty is not None else 0,
             "side": side,
             "received_at": received_at,
-            # Both input styles spell the field "boardId"; absent in older
-            # stream payloads, which is what BOARD_UNKNOWN records.
             "board_id": normalize_board(raw.get("boardId")),
+            "event_sequence": event_sequence,
         }
 
     except Exception as e:
@@ -211,12 +221,7 @@ def to_clickhouse_tuple(tick: dict) -> tuple:
     Returns:
         Tuple in TICKS_ARROW_SCHEMA column order:
         (symbol, sending_time, match_price, match_qty, side, received_at,
-         board_id)
-
-    ``board_id`` is last because it was added after the other six: the column
-    goes at the end of the ClickHouse table too, so an existing table takes it
-    as a plain ADD COLUMN and every explicit column list stays valid. Read with
-    ``.get`` so a dict built before this field existed still converts.
+         board_id, event_sequence)
     """
     return (
         tick["symbol"],
@@ -226,4 +231,5 @@ def to_clickhouse_tuple(tick: dict) -> tuple:
         tick["side"],
         tick["received_at"],
         tick.get("board_id", BOARD_UNKNOWN),
+        tick["event_sequence"],
     )

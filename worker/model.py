@@ -53,27 +53,19 @@ ISP_ALERT_CLICKHOUSE_ORDER_BY = "symbol, ts"
 
 TICKS_ARROW_SCHEMA = pa.schema(
     [
-        # Plain string on the wire; ClickHouse converts it into the table's
-        # LowCardinality(String) column on insert. Arrow dictionary encoding
-        # also works but buys nothing here — the batches are small.
         pa.field("symbol", pa.string(), nullable=False),
         pa.field("sending_time", pa.timestamp("us", tz="UTC"), nullable=False),
         pa.field("match_price", pa.float64(), nullable=False),
-        # Non-nullable: ClickHouse ORDER BY does not allow Nullable columns.
-        # Use 0 as the sentinel value for unknown/missing qty.
         pa.field("match_qty", pa.int64(), nullable=False),
-        # Non-nullable: use 0 as sentinel (0=unknown, 1=BUY, 2=SELL).
         pa.field("side", pa.int32(), nullable=False),
         pa.field("received_at", pa.timestamp("us", tz="UTC"), nullable=False),
-        # Order book the trade matched on — "G1" main continuous, "G4"/"G7"
-        # odd lot, "T1".."T6" put-through. Empty for rows written before this
-        # column existed. Last in the tuple because it was added last; see
-        # TICKS_ADD_BOARD_ID_DDL.
         pa.field("board_id", pa.string(), nullable=False),
+        # DNSE cumulative volume distinguishes same-timestamp executions. The
+        # storage identity also includes time because auctions can reset it.
+        pa.field("event_sequence", pa.uint64(), nullable=False),
     ]
 )
 
-# Per-column codecs are benchmarked, not guessed — see TICKS_CREATE_TABLE_DDL.
 TICKS_CLICKHOUSE_SCHEMA = """
     symbol LowCardinality(String) CODEC(ZSTD(1)),
     sending_time DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
@@ -82,58 +74,41 @@ TICKS_CLICKHOUSE_SCHEMA = """
     side Int32 CODEC(T64, ZSTD(1)),
     received_at DateTime64(6, 'UTC') CODEC(ZSTD(1)),
     board_id LowCardinality(String) DEFAULT '' CODEC(ZSTD(1)),
+    event_sequence UInt64 CODEC(Delta, ZSTD(1)),
 """
 
 TICKS_CLICKHOUSE_TABLE = "ticks"
 
-TICKS_CLICKHOUSE_ORDER_BY = "symbol, sending_time, match_price, match_qty, side"
+# ReplacingMergeTree uses the full sorting key as event identity. DNSE cumulative
+# volume distinguishes same-timestamp executions; sending_time distinguishes
+# sequence resets between auction phases. Price, quantity, and side remain
+# replaceable values.
+TICKS_CLICKHOUSE_ORDER_BY = (
+    "symbol, toDate(sending_time), board_id, event_sequence, sending_time"
+)
+# Migration-only namespace for rows copied from the pre-identity table. A
+# completed API reconciliation replaces these with real DNSE sequences.
+LEGACY_EVENT_SEQUENCE_START = 1 << 63
 
-# Codecs below were picked by benchmarking every plausible candidate against 5M
-# real tick rows spread over ~200 symbols (the post-watchlist shape), measuring
-# system.parts_columns. Two results are counter-intuitive enough to record:
-#
-#   * DoubleDelta LOSES on every column here. It encodes the second derivative,
-#     so it only pays when intervals are near-constant. Ticks are irregular, and
-#     because ORDER BY leads with `symbol`, sending_time restarts at every
-#     symbol boundary — ~200 resets per part. Measured vs plain ZSTD(1):
-#     sending_time 90%, match_qty 142%, received_at 124%.
-#   * Gorilla LOSES on match_price (115% of plain ZSTD). Its XOR output is
-#     less compressible for the round, repeated prices in this tape than the
-#     raw values are; FPC merely ties ZSTD (99%), so neither earns its place.
-#
-# Winners, vs plain ZSTD(1): Delta on sending_time 79%, T64 on match_qty 77%,
-# T64 on side 75%. Floats and received_at keep plain ZSTD(1).
-# Re-measure before changing these — the answer depends on the sort order.
+# Existing column codecs came from the prior 5M-row benchmark. The new sorting
+# key prioritizes stable event identity over timestamp locality; re-benchmark
+# before changing codecs rather than assuming the old ratios still hold.
 TICKS_CREATE_TABLE_DDL = """
 CREATE TABLE IF NOT EXISTS {database}.{table} (
-    -- ~200 distinct symbols (watchlist + VN30F contracts): well inside the
-    -- range where LowCardinality's dictionary encoding pays off.
     symbol LowCardinality(String) CODEC(ZSTD(1)),
-    -- Delta, not DoubleDelta: irregular tick spacing + per-symbol resets.
     sending_time DateTime64(6, 'UTC') CODEC(Delta, ZSTD(1)),
-    -- Gorilla/FPC measured no better than plain ZSTD on this price tape.
     match_price Float64 CODEC(ZSTD(1)),
     match_qty Int64 CODEC(T64, ZSTD(1)),
     side Int32 CODEC(T64, ZSTD(1)),
-    -- Insert-ordered, so unsorted within a part: delta codecs backfire.
     received_at DateTime64(6, 'UTC') CODEC(ZSTD(1)),
-    -- Which order book matched the trade: "G1" main continuous, "G4"/"G7" odd
-    -- lot, "T1".."T6" put-through (negotiated off-book). A handful of distinct
-    -- values, so LowCardinality costs almost nothing. Deliberately NOT in the
-    -- ORDER BY: that tuple is the ReplacingMergeTree dedup key, and the codecs
-    -- above were benchmarked against this exact sort order.
-    board_id LowCardinality(String) DEFAULT '' CODEC(ZSTD(1))
+    board_id LowCardinality(String) DEFAULT '' CODEC(ZSTD(1)),
+    event_sequence UInt64 CODEC(Delta, ZSTD(1))
 )
 ENGINE = ReplacingMergeTree(received_at)
-ORDER BY (symbol, sending_time, match_price, match_qty, side)
+ORDER BY (symbol, toDate(sending_time), board_id, event_sequence, sending_time)
 PARTITION BY toYYYYMM(sending_time)
 """
 
-# CREATE TABLE IF NOT EXISTS does nothing to a table that already exists, so an
-# established deployment needs this as well to gain the column. Adding a column
-# is metadata-only in ClickHouse — no rewrite of existing parts — and existing
-# rows read back as '' (board unknown, not "G1": they were ingested from a
-# nine-board subscription).
 TICKS_ADD_BOARD_ID_DDL = """
 ALTER TABLE {database}.{table}
 ADD COLUMN IF NOT EXISTS board_id LowCardinality(String) DEFAULT '' CODEC(ZSTD(1))

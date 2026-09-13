@@ -265,7 +265,7 @@ def _warn_rejected_time(value) -> None:
 # function has no client and so no subscription set to consult. These three
 # fields are what we actually consume; other channels on the same socket
 # (top_price, ohlc, market_index) carry no ``matchPrice`` and are excluded by it.
-TRADE_REQUIRED_FIELDS = ("symbol", "matchPrice", "time")
+TRADE_REQUIRED_FIELDS = ("symbol", "matchPrice", "time", "totalVolumeTraded")
 _ENVELOPE_KEYS = ("data", "d", "payload")
 
 
@@ -300,7 +300,12 @@ def trade_extra_to_tick_payload(data: dict) -> Optional[dict]:
     """
     symbol = data.get("symbol")
     sending_time = _time_to_iso(data.get("time"))
-    if not symbol or sending_time is None or data.get("matchPrice") is None:
+    if (
+        not symbol
+        or sending_time is None
+        or data.get("matchPrice") is None
+        or data.get("totalVolumeTraded") is None
+    ):
         return None
     return {
         "symbol": symbol,
@@ -308,10 +313,8 @@ def trade_extra_to_tick_payload(data: dict) -> Optional[dict]:
         "matchPrice": data.get("matchPrice"),
         "matchQtty": data.get("matchQtty"),
         "side": normalize_side(data.get("side")),
-        # Passed through for `normalize_tick`, which normalizes the spelling and
-        # puts it in the ticks table's board_id column. Without it a put-through
-        # print is indistinguishable from a continuous-market trade downstream.
         "boardId": data.get("boardId"),
+        "totalVolumeTraded": data.get("totalVolumeTraded"),
     }
 
 

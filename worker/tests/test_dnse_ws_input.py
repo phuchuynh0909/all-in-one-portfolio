@@ -262,6 +262,7 @@ def _te_frame(symbol="FPT", price=100.0, qty=1.0, side="BUY", seconds=1_779_766_
         "matchQtty": qty,
         "side": side,
         "avgPrice": 2023.92,
+        "totalVolumeTraded": int(qty),
         "time": {"Seconds": seconds, "Nanos": 72_000_000},
     }
 
@@ -399,8 +400,8 @@ def test_documented_payload_reaches_the_queue_and_normalizes():
     assert tick["symbol"] == "41I1G6000"
     assert tick["match_price"] == 2022.5
     assert tick["side"] == SIDE_SELL
-    # Float matchQtty (1.0) must land as an int for the Int64 column.
     assert tick["match_qty"] == 1 and isinstance(tick["match_qty"], int)
+    assert tick["event_sequence"] == 55913
     assert tick["sending_time"].year == 2026
 
 

@@ -41,7 +41,8 @@ SHADOW_TABLE = "ticks_repartition"
 BACKUP_TABLE = "ticks_premigration"
 
 TICKS_COLUMNS = (
-    "symbol, sending_time, match_price, match_qty, side, received_at"
+    "symbol, sending_time, match_price, match_qty, side, received_at, "
+    "board_id, event_sequence"
 )
 
 
@@ -97,11 +98,11 @@ def _print_stats(label: str, s: dict | None) -> None:
 
 
 def _dedup_count(cl, db: str, table: str) -> int:
-    """Distinct ORDER BY keys — the row count after ReplacingMergeTree collapses."""
+    """Distinct event identities — the row count after replacement."""
     return int(
         cl.command(
             f"""
-            SELECT uniqExact((symbol, sending_time, match_price, match_qty, side))
+            SELECT uniqExact((symbol, toDate(sending_time), board_id, event_sequence))
             FROM {db}.{table}
             """
         )

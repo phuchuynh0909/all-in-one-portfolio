@@ -386,7 +386,8 @@ class ReconcilerConfig:
     page_limit: int
     max_retries: int
     reconciler_hour: int
-    force_rerun: bool
+    reconciler_minute: int
+    poll_seconds: float
 
     @classmethod
     def from_env(cls) -> "ReconcilerConfig":
@@ -399,8 +400,8 @@ class ReconcilerConfig:
             page_limit=int(os.getenv("RECONCILER_PAGE_LIMIT", "100000")),
             max_retries=int(os.getenv("RECONCILER_MAX_RETRIES", "1")),
             reconciler_hour=int(os.getenv("RECONCILER_HOUR", "15")),
-            force_rerun=os.getenv("RECONCILER_FORCE_RERUN", "0")
-            in ("1", "true", "True"),
+            reconciler_minute=int(os.getenv("RECONCILER_MINUTE", "5")),
+            poll_seconds=float(os.getenv("RECONCILER_POLL_SECONDS", "60")),
         )
 
 

@@ -22,37 +22,37 @@ class ReconcilerMetrics:
         return asdict(self)
 
 
-# Without FINAL: cheaper but may report rows awaiting background merge
+# Without FINAL: reports multiple stored versions of one DNSE event identity.
 DUPLICATE_AUDIT_SQL = """
 SELECT
     symbol,
+    toDate(sending_time) AS session_date,
+    board_id,
+    event_sequence,
     sending_time,
-    match_price,
-    match_qty,
-    side,
-    count()       AS version_count,
+    count() AS version_count,
     max(received_at) AS latest_received
 FROM {database}.{table}
 WHERE toYYYYMMDD(sending_time) = toYYYYMMDD(toDate('{date}'))
-GROUP BY symbol, sending_time, match_price, match_qty, side
+GROUP BY symbol, session_date, board_id, event_sequence, sending_time
 HAVING count() > 1
 ORDER BY version_count DESC
 LIMIT 1000
 """.strip()
 
-# With FINAL: expensive but accurate — use only for explicit exact audit checks
+# With FINAL: an exact check that no identity collision remains after replacement.
 DUPLICATE_AUDIT_FINAL_SQL = """
 SELECT
     symbol,
+    toDate(sending_time) AS session_date,
+    board_id,
+    event_sequence,
     sending_time,
-    match_price,
-    match_qty,
-    side,
-    count()       AS version_count,
+    count() AS version_count,
     max(received_at) AS latest_received
 FROM {database}.{table} FINAL
 WHERE toYYYYMMDD(sending_time) = toYYYYMMDD(toDate('{date}'))
-GROUP BY symbol, sending_time, match_price, match_qty, side
+GROUP BY symbol, session_date, board_id, event_sequence, sending_time
 HAVING count() > 1
 ORDER BY version_count DESC
 LIMIT 1000
@@ -90,16 +90,16 @@ def run_duplicate_audit(
     sql = DUPLICATE_AUDIT_SQL.format(database=database, table=table, date=date_str)
     result = client.query(sql)
     rows = result.result_rows
-
     duplicate_key_groups = len(rows)
+
     max_version_count = max((r[5] for r in rows), default=0)
     sample_keys = [
         {
             "symbol": r[0],
-            "sending_time": str(r[1]),
-            "match_price": r[2],
-            "match_qty": r[3],
-            "side": r[4],
+            "session_date": str(r[1]),
+            "board_id": r[2],
+            "event_sequence": r[3],
+            "sending_time": str(r[4]),
             "version_count": r[5],
         }
         for r in rows[:5]

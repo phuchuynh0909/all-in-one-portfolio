@@ -34,6 +34,7 @@ from core.watchlist import load_symbols
 from model import (
     TICKS_ADD_BOARD_ID_DDL,
     TICKS_ARROW_SCHEMA,
+    TICKS_CLICKHOUSE_ORDER_BY,
     TICKS_CLICKHOUSE_TABLE,
     TICKS_CREATE_TABLE_DDL,
 )
@@ -163,6 +164,22 @@ def ensure_ticks_table() -> None:
             database=config.clickhouse.database, table=TICKS_CLICKHOUSE_TABLE
         )
     )
+    sorting_key = client.query(
+        f"""
+        SELECT sorting_key
+        FROM system.tables
+        WHERE database = '{config.clickhouse.database}'
+          AND name = '{TICKS_CLICKHOUSE_TABLE}'
+        """
+    ).result_rows[0][0]
+    if sorting_key.replace(" ", "") != TICKS_CLICKHOUSE_ORDER_BY.replace(" ", ""):
+        raise RuntimeError(
+            f"{config.clickhouse.database}.{TICKS_CLICKHOUSE_TABLE} uses sorting "
+            f"key {sorting_key!r}; expected {TICKS_CLICKHOUSE_ORDER_BY!r}. "
+            "Stop ingestion and run "
+            "python scripts/migrate_ticks_event_identity.py --swap "
+            "--confirm-ingest-stopped"
+        )
 
 
 # ---------- Build dataflow ----------

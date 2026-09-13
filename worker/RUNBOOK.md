@@ -1,7 +1,14 @@
 # Tick Data ClickHouse Sync Runbook
 
 ## Overview
-This pipeline uses two workers to sync tick data. The `tick_ingest.py` script runs a continuous Bytewax stream, consuming the DNSE OpenAPI Trade-Extra **WebSocket** feed (requires `DNSE_API_KEY` / `DNSE_API_SECRET`). The `reconciler.py` script runs once at 15:00 ICT. `tick_ingest` covers every symbol in `watchlist.json` plus the current VN30F front-month contract; the reconciler still back-fills only `TICK_SYMBOL`.
+
+`tick_ingest.py` continuously stores DNSE Trade-Extra WebSocket events.
+`scheduled_backfill.py` discovers every historical symbol/date pair that still
+has migrated legacy identities, plus every symbol in the latest completed data
+date. It reconciles them from the authoritative GraphQL history endpoint at
+15:05 Asia/Ho_Chi_Minh on weekdays. Both feeds carry DNSE
+`totalVolumeTraded`, normalized as `event_sequence`, so replayed events replace
+cleanly while otherwise-identical legitimate executions remain distinct.
 
 > **Working directory**: All commands must be run from inside `worker/` (or use `PYTHONPATH=worker` from the project root). Bytewax locates modules by name on the Python path.
 
@@ -10,39 +17,57 @@ This pipeline uses two workers to sync tick data. The `tick_ingest.py` script ru
 # All commands below assume you are inside the worker/ directory
 cd worker
 
-# 1. Create ClickHouse table (optional — tick_ingest does this itself on startup)
-python -c "from workers.tick_ingest import ensure_ticks_table; ensure_ticks_table()"
+# 1. Existing installations only: stop ingestion and migrate event identity
+python scripts/migrate_ticks_event_identity.py --swap --confirm-ingest-stopped
 
-# 2. Start stream ingestor (keep running in background)
+# 2. Start the live ingestor
 python -m bytewax.run workers.tick_ingest:flow
 
-# 3. Run reconciler (at or after 15:00 ICT)
-python workers/reconciler.py
+# 3. Start the all-symbol after-session scheduler
+python -m workers.scheduled_backfill
 
-# 4. Run full pipeline with audit (recommended)
-python scripts/run_pipeline.py
+# 4. Run the complete discovered backlog immediately
+python -m workers.scheduled_backfill --once --force
+
+# 5. Reconcile an explicit symbol/range
+python scripts/backfill_ticks.py --symbol BCM --start 2026-09-11 --end 2026-09-11
 ```
 
 ## Normal Daily Operations
-The stream ingestor runs continuously during the trading session. Run the reconciler once at 15:00 ICT using `python reconciler.py`. You can also use a cron job.
 
-All scripts must be run from inside the `worker/` directory (or with `PYTHONPATH=worker`).
+Docker Compose runs `worker-tick-backfill`. It polls once per minute and runs at
+or after 15:05 ICT on weekdays. Each run discovers:
 
-Cron example:
-`0 8 * * 1-5 cd /path/to/worker && python workers/reconciler.py` (08:00 UTC = 15:00 ICT)
+- every historical `(session date, symbol)` pair still containing migration-only
+  legacy rows; and
+- every symbol present in the latest completed data date.
+
+Successful historical pairs leave the backlog when their legacy rows are
+replaced. Derived-table repair dates are persisted before tick mutation, so a
+restart retries an interrupted repair. The daily completion marker is written
+only after every discovered pair and repair succeeds.
+
+Configuration:
+
+- `RECONCILER_HOUR=15`, `RECONCILER_MINUTE=5` — ICT trigger
+- `RECONCILER_POLL_SECONDS=60` — scheduler polling interval
 
 ## Rerun and Recovery
+
 ```bash
 cd worker
 
-# Rerun reconciler for today (force bypass schedule guard)
-python workers/reconciler.py --force
+# Preview one symbol/day; fetches DNSE and reads ClickHouse, but does not write
+python scripts/backfill_ticks.py --symbol BCM \
+  --start 2026-09-11 --end 2026-09-11 --dry-run
 
-# Rerun for a specific past date
-python workers/reconciler.py --date 2026-03-25 --force
+# Apply one symbol/day
+python scripts/backfill_ticks.py --symbol BCM \
+  --start 2026-09-11 --end 2026-09-11
 
-# Preview what reconciler would do (no writes)
-python workers/reconciler.py --dry-run --force
+# Restore the pre-migration table; stop ingestion first
+python scripts/migrate_ticks_event_identity.py \
+  --rollback --confirm-ingest-stopped
 ```
 
 ## Audit and Monitoring
@@ -52,24 +77,14 @@ cd worker
 # Check for duplicates and merge health
 python scripts/run_audit.py --date 2026-03-26
 
-# Save evidence to file
-python scripts/run_audit.py --date 2026-03-26 --output ../.sisyphus/evidence/task-11-audit-happy.txt
-
-# Full pipeline with audit
-python scripts/run_pipeline.py --date 2026-03-26
 ```
 
 ## Rollback and Disable
-To disable the reconciler, set the environment variable `RECONCILER_FORCE_RERUN=0` and stop running `reconciler.py`. Stop the Bytewax process to disable the stream ingestor. Set `TICK_DRY_RUN=1` in your environment to prevent any writes during a rollback.
 
-## Evidence Capture Checklist
-Check these paths for evidence:
-- task-1: `task-1-schema-check.txt` (schema validation)
-- task-7: `task-7-ingest-happy.txt` (stream inserts > 0)
-- task-8: `task-8-fetch-happy.log` (reconciler fetch)
-- task-10: `task-10-patch-happy.txt` (mismatch count is 0)
-- task-11: `task-11-audit-happy.txt` (audit PASS)
-- task-14: `task-14-idempotency-happy.txt` (second run patches count is 0)
+Stop `worker-tick-backfill` to disable scheduled writes. Stop
+`worker-tick-ingest` before swapping or rolling back the tick table. The
+migration retains `ticks_pre_event_identity` until
+`migrate_ticks_event_identity.py --drop-old` is run.
 
 ## Troubleshooting
 Common issues and fixes:
@@ -79,12 +94,19 @@ Common issues and fixes:
    cd worker && python -m bytewax.run tick_ingest:flow
    ```
 
-2. **Schedule guard**: If `reconciler.py` says "not running", use the `--force` flag.
+2. **Schedule guard**: the automatic job runs only on weekdays at or after the
+   configured ICT trigger and only once per date.
 
-3. **ClickHouse connection failed**: Check `CLICKHOUSE_HOST`, `PORT`, `USER`, and `PASSWORD` in your `.env` file.
+3. **Old sorting key**: stop ingestion and run
+   `python scripts/migrate_ticks_event_identity.py --swap --confirm-ingest-stopped`.
 
-4. **API returns null data**: This is usually an authentication error. Check `ENTRADE_USER` and `ENTRADE_PASSWORD` in your `.env` file.
+4. **ClickHouse connection failed**: check `CLICKHOUSE_HOST`, `PORT`, `USER`,
+   and `PASSWORD`.
 
-5. **High duplicate count**: Run `python run_audit.py --date YYYY-MM-DD`. Wait for the ClickHouse background merge to finish, then rerun.
+5. **API returns null data**: inspect the DNSE response and network access; the
+   history endpoint used here does not require trading credentials.
 
-6. **Table doesn't exist**: Run the `CREATE TABLE` command from Quick Start. If `bytewax.clickhouse` logs `Table 'ticks' exists` on import, the table is already present and the step can be skipped.
+6. **Duplicate audit**: duplicate groups now mean multiple stored versions of
+   one `(symbol, date, board_id, event_sequence, sending_time)` identity.
+   `sending_time` disambiguates cumulative-volume resets between auction phases;
+   `FINAL` resolves actual replays.

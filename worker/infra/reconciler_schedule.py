@@ -1,7 +1,8 @@
-"""Schedule management for the 15:00 reconciler job.
+"""Once-per-session scheduling state for tick reconciliation.
 
-Manages once-per-day run state to prevent duplicate runs and support explicit rerun mode.
-State is stored in state_dir/reconciler_run_state.json relative to this file's parent directory.
+The scheduler runs on weekdays after the configured exchange-local trigger and
+persists the completed session date so container restarts do not duplicate a
+run.
 """
 
 import json
@@ -38,83 +39,98 @@ def _read_state() -> dict:
         logger.warning(f"Failed to read state file: {e}")
         return {}
 
+def _write_state(state: dict) -> None:
+    """Atomically persist scheduler state."""
+    _ensure_state_dir()
+    temporary = STATE_FILE.with_suffix(".tmp")
+    try:
+        with open(temporary, "w") as file:
+            json.dump(state, file, indent=2)
+        temporary.replace(STATE_FILE)
+    except IOError as exc:
+        logger.error("Failed to write state file: %s", exc)
+        raise
+
 
 def should_run_today(
     tz_name: str = "Asia/Ho_Chi_Minh",
     trigger_hour: int = 15,
+    trigger_minute: int = 5,
     force: bool = False,
+    now: datetime | None = None,
 ) -> bool:
-    """Determine if the reconciler should run today.
+    """Return whether today's weekday session is due and not yet completed."""
+    if not 0 <= trigger_hour <= 23:
+        raise ValueError("trigger_hour must be between 0 and 23")
+    if not 0 <= trigger_minute <= 59:
+        raise ValueError("trigger_minute must be between 0 and 59")
 
-    Logic:
-    1. Get current local datetime in tz_name timezone
-    2. Return False if current time < trigger_hour:00 local
-    3. Read state file; if today's date already marked done AND force=False → return False
-    4. Return True otherwise
-
-    Args:
-        tz_name: Timezone name (e.g., "Asia/Ho_Chi_Minh"). Defaults to "Asia/Ho_Chi_Minh".
-        trigger_hour: Hour (0-23) when reconciler should run. Defaults to 15 (3 PM).
-        force: If True, bypass the already-ran-today guard. Defaults to False.
-
-    Returns:
-        bool: True if reconciler should run, False otherwise.
-    """
     tz = ZoneInfo(tz_name)
-    now = datetime.now(tz)
+    local_now = datetime.now(tz) if now is None else now.astimezone(tz)
 
     if force:
         logger.info("force=True: bypassing all guards")
         return True
 
-    if now.hour < trigger_hour:
+    if local_now.weekday() >= 5:
+        logger.debug("Current day is a weekend; no exchange session to reconcile")
+        return False
+
+    if (local_now.hour, local_now.minute) < (trigger_hour, trigger_minute):
         logger.debug(
-            "Current time %d:%02d is before trigger hour %d",
-            now.hour,
-            now.minute,
+            "Current time %02d:%02d is before trigger %02d:%02d",
+            local_now.hour,
+            local_now.minute,
             trigger_hour,
+            trigger_minute,
         )
         return False
 
-    # Check if we already ran today
-    today_str = now.date().isoformat()
+    today_str = local_now.date().isoformat()
     state = _read_state()
-    last_run_date = state.get("last_run_date")
-
-    if last_run_date == today_str:
-        logger.info(f"Already ran today ({today_str}), skipping")
+    if state.get("last_run_date") == today_str:
+        logger.info("Already ran today (%s), skipping", today_str)
         return False
 
-    logger.info(f"Ready to run reconciler for {today_str}")
+    logger.info("Ready to run reconciler for %s", today_str)
     return True
 
 
 def mark_run_done(date_str: str) -> None:
-    """Mark that the reconciler has run for the given date.
+    """Mark the daily scheduler run complete without losing repair state."""
+    state = _read_state()
+    state.update(
+        {
+            "last_run_date": date_str,
+            "last_run_at": datetime.now(ZoneInfo("UTC")).isoformat(),
+        }
+    )
+    _write_state(state)
+    logger.info("Marked reconciler run done for %s", date_str)
 
-    Writes to state file with format:
-    {"last_run_date": "YYYY-MM-DD", "last_run_at": "ISO8601_UTC"}
 
-    Args:
-        date_str: Date string in YYYY-MM-DD format (typically today's date).
-    """
-    _ensure_state_dir()
+def get_pending_repair_dates() -> tuple[str, ...]:
+    """Return session dates whose derived tables still need rebuilding."""
+    pending = _read_state().get("pending_repair_dates", [])
+    return tuple(sorted(str(value) for value in pending))
 
-    # Get current UTC time in ISO8601 format
-    now_utc = datetime.now(ZoneInfo("UTC"))
 
-    state = {
-        "last_run_date": date_str,
-        "last_run_at": now_utc.isoformat(),
-    }
+def mark_repair_pending(date_str: str) -> None:
+    """Durably record a repair before mutating that session's ticks."""
+    state = _read_state()
+    pending = {str(value) for value in state.get("pending_repair_dates", [])}
+    pending.add(date_str)
+    state["pending_repair_dates"] = sorted(pending)
+    _write_state(state)
 
-    try:
-        with open(STATE_FILE, "w") as f:
-            json.dump(state, f, indent=2)
-        logger.info(f"Marked reconciler run done for {date_str}")
-    except IOError as e:
-        logger.error(f"Failed to write state file: {e}")
-        raise
+
+def mark_repair_done(date_str: str) -> None:
+    """Clear a derived-table repair after every rebuild succeeds."""
+    state = _read_state()
+    pending = {str(value) for value in state.get("pending_repair_dates", [])}
+    pending.discard(date_str)
+    state["pending_repair_dates"] = sorted(pending)
+    _write_state(state)
 
 
 def get_last_run_date() -> Optional[str]:

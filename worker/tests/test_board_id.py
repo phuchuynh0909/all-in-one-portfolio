@@ -33,6 +33,7 @@ def _api_tick(board=None, **over):
         "matchPrice": 100.5,
         "matchQtty": 300,
         "side": "B",
+        "totalVolumeTraded": 300,
         **over,
     }
     if board is not None:
@@ -46,10 +47,10 @@ def _api_tick(board=None, **over):
 # The OpenAPI WebSocket sends "G1"; the legacy stream and the mock source send
 # "BOARD_ID_G1". Two spellings in one LowCardinality column would make
 # `board_id = 'G1'` quietly miss half the rows.
-# ---------------------------------------------------------------------------
-def test_normalize_board_strips_the_legacy_prefix():
+def test_normalize_board_maps_every_g1_feed_spelling():
     assert normalize_board("BOARD_ID_G1") == "G1"
     assert normalize_board("G1") == "G1"
+    assert normalize_board(2) == "G1"
     assert normalize_board("board_id_t3") == "T3"
     assert normalize_board(" g4 ") == "G4"
 
@@ -62,6 +63,9 @@ def test_both_feed_spellings_normalize_to_one_value():
     ws = normalize_tick(_api_tick(board="G1"))
     legacy = normalize_tick(_api_tick(board="BOARD_ID_G1"))
     assert ws["board_id"] == legacy["board_id"] == "G1"
+
+    graphql = normalize_tick(_api_tick(board=2))
+    assert graphql["board_id"] == "G1"
 
 
 # ---------------------------------------------------------------------------
@@ -76,19 +80,21 @@ def test_pre_existing_payloads_without_a_board_are_unknown_not_g1():
     assert normalize_tick(_api_tick())["board_id"] == BOARD_UNKNOWN
 
 
-def test_clickhouse_tuple_puts_board_id_last():
+def test_clickhouse_tuple_keeps_board_and_event_sequence():
     tick = normalize_tick(_api_tick(board="G1"))
     row = to_clickhouse_tuple(tick)
-    assert len(row) == len(TICKS_ARROW_SCHEMA) == 7
-    assert row[-1] == "G1"
-    assert [f.name for f in TICKS_ARROW_SCHEMA][-1] == "board_id"
+    assert len(row) == len(TICKS_ARROW_SCHEMA) == 8
+    assert row[-2:] == ("G1", 300)
+    assert [field.name for field in TICKS_ARROW_SCHEMA][-2:] == [
+        "board_id",
+        "event_sequence",
+    ]
 
 
-def test_clickhouse_tuple_tolerates_a_dict_from_before_the_column():
-    """A canonical dict built by older code still converts."""
+def test_clickhouse_tuple_tolerates_a_dict_from_before_the_board_column():
     tick = normalize_tick(_api_tick(board="G1"))
     del tick["board_id"]
-    assert to_clickhouse_tuple(tick)[-1] == BOARD_UNKNOWN
+    assert to_clickhouse_tuple(tick)[-2] == BOARD_UNKNOWN
 
 
 def test_rows_with_board_id_build_an_arrow_block():
@@ -106,6 +112,7 @@ def test_websocket_payload_passes_board_through():
         "matchQtty": 1.0,
         "side": "SELL",
         "time": {"Seconds": 1779766822, "Nanos": 0},
+        "totalVolumeTraded": 1,
     }
     payload = trade_extra_to_tick_payload(frame)
     assert payload["boardId"] == "G4"

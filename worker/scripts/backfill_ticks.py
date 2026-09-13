@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
 """
-Backfill VN30F tick data from DNSE API into ClickHouse.
+Backfill authoritative DNSE ticks into ClickHouse.
 
 Usage:
-    python backfill_ticks.py
-    python backfill_ticks.py --start 2025-01-01 --end 2026-03-26
-    python backfill_ticks.py --dry-run
-    python backfill_ticks.py --show-calendar
+    python scripts/backfill_ticks.py --symbol BCM --start 2026-09-11 --end 2026-09-11
+    python scripts/backfill_ticks.py --symbol BCM --symbol FPT --dry-run
+    python scripts/backfill_ticks.py --show-calendar
 
-Contract symbols are resolved automatically per date via vn30f_symbol.
-After backfill, run merge to build VN30F1M:
-    python ohlc_5m.py --date-from "2025-01-01 00:00:00" --date-to "2026-03-27 00:00:00"
-    then: python -c "from ohlc_5m import vn30f1m_pipeline; vn30f1m_pipeline('2025-01-01')"
+When no ``--symbol`` is supplied, the VN30F front-month contract is resolved
+per date. Every symbol/date is reconciled by DNSE event identity.
 """
 
 import argparse
@@ -24,9 +21,8 @@ _root = Path(__file__).resolve().parent.parent
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
     
-from infra.audit_queries import print_metrics
 from workers.reconciler import run_reconciler
-from core.vn30f_symbol import encode, front_month, third_thursday
+from core.vn30f_symbol import encode, front_month, symbol_for_date
 
 
 def show_calendar(start: date, end: date) -> None:
@@ -49,13 +45,20 @@ def show_calendar(start: date, end: date) -> None:
     print()
 
 
-def run(start: date, end: date, dry_run: bool = False) -> None:
+def run(
+    start: date,
+    end: date,
+    dry_run: bool = False,
+    symbols: tuple[str, ...] = (),
+) -> int:
     total_days = (end - start).days + 1
     trading_days = sum(
         1 for i in range(total_days) if (start + timedelta(days=i)).weekday() < 5
     )
+    total_runs = trading_days * max(1, len(symbols))
 
-    print(f"\nBackfill: {start} → {end}  ({trading_days} trading days)")
+    scope = ",".join(symbols) if symbols else "VN30F front month"
+    print(f"\nBackfill: {start} → {end}  ({trading_days} trading days; {scope})")
     if dry_run:
         print("DRY-RUN: will fetch from API but not write to ClickHouse\n")
 
@@ -68,23 +71,25 @@ def run(start: date, end: date, dry_run: bool = False) -> None:
             current += timedelta(days=1)
             continue
 
-        done += 1
-        pct = done / trading_days * 100
-        m = run_reconciler(current.isoformat(), dry_run=dry_run)
-
-        total_fetched += m.fetched_rows
-        total_patched += m.patched_rows if not dry_run else 0
-        total_failed += m.failed_rows
-
-        status = "✓" if m.failed_rows == 0 else "✗"
-        if m.fetched_rows > 0 or m.failed_rows > 0:
-            print(
-                f"[{done:3d}/{trading_days} {pct:5.1f}%] {status} {current}  "
-                f"fetched={m.fetched_rows:5d}  patched={m.patched_rows:5d}  "
-                f"failed={m.failed_rows}  {m.duration_s:.1f}s"
+        day_symbols = symbols or (symbol_for_date(current),)
+        for symbol in day_symbols:
+            done += 1
+            pct = done / total_runs * 100
+            m = run_reconciler(
+                current.isoformat(), dry_run=dry_run, symbol=symbol
             )
-        else:
-            print(f"[{done:3d}/{trading_days} {pct:5.1f}%]   {current}  (no data)")
+
+            total_fetched += m.fetched_rows
+            total_patched += m.patched_rows if not dry_run else 0
+            total_failed += m.failed_rows
+
+            status = "✓" if m.failed_rows == 0 else "✗"
+            print(
+                f"[{done:3d}/{total_runs} {pct:5.1f}%] {status} "
+                f"{current} {symbol:12s} fetched={m.fetched_rows:5d}  "
+                f"patched={m.patched_rows:5d}  failed={m.failed_rows}  "
+                f"{m.duration_s:.1f}s"
+            )
 
         current += timedelta(days=1)
 
@@ -95,25 +100,24 @@ def run(start: date, end: date, dry_run: bool = False) -> None:
     print(f"  Total failed  : {total_failed:,}")
     print(f"{'=' * 60}")
 
-    if not dry_run and total_patched > 0:
-        print("\nNext step — aggregate ticks into 1h OHLC + build VN30F1M:")
-        print(
-            f'  python ohlc_5m.py --date-from "{start} 00:00:00" --date-to "{end} 23:59:59"'
-        )
-        print(
-            f"  python -c \"from ohlc_5m import vn30f1m_pipeline; vn30f1m_pipeline('{start}', '{end}')\""
-        )
+    return total_failed
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Backfill VN30F tick data into ClickHouse"
+        description="Backfill authoritative DNSE ticks into ClickHouse"
     )
     parser.add_argument("--start", default="2025-01-01", metavar="YYYY-MM-DD")
     parser.add_argument("--end", default=date.today().isoformat(), metavar="YYYY-MM-DD")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument(
         "--show-calendar", action="store_true", help="Print contract calendar and exit"
+    )
+    parser.add_argument(
+        "--symbol",
+        action="append",
+        default=[],
+        help="Symbol to reconcile; repeat for multiple symbols (default: VN30F front month)",
     )
     args = parser.parse_args()
 
@@ -124,7 +128,13 @@ def main() -> None:
         show_calendar(start, end)
         sys.exit(0)
 
-    run(start, end, dry_run=args.dry_run)
+    failed = run(
+        start,
+        end,
+        dry_run=args.dry_run,
+        symbols=tuple(dict.fromkeys(symbol.strip().upper() for symbol in args.symbol)),
+    )
+    raise SystemExit(1 if failed else 0)
 
 
 if __name__ == "__main__":

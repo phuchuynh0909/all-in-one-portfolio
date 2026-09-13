@@ -2,37 +2,35 @@
 
 ## Overview
 
-Three independent workers run concurrently, forming a pipeline from raw market
-ticks to stored bars and alerts: `tick_ingest.py` fills `ticks`, `ohlc_5m.py`
-rolls those into 5-minute bars for the backend's Future page, and
-`price_alerts.py` is what still pushes Telegram notifications.
+Four Compose workers run concurrently: `tick_ingest.py` stores live DNSE
+events, `scheduled_backfill.py` repairs completed sessions, `ohlc_5m.py`
+maintains futures bars, and `price_alerts.py` pushes Telegram notifications.
 
 ```
-  MQTT broker (DNSE/KRX)
+  DNSE Trade-Extra WebSocket
         │
         ▼
 ┌─────────────────────────────────────────────────────────────────┐
 │  tick_ingest.py  (Bytewax streaming)                            │
-│  Subscribes to MQTT topic per symbol, normalises tick fields,   │
-│  and bulk-inserts rows into ClickHouse `ticks` table.           │
+│  Subscribes per symbol, normalizes DNSE event identity, and     │
+│  bulk-inserts rows into ClickHouse `ticks`.                     │
 └───────────────────────────┬─────────────────────────────────────┘
                             │ writes
                             ▼
                  ClickHouse — table: ticks
-                 (symbol, sending_time, match_price,
-                  match_qty, side, received_at, board_id)
-                 ENGINE = ReplacingMergeTree
+                 (symbol, sending_time, match_price, match_qty,
+                  side, received_at, board_id, event_sequence)
+                 Replacing key: symbol + date + board + sequence + event time
                             │
               ┌─────────────┴──────────────────────┐
               │                                    │
               ▼                                    ▼
 ┌─────────────────────────────┐    ┌──────────────────────────────────────────┐
-│  reconciler.py              │    │  ohlc_5m.py  (--poll loop)               │
-│  Runs once at 15:00 ICT.    │    │  Every --poll seconds:                   │
-│  Back-fills any ticks missed│    │  1. Resolve today's VN30F contract       │
-│  by the stream via DNSE API.│    │  2. Re-aggregate ticks → ohlc_5m (upsert)│
-└─────────────────────────────┘    │                                          │
-                                   │  Read intraday by the backend's Future   │
+│  scheduled_backfill.py       │    │  ohlc_5m.py  (--poll loop)               │
+│  Weekdays at 15:05 ICT.      │    │  Every --poll seconds:                   │
+│  Reconciles configured       │    │  1. Resolve today's VN30F contract       │
+│  symbols by DNSE sequence.   │    │  2. Re-aggregate ticks → ohlc_5m         │
+└─────────────────────────────┘    │  Read intraday by the backend's Future   │
                                    │  page (routes/future.py).                │
                                    └──────────────┬───────────────────────────┘
                                                   │ reads / writes
@@ -64,6 +62,12 @@ rolls those into 5-minute bars for the backend's Future page, and
 
 Symbol scope: every symbol in `watchlist.json` **plus** the current VN30F front-month
 contract (`TICK_SYMBOL`, defaulting to `vn30f_symbol.current_symbol()`).
+
+DNSE `totalVolumeTraded` becomes `event_sequence`. It distinguishes legitimate
+executions whose timestamp, price, quantity, and side are otherwise identical,
+while a replay of the same WebSocket/API event retains the same replacement
+key. GraphQL board `2`, WebSocket `G1`, and legacy `BOARD_ID_G1` normalize to
+the same `board_id`.
 
 Feed: `wss://ws-openapi.dnse.com.vn/v1/stream`, HMAC-SHA256 auth, channel
 `tick_extra.{board}.{json|msgpack}`. Boards `G1` (even lot) and `G4` (odd lot)
@@ -227,14 +231,32 @@ archive the daily reconciler back-fills from the authoritative API — set it to
 
 ---
 
-### 2. `reconciler.py` — daily back-fill (once per session)
+### 2. `scheduled_backfill.py` — after-session reconciliation
 
-Polls the DNSE REST API at 15:05 ICT for any ticks that the stream missed (connectivity gaps, late symbols). Compares against what is already in ClickHouse and patches only the delta.
+The `worker-tick-backfill` Compose service polls locally and runs once at or
+after 15:05 ICT on weekdays. It discovers every `(session date, symbol)` pair
+that still contains migration-only legacy identities and every symbol present
+in the latest completed data date. Each pair is reconciled through
+`reconciler.run_reconciler`; successful insertion removes that pair's legacy
+rows. The worker rebuilds OHLC, large-order, and trade-flow tables once per
+affected date.
 
-**Run:**
+Legacy rows are the historical migration backlog, so successfully reconciled
+pairs disappear from later discovery without a separate pair ledger. Pending
+derived-table dates are persisted before tick mutation, allowing a restart to
+finish a repair even after the legacy rows were removed.
+
+Immediate all-symbol backlog run:
+
 ```bash
-python reconciler.py          # respects schedule guard (15:00 ICT)
-python reconciler.py --force  # bypass guard
+python -m workers.scheduled_backfill --once --force
+```
+
+Explicit symbol/range backfill:
+
+```bash
+python scripts/backfill_ticks.py --symbol BCM \
+  --start 2026-09-11 --end 2026-09-11
 ```
 
 ---
@@ -345,12 +367,10 @@ adjacent deliberately — `tests/test_large_order_mv.py` pins the SQL shape and
 > idempotent per day (it deletes the day before reinserting, because summing
 > partials twice would double every block).
 
-> **Tick re-inserts double-count.** The MV counts rows as they are inserted, so
-> a tick written to `ticks` twice is aggregated twice, even though
-> `ReplacingMergeTree` later collapses the duplicate. `reconciler.py` inserts
-> only genuinely missing ticks, so this is bounded — but with
-> `large_order_reconciler` retired there is no longer a pass that corrects it.
-> `--backfill` for the affected day recomputes it from `ticks` if needed.
+> **Tick re-inserts temporarily double-count.** A materialized view sees every
+> inserted version before `ReplacingMergeTree` resolves it under `FINAL`.
+> `scheduled_backfill.py` therefore rebuilds each deployed derived table from
+> the authoritative completed-session tick view before marking the job done.
 
 > **Equity history starts 2026-08-24**, when `tick_ingest` began ingesting the
 > watchlist. The MV can only aggregate what is in `ticks`, and equity ticks do

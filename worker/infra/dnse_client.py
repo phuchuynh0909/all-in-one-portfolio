@@ -12,7 +12,8 @@ Inputs
 Outputs
 -------
 - list[dict] of raw API tick dicts with keys:
-    symbol, matchPrice, matchQtty, sendingTime, side
+    symbol, matchPrice, matchQtty, sendingTime, side, boardId,
+    totalVolumeTraded
   No normalization is applied — side values may be int (1/2) or
   string ("SIDE_BUY"/"SIDE_SELL"); sendingTime is ISO 8601 UTC.
 
@@ -57,6 +58,8 @@ query GetKrxTicksBySymbols {{
         matchQtty
         sendingTime
         side
+        totalVolumeTraded
+        boardId
       }}
     }}
   }}

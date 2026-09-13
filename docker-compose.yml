@@ -113,6 +113,25 @@ services:
       - appnet
       - shared_network
     restart: unless-stopped
+
+  # Closed-session repair. The worker discovers every migrated historical
+  # symbol/date pair plus every symbol in the latest completed session.
+  worker-tick-backfill:
+    build: ./worker
+    command: ["python", "-m", "workers.scheduled_backfill"]
+    volumes:
+      - ./worker:/app
+      - worker_state:/app/state_dir
+    env_file:
+      - ./worker/.env
+    environment:
+      - RECONCILER_HOUR=${RECONCILER_HOUR:-15}
+      - RECONCILER_MINUTE=${RECONCILER_MINUTE:-5}
+      - RECONCILER_POLL_SECONDS=${RECONCILER_POLL_SECONDS:-60}
+    networks:
+      - appnet
+      - shared_network
+    restart: unless-stopped
 networks:
   appnet:
     driver: bridge
