@@ -17,7 +17,12 @@ import numpy as np
 import pandas as pd
 import talib
 
-from app.schemas.scanner import ConditionOperator, ScannerRequest, ScannerResponse, ScannerResultItem
+from app.schemas.scanner import (
+    ConditionOperator,
+    ScannerRequest,
+    ScannerResponse,
+    ScannerResultItem,
+)
 from app.services.indicators import gaussian_frama, hull_butterfly, linreg_channel_2d, student_t_crit, trailing_sl
 from app.services.stock_service import _load_delta_stocks
 
@@ -59,6 +64,8 @@ _COMPARISON_OPS = (
 
 def list_columns() -> List[str]:
     return SCANNER_COLUMNS
+
+
 
 
 def _latest_trading_date(today: date | None = None) -> date:

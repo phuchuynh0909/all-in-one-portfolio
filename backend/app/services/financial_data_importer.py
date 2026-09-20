@@ -268,23 +268,50 @@ class FinancialDataImporter:
     def insert_statement_items(self, statement_id: int, items: List[Dict], 
                              time_labels: List[str]) -> Dict[str, int]:
         """Insert statement items and return mapping of key to item_id"""
-        item_mapping = {}
-        
-        # First pass: insert all items without parent relationships
-        for idx, item in enumerate(items):
-            item_id = self._upsert_returning_id(
-                "statement_item",
-                "item_id",
-                {
-                    "statement_id": statement_id,
-                    "item_key": item['key'],
-                    "title_vi": item['title'],
-                    "level": item['level'],
-                    "display_order": idx,
-                },
-                ["title_vi", "level", "display_order"],
+        if not items:
+            return {}
+
+        item_rows = [
+            {
+                "statement_id": statement_id,
+                "item_key": item['key'],
+                "title_vi": item['title'],
+                "level": item['level'],
+                "display_order": idx,
+            }
+            for idx, item in enumerate(items)
+        ]
+
+        # PyMySQL turns this executemany INSERT into one multi-value statement.
+        # Fetch all IDs in one query afterward instead of LAST_INSERT_ID() once
+        # per item (two network round trips for every row).
+        self.db.execute(text("""
+            INSERT INTO statement_item
+                (statement_id, item_key, title_vi, level, display_order)
+            VALUES
+                (:statement_id, :item_key, :title_vi, :level, :display_order)
+            ON DUPLICATE KEY UPDATE
+                title_vi = VALUES(title_vi),
+                level = VALUES(level),
+                display_order = VALUES(display_order)
+        """), item_rows)
+
+        requested_keys = {item['key'] for item in items}
+        rows = self.db.execute(text("""
+            SELECT item_key, item_id
+            FROM statement_item
+            WHERE statement_id = :statement_id
+        """), {"statement_id": statement_id}).fetchall()
+        item_mapping = {
+            item_key: item_id
+            for item_key, item_id in rows
+            if item_key in requested_keys
+        }
+        missing_keys = requested_keys - set(item_mapping)
+        if missing_keys:
+            raise RuntimeError(
+                f"Could not resolve {len(missing_keys)} statement item IDs"
             )
-            item_mapping[item['key']] = item_id
         
         # Second pass: establish parent relationships
         self._establish_item_hierarchy(statement_id, items, item_mapping)
@@ -296,9 +323,11 @@ class FinancialDataImporter:
                                 item_mapping: Dict[str, int]):
         """Establish parent-child relationships for statement items"""
         
-        # Create a stack to track parent items at each level
-        parent_stack = [None] * 6  # Support up to level 5
+        # Track the latest item at each level. Wichart statement structures can
+        # be deeper than level 5, so this must not be a fixed-size list.
+        parent_by_level: Dict[int, int] = {}
         
+        assignments_by_item_id = {}
         for item in items:
             level = item['level']
             item_id = item_mapping[item['key']]
@@ -306,25 +335,49 @@ class FinancialDataImporter:
             # Find parent (item at level - 1)
             parent_id = None
             if level > 1:
-                parent_id = parent_stack[level - 1]
+                parent_id = parent_by_level.get(level - 1)
             
-            # Update parent relationship
-            self.db.execute(text("""
-                UPDATE statement_item 
-                SET parent_item_id = :parent_id 
-                WHERE item_id = :item_id
-            """), {"parent_id": parent_id, "item_id": item_id})
+            # A repeated source key resolves to the same database row. Match
+            # the old sequential-update behavior by keeping its last parent.
+            assignments_by_item_id[item_id] = parent_id
             
-            # Update the parent stack
-            parent_stack[level] = item_id
+            # Update the current level and discard descendants from the
+            # previous branch before processing the next item.
+            parent_by_level[level] = item_id
             # Clear deeper levels
-            for i in range(level + 1, len(parent_stack)):
-                parent_stack[i] = None
+            for deeper_level in [key for key in parent_by_level if key > level]:
+                del parent_by_level[deeper_level]
+
+        if not assignments_by_item_id:
+            return
+
+        # Use one CASE update rather than issuing one UPDATE per item. Parameter
+        # names are generated locally; all IDs remain bound values.
+        case_clauses = []
+        item_placeholders = []
+        parameters = {}
+        for index, (item_id, parent_id) in enumerate(assignments_by_item_id.items()):
+            item_param = f"item_id_{index}"
+            parent_param = f"parent_id_{index}"
+            case_clauses.append(f"WHEN :{item_param} THEN :{parent_param}")
+            item_placeholders.append(f":{item_param}")
+            parameters[item_param] = item_id
+            parameters[parent_param] = parent_id
+
+        self.db.execute(text(f"""
+            UPDATE statement_item
+            SET parent_item_id = CASE item_id
+                {' '.join(case_clauses)}
+                ELSE parent_item_id
+            END
+            WHERE item_id IN ({', '.join(item_placeholders)})
+        """), parameters)
     
     def insert_item_values(self, company_id: int, item_mapping: Dict[str, int], 
                           period_mapping: Dict[str, int], items: List[Dict], time_labels: List[str]):
         """Insert item values for all periods for a specific company"""
-        
+
+        value_rows = []
         for item in items:
             item_id = item_mapping[item['key']]
             
@@ -338,15 +391,8 @@ class FinancialDataImporter:
                         if value_str and value_str not in ['None', 'null', '']:
                             value = float(value_str)
                             period_id = period_mapping[period_label]
-                            
-                            # MySQL's upsert; no id needed back here, so the
-                            # LAST_INSERT_ID dance in ``_upsert_returning_id``
-                            # would be wasted round trips.
-                            self.db.execute(text("""
-                                INSERT INTO item_value (item_id, period_id, company_id, value)
-                                VALUES (:item_id, :period_id, :company_id, :value)
-                                ON DUPLICATE KEY UPDATE value = VALUES(value)
-                            """), {
+
+                            value_rows.append({
                                 "item_id": item_id,
                                 "period_id": period_id,
                                 "company_id": company_id,
@@ -354,6 +400,15 @@ class FinancialDataImporter:
                             })
                     except (ValueError, KeyError) as e:
                         logger.warning(f"Could not parse value {item[value_key]} for item {item['key']}: {e}")
+
+        if value_rows:
+            # PyMySQL batches INSERT executemany calls into a multi-value SQL
+            # statement, reducing thousands of per-value round trips to one.
+            self.db.execute(text("""
+                INSERT INTO item_value (item_id, period_id, company_id, value)
+                VALUES (:item_id, :period_id, :company_id, :value)
+                ON DUPLICATE KEY UPDATE value = VALUES(value)
+            """), value_rows)
     
     def import_financial_data(self, json_data: Dict[str, Any], 
                             company_ticker: str):

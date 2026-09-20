@@ -213,8 +213,10 @@ async def market_breadth(
     - McClellan Oscillator: Short-term breadth momentum (19 EMA - 39 EMA)
     - McClellan Summation Index: Long-term breadth momentum
     - Daily advances/declines/unchanged counts
+    - Historical RSI distribution using the requested lookback period
     """
     return await get_market_indicators(
         start_date=request.start_date,
-        end_date=request.end_date
+        end_date=request.end_date,
+        rsi_period=request.rsi_period,
     )

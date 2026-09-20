@@ -29,6 +29,7 @@ async def crawl_symbol_data(
     symbol: str,
     background_tasks: BackgroundTasks,
     quarter: Optional[int] = 1,
+    refresh: bool = False,
     db: Session = Depends(get_db)
 ):
     """Crawl financial data for a specific symbol from wichart.vn"""
@@ -42,7 +43,7 @@ async def crawl_symbol_data(
     
     # Check if data already exists
     existing_data = db.query(ItemValue).filter(ItemValue.company_id == company.company_id).first()
-    if existing_data:
+    if existing_data and not refresh:
         return {
             "status": "skipped",
             "message": f"Data already exists for {symbol}",
@@ -54,8 +55,12 @@ async def crawl_symbol_data(
         crawl_and_import_data(symbol, quarter, db)
         
         return {
-            "status": "started",
-            "message": f"Started crawling financial data for {symbol}",
+            "status": "completed" if refresh else "started",
+            "message": (
+                f"Refreshed and saved latest financial data for {symbol}"
+                if refresh
+                else f"Started crawling financial data for {symbol}"
+            ),
             "company": {"ticker": company.ticker, "name": company.name}
         }
         

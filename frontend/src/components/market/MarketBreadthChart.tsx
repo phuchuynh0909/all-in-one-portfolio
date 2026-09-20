@@ -1,305 +1,170 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Box, Typography, ToggleButton, ToggleButtonGroup } from '@mui/material';
-import { alpha } from '@mui/material/styles';
-import { createChart, LineSeries, HistogramSeries, CandlestickSeries } from 'lightweight-charts';
-import { fetchMarketBreadth, fetchTimeseries, formatChartTime, getDateRange } from '../../lib/services/timeseries';
+import { createTvWidget, LIBRARY_PATH } from '../../lib/tv';
+import type { EntityId, IChartingLibraryWidget, LanguageCode, ResolutionString } from '../../lib/tv';
+import {
+  BREADTH_STUDIES,
+  MarketBreadthStore,
+  createMarketBreadthDatafeed,
+  marketBreadthIndicatorsGetter,
+  studyForView,
+  type BreadthView,
+} from '../../lib/tv/breadth';
+import { fetchMarketBreadth, fetchTimeseries, getDateRange } from '../../lib/services/timeseries';
 import type { MarketBreadthResponse, TimeseriesResponse } from '../../lib/services/timeseries';
-import { useChartTheme } from '../../theme';
+import { tvOverrides } from '../../lib/tv/theme';
+import { useColorMode } from '../../theme';
 import { Numeric, LoadingState, ErrorState } from '../ui';
 
-type ChartView = 'ad_line' | 'mcclellan' | 'breadth';
-
-function calcSMA(values: (number | null)[], period: number): (number | null)[] {
-  return values.map((_, i) => {
-    if (i < period - 1) return null;
-    const slice = values.slice(i - period + 1, i + 1);
-    if (slice.some(v => v == null)) return null;
-    return (slice as number[]).reduce((a, b) => a + b, 0) / period;
-  });
-}
-
-const CHART_HEIGHT = 600;
-const PANE_STRETCH_FACTORS = [3, 1, 1]; // Price, McClellan, A/D or Breadth
+const CHART_HEIGHT = 800;
+const DEFAULT_RSI_PERIOD = 14;
+const MIN_RSI_PERIOD = 2;
+const MAX_RSI_PERIOD = 100;
+const DAILY = '1D' as ResolutionString;
 
 export default function MarketBreadthChart() {
   const [data, setData] = useState<MarketBreadthResponse | null>(null);
   const [vnindexData, setVnindexData] = useState<TimeseriesResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [view, setView] = useState<ChartView>('mcclellan');
-  const ct = useChartTheme();
-
+  const [view, setView] = useState<BreadthView>('mcclellan');
+  const [rsiPeriod, setRsiPeriod] = useState(DEFAULT_RSI_PERIOD);
+  const { mode } = useColorMode();
   const chartContainerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<any>(null);
+  const widgetRef = useRef<IChartingLibraryWidget | null>(null);
 
-  // Fetch data
   useEffect(() => {
+    let cancelled = false;
+
     const loadData = async () => {
       try {
         setLoading(true);
-        const dateRange = getDateRange(365 * 10); // Last 2 years
-        
-        // Fetch both VNINDEX and market breadth data in parallel
+        setError(null);
+        const dateRange = getDateRange(365 * 10);
         const [breadthResult, vnindexResult] = await Promise.all([
-          fetchMarketBreadth(dateRange),
+          fetchMarketBreadth({ ...dateRange, rsi_period: rsiPeriod }),
           fetchTimeseries('VNINDEX', {
             interval: '1d',
             ...dateRange,
             indicators: [],
           }),
         ]);
-        
+        if (cancelled) return;
         setData(breadthResult);
         setVnindexData(vnindexResult);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load data');
+        if (!cancelled) setError(err instanceof Error ? err.message : 'Failed to load data');
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     };
-    loadData();
-  }, []);
 
-  // Helper to apply pane stretch factors
-  const applyPaneHeights = () => {
-    if (!chartRef.current) return;
-    try {
-      const panes = chartRef.current.panes();
-      panes.forEach((pane: any, index: number) => {
-        if (index < PANE_STRETCH_FACTORS.length && typeof pane.setStretchFactor === 'function') {
-          pane.setStretchFactor(PANE_STRETCH_FACTORS[index]);
-        }
-      });
-    } catch (e) {
-      console.warn('Could not set pane stretch factors:', e);
-    }
-  };
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
+  }, [rsiPeriod]);
 
-  // Create unified chart with multiple panes
+  const store = useMemo(
+    () => data && vnindexData ? new MarketBreadthStore(data, vnindexData) : null,
+    [data, vnindexData],
+  );
+
   useEffect(() => {
-    if (!chartContainerRef.current || !vnindexData || !data || loading) return;
-
-    // Clean up existing chart
-    if (chartRef.current) {
-      chartRef.current.remove();
-      chartRef.current = null;
-    }
-
-    const chart = createChart(chartContainerRef.current, {
-      height: CHART_HEIGHT,
-      width: chartContainerRef.current.clientWidth,
-      ...ct.lightweightChartOptions,
-      crosshair: { ...ct.lightweightChartOptions.crosshair, mode: 1 },
-      timeScale: { ...ct.lightweightChartOptions.timeScale, timeVisible: true },
-    });
-
-    chartRef.current = chart;
-
-    // ===== PANE 0: VNINDEX Price =====
-    const candlestickSeries = chart.addSeries(CandlestickSeries, {
-      ...ct.candlestick,
-      borderVisible: false,
-      title: 'VNINDEX',
-    });
-
-    const volumeSeries = chart.addSeries(HistogramSeries, {
-      color: ct.accent,
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
-    });
-
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
-    });
-
-    const candleData = vnindexData.timestamps.map((ts, i) => ({
-      time: formatChartTime(ts),
-      open: vnindexData.timeseries.open[i],
-      high: vnindexData.timeseries.high[i],
-      low: vnindexData.timeseries.low[i],
-      close: vnindexData.timeseries.close[i],
-    }));
-
-    const volumeData = vnindexData.timestamps.map((ts, i) => ({
-      time: formatChartTime(ts),
-      value: vnindexData.timeseries.volume[i],
-      color: vnindexData.timeseries.close[i] >= vnindexData.timeseries.open[i] 
-        ? alpha(ct.up, 0.5)
-        : alpha(ct.down, 0.5),
-    }));
-
-    candlestickSeries.setData(candleData);
-    volumeSeries.setData(volumeData);
-
-    // ===== PANE 1: McClellan Oscillator =====
-    const oscillatorSeries = chart.addSeries(HistogramSeries, {
-      title: 'McClellan Osc',
-      priceScaleId: 'right',
-    }, 1);
-
-    const oscillatorData = data.timestamps.map((ts, i) => {
-      const value = data.mcclellan_oscillator[i] ?? 0;
-      return {
-        time: formatChartTime(ts),
-        value,
-        color: value >= 0 ? alpha(ct.up, 0.8) : alpha(ct.down, 0.8),
-      };
-    });
-
-    oscillatorSeries.setData(oscillatorData);
-
-    // Zero line for McClellan
-    const zeroLine = chart.addSeries(LineSeries, {
-      color: alpha(ct.axis, 0.5),
-      lineWidth: 1,
-      lineStyle: 2,
-      priceLineVisible: false,
-      lastValueVisible: false,
-      crosshairMarkerVisible: false,
-      priceScaleId: 'right',
-    }, 1);
-
-    zeroLine.setData(data.timestamps.map(ts => ({
-      time: formatChartTime(ts),
-      value: 0,
-    })));
-
-    // ===== PANE 2: Based on view selection =====
-    if (view === 'ad_line') {
-      // A/D Line
-      const adLineSeries = chart.addSeries(LineSeries, {
-        color: ct.accent,
-        lineWidth: 2,
-        title: 'A/D Line',
-        priceScaleId: 'right',
-      }, 2);
-
-      const adLineData = data.timestamps.map((ts, i) => ({
-        time: formatChartTime(ts),
-        value: data.ad_line[i] ?? 0,
-      }));
-
-      adLineSeries.setData(adLineData);
-
-      const adSMA20 = calcSMA(data.ad_line, 20);
-      const adSMASeries = chart.addSeries(LineSeries, {
-        color: ct.seriesColor(1),
-        lineWidth: 1,
-        lineStyle: 0,
-        title: 'SMA 20',
-        priceLineVisible: false,
-        crosshairMarkerVisible: false,
-        priceScaleId: 'right',
-      }, 2);
-      adSMASeries.setData(
-        data.timestamps
-          .map((ts, i) => ({ time: formatChartTime(ts), value: adSMA20[i] }))
-          .filter(d => d.value != null) as { time: any; value: number }[]
-      );
-
-    } else if (view === 'mcclellan') {
-      // Summation Index
-      const summationSeries = chart.addSeries(LineSeries, {
-        color: ct.accent,
-        lineWidth: 2,
-        title: 'Summation Index',
-        priceScaleId: 'right',
-      }, 2);
-
-      const summationData = data.timestamps.map((ts, i) => ({
-        time: formatChartTime(ts),
-        value: data.mcclellan_summation[i] ?? 0,
-      }));
-
-      summationSeries.setData(summationData);
-
-      const summSMA20 = calcSMA(data.mcclellan_summation, 20);
-      const summSMASeries = chart.addSeries(LineSeries, {
-        color: ct.seriesColor(1),
-        lineWidth: 1,
-        lineStyle: 0,
-        title: 'SMA 20',
-        priceLineVisible: false,
-        crosshairMarkerVisible: false,
-        priceScaleId: 'right',
-      }, 2);
-      summSMASeries.setData(
-        data.timestamps
-          .map((ts, i) => ({ time: formatChartTime(ts), value: summSMA20[i] }))
-          .filter(d => d.value != null) as { time: any; value: number }[]
-      );
-
-      // Zero line for Summation
-      const summationZeroLine = chart.addSeries(LineSeries, {
-        color: alpha(ct.axis, 0.5),
-        lineWidth: 1,
-        lineStyle: 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: false,
-        priceScaleId: 'right',
-      }, 2);
-
-      summationZeroLine.setData(data.timestamps.map(ts => ({
-        time: formatChartTime(ts),
-        value: 0,
-      })));
-
-    } else if (view === 'breadth') {
-      // Advances/Declines
-      const advancesSeries = chart.addSeries(HistogramSeries, {
-        color: alpha(ct.up, 0.7),
-        title: 'Advances',
-        priceScaleId: 'right',
-      }, 2);
-
-      const declinesSeries = chart.addSeries(HistogramSeries, {
-        color: alpha(ct.down, 0.7),
-        title: 'Declines',
-        priceScaleId: 'right',
-      }, 2);
-
-      const advancesData = data.timestamps.map((ts, i) => ({
-        time: formatChartTime(ts),
-        value: data.advances[i],
-        color: alpha(ct.up, 0.7),
-      }));
-
-      const declinesData = data.timestamps.map((ts, i) => ({
-        time: formatChartTime(ts),
-        value: -data.declines[i],
-        color: alpha(ct.down, 0.7),
-      }));
-
-      advancesSeries.setData(advancesData);
-      declinesSeries.setData(declinesData);
-    }
-
-    chart.timeScale().fitContent();
-
-    // Apply pane heights
-    setTimeout(() => applyPaneHeights(), 100);
-
-    // Handle resize
-    const handleResize = () => {
-      if (chartContainerRef.current && chartRef.current) {
-        chartRef.current.resize(chartContainerRef.current.clientWidth, CHART_HEIGHT);
+    if (!chartContainerRef.current || !store || loading) return;
+    let disposed = false;
+    let rsiStudyId: EntityId | null = null;
+    const handleRsiConfigChange = (entityId: EntityId) => {
+      if (!rsiStudyId || entityId !== rsiStudyId) return;
+      try {
+        const input = widgetRef.current
+          ?.activeChart()
+          .getStudyById(entityId)
+          .getInputValues()
+          .find(({ id }) => String(id) === 'period');
+        const requestedPeriod = Number(input?.value);
+        if (!Number.isFinite(requestedPeriod)) return;
+        const nextPeriod = Math.min(
+          MAX_RSI_PERIOD,
+          Math.max(MIN_RSI_PERIOD, Math.round(requestedPeriod)),
+        );
+        if (nextPeriod !== rsiPeriod) setRsiPeriod(nextPeriod);
+      } catch {
+        // The study can disappear while a configuration event is in flight.
       }
     };
 
-    window.addEventListener('resize', handleResize);
+    createTvWidget({
+      container: chartContainerRef.current,
+      datafeed: createMarketBreadthDatafeed(store),
+      library_path: LIBRARY_PATH,
+      symbol: 'VNINDEX',
+      interval: DAILY,
+      timeframe: '60M',
+      locale: 'en' as LanguageCode,
+      autosize: true,
+      theme: mode,
+      timezone: 'Asia/Ho_Chi_Minh',
+      custom_indicators_getter: marketBreadthIndicatorsGetter(store),
+      disabled_features: ['header_symbol_search', 'symbol_search_hot_key'],
+      overrides: {
+        ...tvOverrides(mode),
+        'mainSeriesProperties.candleStyle.borderVisible': false,
+      },
+    }).then((widget) => {
+      if (disposed) {
+        widget.remove();
+        return;
+      }
+      widgetRef.current = widget;
+      widget.subscribe('study_properties_changed', handleRsiConfigChange);
+      widget.onChartReady(() => {
+        if (disposed) return;
+        const chart = widget.activeChart();
+        void Promise.all([
+          chart.createStudy(BREADTH_STUDIES.oscillator, false, true),
+          chart.createStudy(studyForView(view), false, true),
+          chart.createStudy(
+            BREADTH_STUDIES.rsiDistribution,
+            false,
+            false,
+            { period: rsiPeriod },
+          ),
+        ]).then(([, , rsiEntityId]) => {
+          rsiStudyId = rsiEntityId;
+          if (disposed) return;
+          const currentHeights = chart.getAllPanesHeight();
+          if (currentHeights.length < 2) return;
+          const totalHeight = currentHeights.reduce((sum, height) => sum + height, 0);
+          const studyHeight = Math.floor(totalHeight / (currentHeights.length + 2));
+          const mainHeight = totalHeight - studyHeight * (currentHeights.length - 1);
+          chart.setAllPanesHeight([
+            mainHeight,
+            ...currentHeights.slice(1).map(() => studyHeight),
+          ]);
+        }).catch((cause) => {
+          if (!disposed) setError(cause instanceof Error ? cause.message : 'Failed to add breadth studies');
+        });
+      });
+    }).catch((cause) => {
+      if (!disposed) setError(cause instanceof Error ? cause.message : 'Failed to create market breadth chart');
+    });
 
     return () => {
-      window.removeEventListener('resize', handleResize);
-      if (chartRef.current) {
-        chartRef.current.remove();
-        chartRef.current = null;
+      disposed = true;
+      if (widgetRef.current) {
+        widgetRef.current.unsubscribe('study_properties_changed', handleRsiConfigChange);
+        try {
+          widgetRef.current.remove();
+        } catch {
+          // Already removed by the charting library.
+        }
+        widgetRef.current = null;
       }
     };
-    // `ct` is in the deps so the chart is rebuilt when the colour mode flips.
-  }, [vnindexData, data, loading, view, ct]);
+  }, [loading, mode, rsiPeriod, store, view]);
 
-  const handleViewChange = (_: React.MouseEvent<HTMLElement>, newView: ChartView | null) => {
+  const handleViewChange = (_: React.MouseEvent<HTMLElement>, newView: BreadthView | null) => {
     if (newView) setView(newView);
   };
 
@@ -335,6 +200,7 @@ export default function MarketBreadthChart() {
     { label: 'McClellan Osc', value: latestOscillator, decimals: 1, signed: true, color: undefined },
     { label: 'Summation', value: latestSummation, decimals: 0, signed: true, color: undefined },
   ];
+
 
   return (
     <Box>
@@ -408,6 +274,7 @@ export default function MarketBreadthChart() {
           borderColor: 'line.subtle',
         }}
       />
+
     </Box>
   );
 }

@@ -150,68 +150,68 @@ export default function Home() {
           </Box>
         </Panel>
 
-        <Panel
-          title="Largest holdings"
-          subtitle="By market value"
-          actions={
-            <Button component={RouterLink} to="/portfolio" size="small" variant="text">
-              All
-            </Button>
-          }
-          flush
-        >
-          <QueryState
-            isLoading={isLoading}
-            error={positionsQuery.error}
-            isEmpty={holdings.length === 0}
-            onRetry={() => positionsQuery.refetch()}
-            emptyTitle="No positions"
-            emptyDescription="Add a position on the portfolio page to see it here."
+          <Panel
+            title="Largest holdings"
+            subtitle="By market value"
+            actions={
+              <Button component={RouterLink} to="/portfolio" size="small" variant="text">
+                All
+              </Button>
+            }
+            flush
           >
-            <Box sx={{ display: 'flex', flexDirection: 'column' }}>
-              {holdings.map((p) => (
-                <Box
-                  key={p.id}
-                  sx={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 1,
-                    px: 2,
-                    py: 1,
-                    borderBottom: 1,
-                    borderColor: 'line.subtle',
-                    '&:last-of-type': { borderBottom: 0 },
-                    '&:hover': { bgcolor: 'action.hover' },
-                  }}
-                >
-                  <Box sx={{ minWidth: 0 }}>
-                    <Typography variant="mono" sx={{ fontWeight: 600, color: 'text.primary' }}>
-                      {p.ticker}
-                    </Typography>
-                    <Typography variant="caption" component="div" sx={{ color: 'text.tertiary' }}>
-                      {formatQuantity(p.quantity)} @ {formatNumber(p.purchase_price)}
-                      {p.isStale && ' · no quote'}
-                    </Typography>
-                  </Box>
-                  <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
-                    <Numeric value={p.marketValue} format="compact" sx={{ fontWeight: 600 }} />
-                    <Box>
-                      <Numeric
-                        value={p.unrealizedPlPct}
-                        format="percent"
-                        signed
-                        showSign
-                        arrow
-                        sx={{ fontSize: '0.6875rem' }}
-                      />
+            <QueryState
+              isLoading={isLoading}
+              error={positionsQuery.error}
+              isEmpty={holdings.length === 0}
+              onRetry={() => positionsQuery.refetch()}
+              emptyTitle="No positions"
+              emptyDescription="Add a position on the portfolio page to see it here."
+            >
+              <Box sx={{ display: 'flex', flexDirection: 'column' }}>
+                {holdings.map((p) => (
+                  <Box
+                    key={p.id}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 1,
+                      px: 2,
+                      py: 1,
+                      borderBottom: 1,
+                      borderColor: 'line.subtle',
+                      '&:last-of-type': { borderBottom: 0 },
+                      '&:hover': { bgcolor: 'action.hover' },
+                    }}
+                  >
+                    <Box sx={{ minWidth: 0 }}>
+                      <Typography variant="mono" sx={{ fontWeight: 600, color: 'text.primary' }}>
+                        {p.ticker}
+                      </Typography>
+                      <Typography variant="caption" component="div" sx={{ color: 'text.tertiary' }}>
+                        {formatQuantity(p.quantity)} @ {formatNumber(p.purchase_price)}
+                        {p.isStale && ' · no quote'}
+                      </Typography>
+                    </Box>
+                    <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
+                      <Numeric value={p.marketValue} format="compact" sx={{ fontWeight: 600 }} />
+                      <Box>
+                        <Numeric
+                          value={p.unrealizedPlPct}
+                          format="percent"
+                          signed
+                          showSign
+                          arrow
+                          sx={{ fontSize: '0.6875rem' }}
+                        />
+                      </Box>
                     </Box>
                   </Box>
-                </Box>
-              ))}
-            </Box>
-          </QueryState>
-        </Panel>
+                ))}
+              </Box>
+            </QueryState>
+          </Panel>
       </Box>
 
       {/* --- Capability surface -------------------------------------------- */}

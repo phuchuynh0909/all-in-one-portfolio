@@ -69,6 +69,9 @@ touched, and prefer these over ad-hoc commands:
   import time and has no assertions.
 - **Frontend types:** `cd frontend && npm run build` (runs `tsc && vite build`).
 - **Frontend lint:** `cd frontend && npm run lint`.
+- **Frontend UI:** verification is manual. Give the user the exact surface and
+  interactions to check, and report visual verification as pending until they
+  confirm it. Do not run browser automation for frontend verification.
 - **Workers:** `cd worker && pytest tests`.
 
 If you change pure price/indicator/session logic (e.g.
@@ -98,7 +101,8 @@ numbers are wrong before declaring the change done.
   a quote path exits early (missing creds vs. empty upstream vs. filtered
   board), emit a log line saying which.
 - TypeScript: strict typing; MUI for UI; TanStack Query for data fetching;
-  charts via `lightweight-charts` / `recharts`.
+  charts via the TradingView charting library, `lightweight-charts`, or
+  `recharts`.
 - Keep changes narrow; do not refactor unrelated code.
 
 ## When you finish a change

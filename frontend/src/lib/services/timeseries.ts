@@ -477,11 +477,16 @@ export interface MarketBreadthResponse {
   advances: number[];
   declines: number[];
   unchanged: number[];
+  rsi_period: number;
+  rsi_below_30: number[];
+  rsi_between_30_70: number[];
+  rsi_above_70: number[];
 }
 
 export interface MarketBreadthRequest {
   start_date?: string;
   end_date?: string;
+  rsi_period?: number;
 }
 
 export const fetchMarketBreadth = async (params: MarketBreadthRequest = {}): Promise<MarketBreadthResponse> => {

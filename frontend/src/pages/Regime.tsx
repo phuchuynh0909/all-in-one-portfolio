@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Alert,
   Box,
@@ -12,61 +12,22 @@ import {
   Typography,
 } from '@mui/material';
 import { Search } from '@mui/icons-material';
-import { createChart, CandlestickSeries, LineSeries, HistogramSeries, ColorType } from 'lightweight-charts';
-import type { IChartApi, UTCTimestamp } from 'lightweight-charts';
 import { format, subDays } from 'date-fns';
 import { fetchRegime, type RegimeResponse } from '../lib/services/regime';
-import { alpha } from '@mui/material/styles';
-import { primitives } from '../theme/tokens';
-import { useChartTheme } from '../theme';
+import { createTvWidget, LIBRARY_PATH } from '../lib/tv';
+import type { IChartingLibraryWidget, LanguageCode, ResolutionString } from '../lib/tv';
+import {
+  createRegimeDatafeed,
+  REGIME_COLORS,
+  REGIME_STUDIES,
+  RegimeStore,
+  regimeIndicatorsGetter,
+  TICA_LABEL_COLORS,
+} from '../lib/tv/regime';
+import { tvOverrides } from '../lib/tv/theme';
+import { useColorMode } from '../theme';
 
-// ── colours ──────────────────────────────────────────────────────────────────
-// Regime identities are categorical, so they come from the token primitives
-// and stay stable across colour modes — a regime should not change hue when
-// the theme flips. Only the chart chrome follows the mode.
-const REGIME_COLORS: Record<number, string> = {
-  2: primitives.green[600],   // Bullish_High_Var
-  1: primitives.teal[500],    // Bullish_Low_Var
-  0: primitives.neutral[400], // Neutral
-  [-1]: primitives.red[400],  // Bearish_Low_Var
-  [-2]: primitives.red[600],  // Bearish_High_Var
-};
-const REGIME_FALLBACK = primitives.neutral[400];
-
-// TICA+HMM regime label → colour, ramped from calm to crisis.
-const TICA_LABEL_COLORS: Record<string, string> = {
-  'Risk-On': primitives.green[500],
-  Caution: primitives.amber[500],
-  'Risk-Off': primitives.orange[600],
-  Crisis: primitives.red[700],
-};
-
-/** Yang-Zhang volatility percentile → severity colour. */
-const yzColor = (pct: number | null): string => {
-  if (pct == null) return primitives.neutral[400];
-  if (pct > 90) return primitives.red[500];
-  if (pct > 75) return primitives.orange[500];
-  if (pct < 25) return primitives.blue[500];
-  return primitives.green[500];
-};
-
-const toTs = (dateStr: string): UTCTimestamp =>
-  (Date.UTC(
-    Number(dateStr.slice(0, 4)),
-    Number(dateStr.slice(5, 7)) - 1,
-    Number(dateStr.slice(8, 10)),
-  ) / 1000) as UTCTimestamp;
-
-type ChartTheme = ReturnType<typeof useChartTheme>;
-
-const chartOptions = (ct: ChartTheme) => ({
-  ...ct.lightweightChartOptions,
-  layout: {
-    ...ct.lightweightChartOptions.layout,
-    background: { type: ColorType.Solid, color: ct.insetBackground },
-  },
-  timeScale: { ...ct.lightweightChartOptions.timeScale, timeVisible: true, secondsVisible: false },
-});
+const DAILY = '1D' as ResolutionString;
 
 // ── panel labels ─────────────────────────────────────────────────────────────
 const PANEL_LABELS = [
@@ -78,7 +39,7 @@ const PANEL_LABELS = [
 ];
 
 export default function RegimePage() {
-  const ct = useChartTheme();
+  const { mode } = useColorMode();
   const [symbol, setSymbol]           = useState('VNINDEX');
   const [inputVal, setInputVal]       = useState('VNINDEX');
   const [isFocused, setIsFocused]     = useState(false);
@@ -87,46 +48,7 @@ export default function RegimePage() {
   const [error, setError]             = useState<string | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef     = useRef<IChartApi | null>(null);
-  const [chartReady, setChartReady]   = useState(false);
-
-  // ── init chart ─────────────────────────────────────────────────────────────
-  useEffect(() => {
-    if (!containerRef.current || chartRef.current) return;
-
-    const chart = createChart(containerRef.current, {
-      ...chartOptions(ct),
-      width:  containerRef.current.clientWidth,
-      height: containerRef.current.clientHeight,
-    });
-
-    // stretch panes: price large, 4 indicator panes small
-    setTimeout(() => {
-      try {
-        const panes = chart.panes();
-        const factors = [5, 1, 1, 1, 1];
-        panes.forEach((p: any, i: number) => {
-          if (typeof p.setStretchFactor === 'function' && i < factors.length)
-            p.setStretchFactor(factors[i]);
-        });
-      } catch {}
-    }, 100);
-
-    chartRef.current = chart;
-    setChartReady(true);
-
-    const handleResize = () => {
-      if (containerRef.current)
-        chart.resize(containerRef.current.clientWidth, containerRef.current.clientHeight);
-    };
-    window.addEventListener('resize', handleResize);
-    return () => {
-      window.removeEventListener('resize', handleResize);
-      chart.remove();
-      chartRef.current = null;
-      setChartReady(false);
-    };
-  }, []);
+  const widgetRef = useRef<IChartingLibraryWidget | null>(null);
 
   // ── fetch data ─────────────────────────────────────────────────────────────
   const load = useCallback(async (sym: string) => {
@@ -147,165 +69,74 @@ export default function RegimePage() {
 
   useEffect(() => { load(symbol); }, [symbol, load]);
 
-  // ── render chart ──────────────────────────────────────────────────────────
+  const store = useMemo(() => data ? new RegimeStore(data) : null, [data]);
+
+  // ── render advanced TradingView chart ─────────────────────────────────────
   useEffect(() => {
-    const chart = chartRef.current;
-    if (!chart || !chartReady || !data) return;
+    if (!containerRef.current || !store || loading) return;
+    let disposed = false;
 
-    const { timestamps, open, high, low, close, markov_kama, ms_regime, yz_percentile, tica_hmm } = data;
-    const n = timestamps.length;
-
-    // ── Panel 0: candlestick + KAMA ────────────────────────────────────────
-    const priceSeries = chart.addSeries(CandlestickSeries, {
-      ...ct.candlestick,
-      priceLineVisible: false, lastValueVisible: true,
-    });
-
-    const kamaSeries = chart.addSeries(LineSeries, {
-      color: 'var(--color-accent)', lineWidth: 2,
-      priceLineVisible: false, lastValueVisible: false,
-      title: 'KAMA',
-    });
-
-    // ── Panel 1: regime histogram ──────────────────────────────────────────
-    const regimeHist = chart.addSeries(HistogramSeries, {
-      color: 'var(--color-text-secondary)',
-      priceFormat: { type: 'price', precision: 0, minMove: 1 },
-      priceScaleId: 'right',
-      lastValueVisible: false,
-      priceLineVisible: false,
-    }, 1);
-
-    // ── Panel 2: probabilities ─────────────────────────────────────────────
-    const bullProbSeries = chart.addSeries(LineSeries, {
-      color: ct.up, lineWidth: 2,
-      priceLineVisible: false, lastValueVisible: false,
-      title: 'Bull P (MK)',
-    }, 2);
-
-    const msProbSeries = chart.addSeries(LineSeries, {
-      color: ct.down, lineWidth: 2,
-      priceLineVisible: false, lastValueVisible: false,
-      title: 'Stress P (MS)',
-    }, 2);
-
-    const midLine = chart.addSeries(LineSeries, {
-      color: alpha(ct.axis, 0.4), lineWidth: 1, lineStyle: 2,
-      priceLineVisible: false, lastValueVisible: false,
-      crosshairMarkerVisible: false,
-    }, 2);
-
-    // ── Panel 3: YZ percentile ─────────────────────────────────────────────
-    const yzSeries = chart.addSeries(LineSeries, {
-      color: ct.up, lineWidth: 2,
-      priceLineVisible: false, lastValueVisible: false,
-      title: 'YZ Pct',
-    }, 3);
-
-    // ── Panel 4: TICA+HMM regime (coloured bars) ──────────────────────────
-    const ticaRegimeHist = chart.addSeries(HistogramSeries, {
-      color: TICA_LABEL_COLORS['Risk-On'],
-      priceFormat: { type: 'price', precision: 0, minMove: 1 },
-      priceScaleId: 'right',
-      lastValueVisible: false,
-      priceLineVisible: false,
-    }, 4);
-
-    // reference lines at 25, 75, 90
-    const makeRef = (_val: number, col: string) =>
-      chart.addSeries(LineSeries, {
-        color: col, lineWidth: 1, lineStyle: 2,
-        priceLineVisible: false, lastValueVisible: false,
-        crosshairMarkerVisible: false,
-      }, 3);
-    const ref25 = makeRef(25, alpha(primitives.blue[500], 0.5));
-    const ref75 = makeRef(75, alpha(primitives.orange[500], 0.5));
-    const ref90 = makeRef(90, alpha(primitives.red[500], 0.5));
-
-    // ── build data arrays ──────────────────────────────────────────────────
-    const priceData:    { time: UTCTimestamp; open: number; high: number; low: number; close: number }[] = [];
-    const kamaData:     { time: UTCTimestamp; value: number; color: string }[] = [];
-    const histData:     { time: UTCTimestamp; value: number; color: string }[] = [];
-    const bullData:     { time: UTCTimestamp; value: number }[] = [];
-    const msData:       { time: UTCTimestamp; value: number }[] = [];
-    const midData:      { time: UTCTimestamp; value: number }[] = [];
-    const yzData:       { time: UTCTimestamp; value: number; color: string }[] = [];
-    const r25:          { time: UTCTimestamp; value: number }[] = [];
-    const r75:          { time: UTCTimestamp; value: number }[] = [];
-    const r90:          { time: UTCTimestamp; value: number }[] = [];
-    const ticaHistData: { time: UTCTimestamp; value: number; color: string }[] = [];
-
-    for (let i = 0; i < n; i++) {
-      const t = toTs(timestamps[i]);
-      priceData.push({ time: t, open: open[i], high: high[i], low: low[i], close: close[i] });
-
-      const k = markov_kama.kama[i];
-      const rc = markov_kama.regime_code[i];
-      if (k != null) kamaData.push({ time: t, value: k, color: REGIME_COLORS[rc] ?? REGIME_FALLBACK });
-
-      histData.push({
-        time: t,
-        value: rc,
-        color: REGIME_COLORS[rc] ?? REGIME_FALLBACK,
-      });
-
-      const hp = markov_kama.high_var_prob[i];
-      if (hp != null) bullData.push({ time: t, value: hp });
-
-      const mp = ms_regime.regime_prob[i];
-      if (mp != null) msData.push({ time: t, value: mp });
-
-      midData.push({ time: t, value: 0.5 });
-
-      const pct = yz_percentile.pct_rank[i];
-      if (pct != null) yzData.push({ time: t, value: pct, color: yzColor(pct) });
-
-      r25.push({ time: t, value: 25 });
-      r75.push({ time: t, value: 75 });
-      r90.push({ time: t, value: 90 });
-
-      // TICA+HMM panel — one full-height bar per bar, coloured by regime
-      const lbl = tica_hmm.regime_label[i] ?? '';
-      if (lbl) {
-        ticaHistData.push({ time: t, value: 1, color: TICA_LABEL_COLORS[lbl] ?? REGIME_FALLBACK });
+    createTvWidget({
+      container: containerRef.current,
+      datafeed: createRegimeDatafeed(store),
+      library_path: LIBRARY_PATH,
+      symbol: store.data.symbol,
+      interval: DAILY,
+      timeframe: '12M',
+      locale: 'en' as LanguageCode,
+      autosize: true,
+      theme: mode,
+      timezone: 'Asia/Ho_Chi_Minh',
+      custom_indicators_getter: regimeIndicatorsGetter(store),
+      disabled_features: ['header_symbol_search', 'symbol_search_hot_key'],
+      overrides: {
+        ...tvOverrides(mode),
+        'mainSeriesProperties.candleStyle.borderVisible': false,
+      },
+    }).then((widget) => {
+      if (disposed) {
+        widget.remove();
+        return;
       }
-    }
-
-    priceSeries.setData(priceData);
-    kamaSeries.setData(kamaData);
-    regimeHist.setData(histData);
-    bullProbSeries.setData(bullData);
-    msProbSeries.setData(msData);
-    midLine.setData(midData);
-    yzSeries.setData(yzData);
-    ref25.setData(r25);
-    ref75.setData(r75);
-    ref90.setData(r90);
-    ticaRegimeHist.setData(ticaHistData);
-
-    // show last 365 bars
-    const ts = chart.timeScale();
-    const to   = n - 1 + 20;
-    const from = Math.max(0, to - 365 - 20);
-    ts.setVisibleLogicalRange({ from, to });
+      widgetRef.current = widget;
+      widget.onChartReady(() => {
+        if (disposed) return;
+        const chart = widget.activeChart();
+        void Promise.all([
+          chart.createStudy(REGIME_STUDIES.kama, true, false),
+          chart.createStudy(REGIME_STUDIES.markov, false, false),
+          chart.createStudy(REGIME_STUDIES.probabilities, false, false),
+          chart.createStudy(REGIME_STUDIES.yzPercentile, false, false),
+          chart.createStudy(REGIME_STUDIES.ticaHmm, false, false),
+        ]).then(() => {
+          if (disposed) return;
+          const heights = chart.getAllPanesHeight();
+          if (heights.length !== 5) return;
+          const total = heights.reduce((sum, height) => sum + height, 0);
+          const indicatorHeight = Math.max(70, Math.floor(total / 9));
+          chart.setAllPanesHeight([
+            total - indicatorHeight * 4,
+            indicatorHeight,
+            indicatorHeight,
+            indicatorHeight,
+            indicatorHeight,
+          ]);
+        }).catch((cause) => {
+          if (!disposed) setError(cause instanceof Error ? cause.message : 'Failed to add regime studies');
+        });
+      });
+    }).catch((cause) => {
+      if (!disposed) setError(cause instanceof Error ? cause.message : 'Failed to create regime chart');
+    });
 
     return () => {
-      try {
-        chart.removeSeries(priceSeries);
-        chart.removeSeries(kamaSeries);
-        chart.removeSeries(regimeHist);
-        chart.removeSeries(bullProbSeries);
-        chart.removeSeries(msProbSeries);
-        chart.removeSeries(midLine);
-        chart.removeSeries(yzSeries);
-        chart.removeSeries(ref25);
-        chart.removeSeries(ref75);
-        chart.removeSeries(ref90);
-        chart.removeSeries(ticaRegimeHist);
-      } catch {}
+      disposed = true;
+      if (widgetRef.current) {
+        try { widgetRef.current.remove(); } catch { /* Already removed. */ }
+        widgetRef.current = null;
+      }
     };
-    // `ct` is a dep so the chart is rebuilt when the colour mode flips.
-  }, [data, chartReady, ct]);
+  }, [loading, mode, store]);
 
   // ── symbol input handlers ─────────────────────────────────────────────────
   const commit = () => {

@@ -7,6 +7,7 @@ import clickhouse_connect
 import pandas as pd
 import pyarrow as pa
 import pyarrow.dataset as ds
+import talib
 from deltalake import DeltaTable
 from fastapi_cache.decorator import cache
 from loguru import logger
@@ -740,91 +741,130 @@ async def get_sector_relative_strength(
 
 
 
+DEFAULT_MARKET_RSI_PERIOD = 14
+
+
+def classify_rsi_values(values: pd.Series) -> pd.DataFrame:
+    """Classify RSI values into the dashboard's mutually exclusive buckets."""
+    return pd.DataFrame(
+        {
+            "rsi_below_30": (values < 30.0).astype("int8"),
+            "rsi_between_30_70": ((values >= 30.0) & (values <= 60.0)).astype("int8"),
+            "rsi_above_70": (values > 70.0).astype("int8"),
+        },
+        index=values.index,
+    )
+
+
 async def get_market_indicators(
     start_date: Optional[str] = None,
-    end_date: Optional[str] = None
+    end_date: Optional[str] = None,
+    rsi_period: int = DEFAULT_MARKET_RSI_PERIOD,
 ) -> dict:
     """
-    Calculate market breadth indicators:
+    Calculate market breadth indicators and historical RSI distribution:
     - A/D Line (Advance-Decline Line): Cumulative sum of (advances - declines)
     - McClellan Oscillator: 19-day EMA - 39-day EMA of daily advance-decline values
     - McClellan Summation Index: Cumulative sum of McClellan Oscillator
+    - Daily symbol counts for RSI below 30, from 30 through 70, and above 70
     """
-    # Load data from Delta Lake
-    start = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
-    end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
+    requested_start = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
+    requested_end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
+    load_start = (
+        requested_start - timedelta(days=max(60, rsi_period * 3))
+        if requested_start
+        else None
+    )
 
     df = _load_delta_stocks(
         symbols=None,
-        start=start,
-        end=end,
+        start=load_start,
+        end=requested_end,
         columns=["date", "close", "symbol"]
     )
 
+    empty_result = {
+        "timestamps": [],
+        "ad_line": [],
+        "mcclellan_oscillator": [],
+        "mcclellan_summation": [],
+        "advances": [],
+        "declines": [],
+        "unchanged": [],
+        "rsi_period": rsi_period,
+        "rsi_below_30": [],
+        "rsi_between_30_70": [],
+        "rsi_above_70": [],
+    }
     if df.empty:
-        return {
-            "timestamps": [],
-            "ad_line": [],
-            "mcclellan_oscillator": [],
-            "mcclellan_summation": [],
-            "advances": [],
-            "declines": [],
-            "unchanged": [],
-        }
+        return empty_result
 
-    # Sort by symbol and date for proper calculation
     df = df.sort_values(["symbol", "date"]).reset_index(drop=True)
-
-    # Calculate daily change for each stock
     df["prev_close"] = df.groupby("symbol")["close"].shift(1)
     df["change"] = df["close"] - df["prev_close"]
+    df["rsi"] = df.groupby("symbol", sort=False)["close"].transform(
+        lambda closes: talib.RSI(
+            closes.to_numpy(dtype="float64"),
+            timeperiod=rsi_period,
+        )
+    )
 
-    # Classify each stock-day as advancing, declining, or unchanged
     df["advancing"] = (df["change"] > 0).astype(int)
     df["declining"] = (df["change"] < 0).astype(int)
     df["unchanged"] = (df["change"] == 0).astype(int)
+    df = pd.concat([df, classify_rsi_values(df["rsi"])], axis=1)
 
-    # Group by date and count advances/declines
-    daily_breadth = df.groupby("date").agg({
-        "advancing": "sum",
-        "declining": "sum",
-        "unchanged": "sum",
-    }).reset_index()
+    daily_breadth = (
+        df.groupby("date")
+        .agg(
+            {
+                "advancing": "sum",
+                "declining": "sum",
+                "unchanged": "sum",
+                "rsi_below_30": "sum",
+                "rsi_between_30_70": "sum",
+                "rsi_above_70": "sum",
+            }
+        )
+        .reset_index()
+        .sort_values("date")
+        .reset_index(drop=True)
+    )
+    if requested_start:
+        daily_breadth = daily_breadth[
+            daily_breadth["date"] >= pd.Timestamp(requested_start)
+        ].reset_index(drop=True)
+    if requested_end:
+        daily_breadth = daily_breadth[
+            daily_breadth["date"] <= pd.Timestamp(requested_end)
+        ].reset_index(drop=True)
+    if daily_breadth.empty:
+        return empty_result
 
-    daily_breadth = daily_breadth.sort_values("date").reset_index(drop=True)
-
-    # Calculate Advance-Decline values
     daily_breadth["ad_value"] = daily_breadth["advancing"] - daily_breadth["declining"]
-
-    # A/D Line: Cumulative sum of daily advance-decline values
     daily_breadth["ad_line"] = daily_breadth["ad_value"].cumsum()
-
-    # McClellan Oscillator: 19-day EMA - 39-day EMA of AD values
-    # Using the Ratio-Adjusted formula: (Advances - Declines) / (Advances + Declines) * 1000
     daily_breadth["ad_ratio"] = (
         (daily_breadth["advancing"] - daily_breadth["declining"]) /
         (daily_breadth["advancing"] + daily_breadth["declining"]).replace(0, 1)
     ) * 1000
 
-    # Calculate EMAs for McClellan Oscillator
     ema_19 = daily_breadth["ad_ratio"].ewm(span=19, adjust=False).mean()
     ema_39 = daily_breadth["ad_ratio"].ewm(span=39, adjust=False).mean()
     daily_breadth["mcclellan_oscillator"] = ema_19 - ema_39
-
-    # McClellan Summation Index: Cumulative sum of McClellan Oscillator
     daily_breadth["mcclellan_summation"] = daily_breadth["mcclellan_oscillator"].cumsum()
 
-    # Convert to response format
-    timestamps = daily_breadth["date"].dt.strftime("%Y-%m-%d").tolist()
-
     return {
-        "timestamps": timestamps,
+        "timestamps": daily_breadth["date"].dt.strftime("%Y-%m-%d").tolist(),
         "ad_line": convert_nans(daily_breadth["ad_line"].values),
         "mcclellan_oscillator": convert_nans(daily_breadth["mcclellan_oscillator"].values),
         "mcclellan_summation": convert_nans(daily_breadth["mcclellan_summation"].values),
         "advances": daily_breadth["advancing"].values,
         "declines": daily_breadth["declining"].values,
         "unchanged": daily_breadth["unchanged"].values,
+        "rsi_period": rsi_period,
+        "rsi_below_30": daily_breadth["rsi_below_30"].values,
+        "rsi_between_30_70": daily_breadth["rsi_between_30_70"].values,
+        "rsi_above_70": daily_breadth["rsi_above_70"].values,
     }
 
 

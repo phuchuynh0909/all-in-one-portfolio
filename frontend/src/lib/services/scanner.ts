@@ -32,10 +32,12 @@ export interface ScannerColumnsResponse {
   columns: string[];
 }
 
+
 export async function getScannerColumns(): Promise<string[]> {
   const res = await apiGet<ScannerColumnsResponse>('/scanner/columns');
   return res.columns;
 }
+
 
 export async function scanFeatures(req: ScannerRequest): Promise<ScannerResponse> {
   return await apiPost<ScannerResponse>('/scanner/scan', req);

@@ -10,8 +10,9 @@ single ``portfolio`` vendor backed by *this* platform's data:
     ``app.services.stock_service._load_delta_stocks`` + ``stockstats``.
   * Company news — wichart research reports (MySQL metadata + summaries via
     ``WichartReportStore``).
-  * Fundamentals — ruatichsan financial statements plus 24hmoney's valuation and
-    ownership snapshot (``money24h_client``).
+  * Fundamentals — local MySQL financial statements first, then TCBS and
+    ruatichsan fallbacks, plus 24hmoney's valuation and ownership snapshot
+    (``money24h_client``).
   * Macro indicators — wichart's xbrain-news macro feed
     (``wichart_news_client``): rates, FX, SBV operations, CPI, GDP, trade.
 
@@ -459,18 +460,27 @@ _MACRO_FETCH_LIMIT = int(os.getenv("TRADINGAGENTS_MACRO_FETCH_LIMIT", "60"))
 _MACRO_SUMMARY_CHARS = 700
 
 # ──────────────────────────────────────────────────────────────────────────
-# Fundamentals — ruatichsan statements + 24hmoney company index
+# Fundamentals — local statements + external fallbacks + 24hmoney company index
 # ──────────────────────────────────────────────────────────────────────────
 # The API returns all three statements in one payload keyed by these short names.
 _STATEMENTS: dict[str, tuple[str, str]] = {
     "cdkt": ("balance_sheet", "Balance sheet (Cân đối kế toán)"),
     "kqkd": ("income_statement", "Income statement (Kết quả kinh doanh)"),
     "lctt": ("cashflow", "Cash flow (Lưu chuyển tiền tệ)"),
+    "tm": ("financial_notes", "Financial statement notes (Thuyết minh BCTC)"),
+}
+_DB_STATEMENT_TYPES = {
+    "cdkt": "candoiketoan",
+    "kqkd": "baocaothunhap",
+    "lctt": "luuchuyentiente",
+    "tm": "thuyetminh",
 }
 
 # Periods shown per statement. The API returns 30+ quarters, which is far more
 # than an analyst prompt should carry; the most recent five drive the narrative.
 _STMT_PERIODS = int(os.getenv("TRADINGAGENTS_FUNDAMENTALS_PERIODS", "12"))
+_NOTES_PERIODS = int(os.getenv("TRADINGAGENTS_FINANCIAL_NOTES_PERIODS", "4"))
+_NOTES_MAX_ROWS = int(os.getenv("TRADINGAGENTS_FINANCIAL_NOTES_MAX_ROWS", "50"))
 
 # (label, latest field, trailing-4-quarters field, decimals). The "4Q" variants
 # are the same metric over the last four reported quarters, i.e. TTM.
@@ -1570,9 +1580,9 @@ def get_prediction_markets(*args, **kwargs) -> str:
     )
 
 
-# ── Fundamentals (ruatichsan financial statements) ──────────────────────────
-# One payload serves all four tools, so memoize per (ticker, period) for the
-# process — otherwise a single analyst turn refetches the same data four times.
+# ── Fundamentals (local database → TCBS → ruatichsan) ───────────────────────
+# The ruatichsan fallback payload serves all three statement tools, so memoize
+# it per (ticker, period) when the database and TCBS tiers both miss.
 _statement_cache: dict[tuple[str, str], Any] = {}
 
 
@@ -1589,6 +1599,147 @@ def _load_statements(ticker: str, freq: str | None) -> Any:
     if key not in _statement_cache:
         _statement_cache[key] = rts.fetch_financial_statements(key[0], key[1])
     return _statement_cache[key]
+
+
+def _database_statement(
+    ticker: str,
+    key: str,
+    freq: str | None,
+    *,
+    periods: int | None = None,
+    max_rows: int | None = None,
+) -> str | None:
+    """Render one financial statement from the platform's MySQL store.
+
+    The crawler stores Wichart data with ``unit=ty``, so values are already in
+    billions of VND. A missing ticker, statement, or requested period type is a
+    normal cache miss and lets the caller continue to TCBS and ruatichsan.
+    """
+    from sqlalchemy import bindparam, text
+
+    from app.db.base import SessionLocal
+
+    statement_type = _DB_STATEMENT_TYPES[key]
+    _, title = _STATEMENTS[key]
+    period_type = "year" if _resolve_freq(freq) == "annual" else "quarter"
+
+    with SessionLocal() as db:
+        period_rows = db.execute(text("""
+            SELECT DISTINCT p.period_id, p.label, p.end_date
+            FROM period p
+            JOIN item_value iv ON iv.period_id = p.period_id
+            JOIN company c ON c.company_id = iv.company_id
+            JOIN statement_item si ON si.item_id = iv.item_id
+            JOIN statement s ON s.statement_id = si.statement_id
+            WHERE c.ticker = :ticker
+              AND s.statement_type = :statement_type
+              AND p.period_type = :period_type
+            ORDER BY p.end_date DESC
+            LIMIT :periods
+        """), {
+            "ticker": ticker,
+            "statement_type": statement_type,
+            "period_type": period_type,
+            "periods": periods or _STMT_PERIODS,
+        }).fetchall()
+        if not period_rows:
+            return None
+
+        # Render oldest → newest to match the other statement sources.
+        period_rows = list(reversed(period_rows))
+        period_ids = [row[0] for row in period_rows]
+        statement_query = text("""
+            SELECT
+                si.item_id,
+                si.title_vi,
+                si.level,
+                si.display_order,
+                p.period_id,
+                iv.value
+            FROM item_value iv
+            JOIN company c ON c.company_id = iv.company_id
+            JOIN statement_item si ON si.item_id = iv.item_id
+            JOIN statement s ON s.statement_id = si.statement_id
+            JOIN period p ON p.period_id = iv.period_id
+            WHERE c.ticker = :ticker
+              AND s.statement_type = :statement_type
+              AND p.period_id IN :period_ids
+            ORDER BY si.display_order, p.end_date
+        """).bindparams(bindparam("period_ids", expanding=True))
+        value_rows = db.execute(statement_query, {
+            "ticker": ticker,
+            "statement_type": statement_type,
+            "period_ids": period_ids,
+        }).fetchall()
+
+    if not value_rows:
+        return None
+
+    labels = [str(row[1]) for row in period_rows]
+    values_by_item: dict[int, dict[str, Any]] = {}
+    for item_id, item_title, level, display_order, period_id, value in value_rows:
+        item = values_by_item.setdefault(item_id, {
+            "title": item_title,
+            "level": level,
+            "display_order": display_order,
+            "values": {},
+        })
+        item["values"][period_id] = value
+
+    header = "| Line item (bn VND) | " + " | ".join(labels) + " |"
+    separator = "|---" * (len(labels) + 1) + "|"
+    lines = [f"# {ticker} — {title}", "", header, separator]
+    rendered_rows = 0
+    for item in sorted(
+        values_by_item.values(), key=lambda row: row["display_order"] or 0
+    ):
+        values = [item["values"].get(period_id) for period_id in period_ids]
+        if all(value in (0, None) for value in values):
+            continue
+        indent = "↳ " * max(0, int(item["level"] or 1) - 1)
+        rendered = " | ".join(
+            "-" if value is None else f"{float(value):,.1f}" for value in values
+        )
+        lines.append(f"| {indent}{item['title']} | {rendered} |")
+        rendered_rows += 1
+        if max_rows is not None and rendered_rows >= max_rows:
+            lines.append(
+                "| … additional rows omitted to keep the analyst context bounded "
+                f"| {' | '.join('-' for _ in labels)} |"
+            )
+            break
+
+    lines += [
+        "",
+        f"Values in billions of VND ({period_type} periods, oldest → newest). "
+        "Source: portfolio financial-statements database.",
+    ]
+    return "\n".join(lines)
+
+
+def _database_financial_notes(ticker: str) -> str | None:
+    """Load recent explanatory statement notes for the fundamentals analyst.
+
+    The analyst calls ``get_fundamentals`` once but calls each primary statement
+    for both annual and quarterly data. Attaching the notes here avoids sending
+    the same large disclosure table six times while still making it available
+    when the final fundamental analysis is composed.
+    """
+    block = _database_statement(
+        ticker,
+        "tm",
+        "quarterly",
+        periods=_NOTES_PERIODS,
+        max_rows=_NOTES_MAX_ROWS,
+    )
+    if not block:
+        return None
+    return (
+        "Use the following disclosures to explain or qualify movements in the "
+        "three primary statements, including debt, receivables, inventory, "
+        "related parties, commitments, and accounting composition when present.\n\n"
+        f"{block}"
+    )
 
 
 def _statement_table(
@@ -1640,6 +1791,12 @@ def _statement_table(
 def _statement_tool(ticker: str, freq: str | None, key: str) -> str:
     """Shared body for the three per-statement tools."""
     sym = str(ticker).upper()
+    block = _best_effort(
+        f"database_statement[{sym}/{key}]", _database_statement, sym, key, freq
+    )
+    if block:
+        return block
+
     block = _best_effort(
         f"tcbs_statement[{sym}/{key}]", tcbs_tiers.statement, sym, key, freq
     )
@@ -1693,9 +1850,12 @@ def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
     profitable is it, versus its sector" instead.
     """
     sym = str(ticker).upper()
+    notes = _best_effort(
+        f"database_financial_notes[{sym}]", _database_financial_notes, sym
+    )
     block = _best_effort(f"tcbs_fundamentals[{sym}]", tcbs_tiers.fundamentals, sym)
     if block:
-        return block
+        return "\n\n".join(part for part in (block, notes) if part)
 
     try:
         from app.services import money24h_client
@@ -1703,10 +1863,11 @@ def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
         data = money24h_client.fetch_company_index(sym)
     except Exception as exc:  # noqa: BLE001 — a data gap must not kill the graph
         logger.warning("Fundamentals unavailable for %s: %s", sym, exc)
-        return (
+        unavailable = (
             f"FUNDAMENTALS_UNAVAILABLE: could not load the fundamentals snapshot "
             f"for {sym} ({exc}). Do not fabricate figures."
         )
+        return "\n\n".join(part for part in (unavailable, notes) if part)
 
     lines = [f"# {sym} — fundamentals snapshot", ""]
 
@@ -1786,6 +1947,8 @@ def get_fundamentals(ticker: str, curr_date: str | None = None) -> str:
         "/ get_cashflow for the underlying line items (freq='annual' for yearly). "
         "Source: 24hmoney company index.",
     ]
+    if notes:
+        lines += ["", notes]
     return "\n".join(lines)
 
 

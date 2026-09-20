@@ -1,6 +1,8 @@
 """TCBS tiers: present when TCBS answers, invisible when it does not."""
 from __future__ import annotations
 
+from unittest.mock import Mock
+
 import pytest
 
 from app.services import tcbs_mcp_client as client
@@ -251,17 +253,21 @@ def test_fundamentals_block_survives_missing_enrichment(tcbs, monkeypatch):
     assert block is not None and "8.70" in block
 
 
+@pytest.mark.real_auth
 def test_vn_data_fundamentals_prefers_tcbs(monkeypatch):
     from app.services.tradingagents import vn_data
 
+    monkeypatch.setattr(vn_data, "_database_financial_notes", lambda sym: None)
     monkeypatch.setattr(vn_data.tcbs_tiers, "fundamentals", lambda sym: f"# {sym} tcbs")
     assert vn_data.get_fundamentals("TCB") == "# TCB tcbs"
 
 
+@pytest.mark.real_auth
 def test_vn_data_fundamentals_falls_back_to_money24h(monkeypatch):
     from app.services import money24h_client
     from app.services.tradingagents import vn_data
 
+    monkeypatch.setattr(vn_data, "_database_financial_notes", lambda sym: None)
     monkeypatch.setattr(vn_data.tcbs_tiers, "fundamentals", lambda sym: None)
     monkeypatch.setattr(
         money24h_client, "fetch_company_index", lambda sym: {"pe": 7.7, "group_name": "Thép"}
@@ -269,6 +275,23 @@ def test_vn_data_fundamentals_falls_back_to_money24h(monkeypatch):
     result = vn_data.get_fundamentals("HPG")
     assert "fundamentals snapshot" in result
     assert "24hmoney" in result
+
+
+@pytest.mark.real_auth
+def test_vn_data_fundamentals_includes_database_financial_notes(monkeypatch):
+    from app.services.tradingagents import vn_data
+
+    monkeypatch.setattr(
+        vn_data,
+        "_database_financial_notes",
+        lambda sym: f"# {sym} — Financial statement notes (Thuyết minh BCTC)",
+    )
+    monkeypatch.setattr(vn_data.tcbs_tiers, "fundamentals", lambda sym: f"# {sym} tcbs")
+
+    result = vn_data.get_fundamentals("HPG")
+
+    assert "# HPG tcbs" in result
+    assert "Thuyết minh BCTC" in result
 
 
 def test_label_humanizes_the_camel_case_fields():
@@ -386,9 +409,11 @@ def test_statement_is_none_when_tcbs_has_nothing(tcbs):
     assert tcbs_tiers.statement("ZZZZ", "lctt", "quarterly") is None
 
 
+@pytest.mark.real_auth
 def test_vn_data_statements_fall_back_to_ruatichsan(monkeypatch):
     from app.services.tradingagents import vn_data
 
+    monkeypatch.setattr(vn_data, "_database_statement", lambda sym, kind, freq: None)
     monkeypatch.setattr(vn_data.tcbs_tiers, "statement", lambda sym, kind, freq: None)
     monkeypatch.setattr(
         vn_data,
@@ -403,13 +428,95 @@ def test_vn_data_statements_fall_back_to_ruatichsan(monkeypatch):
     assert "Total assets" in result and "ruatichsan" in result
 
 
-def test_vn_data_statements_prefer_tcbs(monkeypatch):
+@pytest.mark.real_auth
+def test_vn_data_statements_prefer_database(monkeypatch):
     from app.services.tradingagents import vn_data
 
+    tcbs = Mock(side_effect=AssertionError("TCBS should not be called"))
+    monkeypatch.setattr(
+        vn_data, "_database_statement", lambda sym, kind, freq: f"# {sym} {kind} database"
+    )
+    monkeypatch.setattr(vn_data.tcbs_tiers, "statement", tcbs)
+    assert vn_data.get_cashflow("HPG") == "# HPG lctt database"
+    tcbs.assert_not_called()
+
+
+@pytest.mark.real_auth
+def test_vn_data_statements_fall_back_from_database_to_tcbs(monkeypatch):
+    from app.services.tradingagents import vn_data
+
+    monkeypatch.setattr(vn_data, "_database_statement", lambda sym, kind, freq: None)
     monkeypatch.setattr(
         vn_data.tcbs_tiers, "statement", lambda sym, kind, freq: f"# {sym} {kind} tcbs"
     )
     assert vn_data.get_cashflow("HPG") == "# HPG lctt tcbs"
+
+
+@pytest.mark.real_auth
+def test_database_statement_renders_stored_billion_vnd_values(monkeypatch):
+    from app.db import base
+    from app.services.tradingagents import vn_data
+
+    class Result:
+        def __init__(self, rows):
+            self.rows = rows
+
+        def fetchall(self):
+            return self.rows
+
+    class Session:
+        def __init__(self):
+            self.calls = []
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def execute(self, _query, params):
+            self.calls.append(params)
+            if len(self.calls) == 1:
+                return Result([
+                    (2, "Q2-2026", "2026-06-30"),
+                    (1, "Q1-2026", "2026-03-31"),
+                ])
+            return Result([
+                (10, "Tổng tài sản", 1, 0, 1, 1_000),
+                (10, "Tổng tài sản", 1, 0, 2, 1_500),
+            ])
+
+    session = Session()
+    monkeypatch.setattr(base, "SessionLocal", lambda: session)
+
+    result = vn_data._database_statement("HPG", "cdkt", "quarterly")
+
+    assert result is not None
+    assert "Q1-2026 | Q2-2026" in result
+    assert "1,000.0 | 1,500.0" in result
+    assert "portfolio financial-statements database" in result
+    assert session.calls[0]["statement_type"] == "candoiketoan"
+
+
+@pytest.mark.real_auth
+def test_database_financial_notes_uses_recent_bounded_quarters(monkeypatch):
+    from app.services.tradingagents import vn_data
+
+    statement = Mock(return_value="# HPG notes")
+    monkeypatch.setattr(vn_data, "_database_statement", statement)
+
+    result = vn_data._database_financial_notes("HPG")
+
+    assert result is not None
+    assert "explain or qualify movements" in result
+    assert "# HPG notes" in result
+    statement.assert_called_once_with(
+        "HPG",
+        "tm",
+        "quarterly",
+        periods=vn_data._NOTES_PERIODS,
+        max_rows=vn_data._NOTES_MAX_ROWS,
+    )
 
 
 def test_row_digits_keeps_ratios_readable():

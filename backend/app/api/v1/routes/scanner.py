@@ -14,6 +14,8 @@ async def list_columns() -> ScannerColumnsResponse:
     return ScannerColumnsResponse(columns=scanner_service.list_columns())
 
 
+
+
 @router.post("/scan", response_model=ScannerResponse)
 async def scan(req: ScannerRequest) -> ScannerResponse:
     try:

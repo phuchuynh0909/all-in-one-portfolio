@@ -180,7 +180,7 @@ class IndicatorsRequest(BaseModel):
 
 
 class MarketBreadthResponse(BaseModel):
-    """Response schema for market breadth indicators (A/D Line, McClellan)."""
+    """Response schema for market breadth and RSI distribution history."""
     timestamps: List[str]
     ad_line: List[Optional[float]] = Field(description="Advance-Decline Line (cumulative)")
     mcclellan_oscillator: List[Optional[float]] = Field(description="McClellan Oscillator (19 EMA - 39 EMA)")
@@ -188,9 +188,14 @@ class MarketBreadthResponse(BaseModel):
     advances: List[int] = Field(description="Daily advancing stocks count")
     declines: List[int] = Field(description="Daily declining stocks count")
     unchanged: List[int] = Field(description="Daily unchanged stocks count")
+    rsi_period: int = Field(description="RSI lookback period used for the distribution")
+    rsi_below_30: List[int] = Field(description="Daily count of stocks with RSI below 30")
+    rsi_between_30_70: List[int] = Field(description="Daily count of stocks with RSI from 30 through 70")
+    rsi_above_70: List[int] = Field(description="Daily count of stocks with RSI above 70")
 
 
 class MarketBreadthRequest(BaseModel):
     """Request schema for market breadth indicators."""
     start_date: Optional[str] = Field(None, description="Start date (YYYY-MM-DD)")
     end_date: Optional[str] = Field(None, description="End date (YYYY-MM-DD)")
+    rsi_period: int = Field(21, ge=2, le=100, description="RSI lookback period")

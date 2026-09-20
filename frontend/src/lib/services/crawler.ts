@@ -16,7 +16,7 @@ export interface CrawlStatus {
 }
 
 export interface CrawlResponse {
-  status: 'started' | 'skipped';
+  status: 'started' | 'completed' | 'skipped';
   message: string;
   company: {
     ticker: string;
@@ -30,8 +30,12 @@ export const crawlerApi = {
     return response;
   },
 
-  async crawlSymbol(symbol: string, quarter = 1): Promise<CrawlResponse> {
-    const response = await apiPost<CrawlResponse>(`/crawler/crawl-symbol/${symbol}?quarter=${quarter}`, {});
+  async crawlSymbol(symbol: string, quarter = 1, refresh = false): Promise<CrawlResponse> {
+    const params = new URLSearchParams({
+      quarter: quarter.toString(),
+      refresh: refresh.toString(),
+    });
+    const response = await apiPost<CrawlResponse>(`/crawler/crawl-symbol/${symbol}?${params.toString()}`, {});
     return response;
   },
 

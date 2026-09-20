@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { PageContainer, PageHeader } from '../components/ui';
 import { 
   Box, 
+  Button,
   Typography, 
   CircularProgress, 
   Alert, 
@@ -13,8 +14,10 @@ import {
   TextField,
   Paper
 } from '@mui/material';
+import { Sync as RefreshIcon } from '@mui/icons-material';
 import { FinancialStatementsTable } from '../components/financial/FinancialStatementsTable';
 import { DataCrawler } from '../components/financial/DataCrawler';
+import { crawlerApi } from '../lib/services/crawler';
 import { financialApi } from '../lib/services/financial';
 import type { CompanyWithFinancialData } from '../lib/services/financial';
 interface FinancialStatementData {
@@ -47,6 +50,8 @@ export const FinancialStatements: React.FC = () => {
   const [companies, setCompanies] = useState<CompanyWithFinancialData[]>([]);
   const [loading, setLoading] = useState(false);
   const [companiesLoading, setCompaniesLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshSuccess, setRefreshSuccess] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const statementTypes = [
@@ -90,6 +95,23 @@ export const FinancialStatements: React.FC = () => {
     // Refresh companies list when new data is crawled
     fetchCompanies();
     console.log(`Data crawled for ${symbol}, refreshing companies list`);
+  };
+
+  const handleRefreshLatest = async () => {
+    if (!selectedCompany) return;
+
+    setRefreshing(true);
+    setRefreshSuccess(null);
+    setError(null);
+    try {
+      const response = await crawlerApi.crawlSymbol(selectedCompany.ticker, 1, true);
+      setRefreshSuccess(response.message);
+      await Promise.all([fetchCompanies(), fetchFinancialData()]);
+    } catch (err) {
+      setError('Failed to refresh latest data: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const fetchFinancialData = async () => {
@@ -205,7 +227,23 @@ export const FinancialStatements: React.FC = () => {
             ))}
           </Select>
         </FormControl>
+
+        <Button
+          variant="contained"
+          onClick={handleRefreshLatest}
+          disabled={!selectedCompany || refreshing || loading}
+          startIcon={refreshing ? <CircularProgress size={18} color="inherit" /> : <RefreshIcon />}
+          sx={{ whiteSpace: 'nowrap' }}
+        >
+          {refreshing ? 'Fetching latest…' : 'Fetch latest & save'}
+        </Button>
       </Box>
+
+      {refreshSuccess && (
+        <Alert severity="success" sx={{ mb: 3 }} onClose={() => setRefreshSuccess(null)}>
+          {refreshSuccess}
+        </Alert>
+      )}
 
       {/* Content */}
       {companiesLoading && (

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Box,
   Table,
@@ -12,6 +12,8 @@ import {
   Typography,
   Tabs,
   Tab,
+  FormControlLabel,
+  Switch,
 } from '@mui/material';
 import {
   ExpandMore as ExpandMoreIcon,
@@ -26,12 +28,24 @@ interface ExpandedState {
   [itemId: number]: boolean;
 }
 
+const expandAllItems = (data: FinancialStatementResponse): ExpandedState =>
+  Object.fromEntries(
+    data.statements.flatMap((statement) =>
+      statement.items.map((item) => [item.item_id, true]),
+    ),
+  );
+
 export const FinancialStatementsTable: React.FC<FinancialStatementsTableProps> = ({ data }) => {
   const [selectedStatement, setSelectedStatement] = useState(0);
-  const [expanded, setExpanded] = useState<ExpandedState>({});
+  const [expanded, setExpanded] = useState<ExpandedState>(() => expandAllItems(data));
+  const [excludeAllZeroRows, setExcludeAllZeroRows] = useState(false);
 
   const statements = data.statements;
   const periods = data.periods;
+
+  useEffect(() => {
+    setExpanded(expandAllItems(data));
+  }, [data]);
 
   const toggleExpanded = (itemId: number) => {
     setExpanded(prev => ({
@@ -56,16 +70,22 @@ export const FinancialStatementsTable: React.FC<FinancialStatementsTableProps> =
     return allItems.some(otherItem => otherItem.parent_item_id === item.item_id);
   };
 
+  const isAllZeroRow = (item: FinancialStatementItem): boolean => {
+    return periods.length > 0 && periods.every((period) => item.values[period.label] === 0);
+  };
+
   const getVisibleItems = (items: FinancialStatementItem[]): FinancialStatementItem[] => {
     const result: FinancialStatementItem[] = [];
     
     const addItemAndChildren = (item: FinancialStatementItem, shouldShow: boolean) => {
-      if (shouldShow) {
+      const isExcluded = excludeAllZeroRows && isAllZeroRow(item);
+      if (shouldShow && !isExcluded) {
         result.push(item);
       }
       
-      // Add children if parent is expanded or if it's a top-level item
-      const showChildren = shouldShow && (expanded[item.item_id] || item.level === 1);
+      // When a zero-only parent is hidden, promote its children so non-zero
+      // descendants do not disappear with it.
+      const showChildren = shouldShow && (isExcluded || expanded[item.item_id] || item.level === 1);
       const children = items.filter(child => child.parent_item_id === item.item_id);
       
       children
@@ -193,13 +213,24 @@ export const FinancialStatementsTable: React.FC<FinancialStatementsTableProps> =
       </Box>
 
       {/* Company Info */}
-      <Box sx={{ mb: 2 }}>
-        <Typography variant="h6" gutterBottom>
-          {data.company_ticker} - {data.company_name}
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {statements[selectedStatement]?.title}
-        </Typography>
+      <Box sx={{ mb: 2, display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+        <Box>
+          <Typography variant="h6" gutterBottom>
+            {data.company_ticker} - {data.company_name}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {statements[selectedStatement]?.title}
+          </Typography>
+        </Box>
+        <FormControlLabel
+          control={(
+            <Switch
+              checked={excludeAllZeroRows}
+              onChange={(event) => setExcludeAllZeroRows(event.target.checked)}
+            />
+          )}
+          label="Hide rows with all zero values"
+        />
       </Box>
 
       {/* Financial Table */}
