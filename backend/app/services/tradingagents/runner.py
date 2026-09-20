@@ -95,6 +95,7 @@ _PROVIDER_MODEL_DEFAULTS: dict[str, tuple[str, str]] = {
 
 # Friendly provider aliases → the canonical name the vendored framework expects.
 _PROVIDER_ALIASES: dict[str, str] = {
+    "ag": "openai_compatible",
     "gemini": "google",
     "google-genai": "google",
     "googleai": "google",

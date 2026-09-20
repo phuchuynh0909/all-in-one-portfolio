@@ -129,55 +129,31 @@ def health() -> dict:
 
 @router.get("/models")
 def list_models() -> dict:
-    """Model choices per provider, for the frontend's pickers.
-
-    Catalog entries are a convenience, not a whitelist: any model a provider
-    serves is accepted by ``/analyze/stream`` (Ollama, OpenRouter and the like are
-    open-ended, so the catalog offers a "custom" entry rather than a complete
-    list). ``ready`` says whether that provider's API key is present — an
-    unqualified pick still goes to ``provider``, so a picker can offer
-    ``provider:model`` specs from any ready provider and mix them across roles.
-    """
+    """Model choices fetched from the platform's LLM gateway."""
     from app.services.tradingagents.runner import (
         ANALYST_MODEL_KEYS,
         DEFAULT_ANALYSTS,
         build_config,
-        is_local_provider,
     )
+    from app.services.tradingagents.model_catalog import fetch_model_catalog
 
     cfg = build_config()
     provider = str(cfg["llm_provider"])
 
     providers: dict[str, dict] = {}
     try:
-        from tradingagents.llm_clients.api_key_env import get_api_key_env
-        from tradingagents.llm_clients.model_catalog import MODEL_OPTIONS
-
-        for name, modes in MODEL_OPTIONS.items():
-            key_env = get_api_key_env(name)
+        for name, models in fetch_model_catalog().items():
+            if not models:
+                continue
             providers[name] = {
-                "quick": [m for _label, m in modes.get("quick", ()) if m != "custom"],
-                "deep": [m for _label, m in modes.get("deep", ()) if m != "custom"],
-                "key_env": key_env,
-                # Local runtimes and keyless relays authenticate with nothing.
-                "ready": bool(
-                    is_local_provider(name) or not key_env or os.getenv(key_env)
-                ),
+                "quick": models,
+                "deep": models,
+                "execution_provider": "openai_compatible",
+                "key_env": None,
+                "ready": True,
             }
-    except Exception as exc:  # noqa: BLE001 — catalog drift must not break the page
-        logger.warning("Could not read the model catalog: {}", exc)
-
-    # The configured models are the ones this deployment actually runs, and they
-    # are routinely newer than the vendored catalog — offer them as picks instead
-    # of leaving the operator to retype them.
-    for role, spec in (cfg.get("llm_roles") or {}).items():
-        entry = providers.setdefault(
-            str(spec["provider"]),
-            {"quick": [], "deep": [], "key_env": None, "ready": True},
-        )
-        mode = "deep" if role == "deep" else "quick"
-        if spec["model"] not in entry[mode]:
-            entry[mode].insert(0, spec["model"])
+    except Exception as exc:  # noqa: BLE001 — gateway outage must not break the page
+        logger.warning("Could not fetch the gateway model catalog: {}", exc)
 
     entry = providers.get(provider, {})
     return {

@@ -22,8 +22,6 @@ import {
   TableRow,
   IconButton,
   Autocomplete,
-  Collapse,
-  Link,
   Dialog,
   DialogTitle,
   DialogContent,
@@ -121,10 +119,44 @@ const formatWhen = (iso: string): string => {
 
 type StepStatus = 'done' | 'running' | 'pending';
 
-// Analysts that can be pinned to their own model, in pipeline order. Mirrors the
-// backend's ANALYST_MODEL_KEYS minus `social`, which this deployment never runs
-// (the VN news tool carries sentiment/sector context into the News Analyst).
-const MODEL_PICKABLE_ANALYSTS = ['market', 'news', 'fundamentals'] as const;
+const MODEL_SELECTION_STORAGE_KEY = 'tradingAgents.modelSelection.v1';
+const GATEWAY_PROVIDER = 'openai_compatible';
+const LEGACY_CATALOG_PROVIDERS = new Set(['deepseek', 'openai', 'ag']);
+
+interface ModelSelection {
+  quick: string;
+  deep: string;
+}
+
+const loadModelSelection = (): ModelSelection | null => {
+  try {
+    const raw = localStorage.getItem(MODEL_SELECTION_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as Partial<ModelSelection>;
+    return {
+      quick: typeof parsed.quick === 'string' ? parsed.quick : '',
+      deep: typeof parsed.deep === 'string' ? parsed.deep : '',
+    };
+  } catch {
+    return null;
+  }
+};
+
+const gatewayModelSpec = (value: string): string => {
+  const spec = value.trim();
+  if (!spec) return '';
+  const separator = spec.indexOf(':');
+  if (separator < 0) return `${GATEWAY_PROVIDER}:${spec}`;
+
+  const provider = spec.slice(0, separator).toLowerCase();
+  if (provider === GATEWAY_PROVIDER) return spec;
+  if (LEGACY_CATALOG_PROVIDERS.has(provider)) {
+    return `${GATEWAY_PROVIDER}:${spec.slice(separator + 1)}`;
+  }
+  // Unknown prefixes may be part of the routed model ID, so preserve the full
+  // value and qualify it with the gateway provider.
+  return `${GATEWAY_PROVIDER}:${spec}`;
+};
 
 /**
  * Display a resolved role: bare model on the default provider, `provider:model`
@@ -214,13 +246,15 @@ const TradingAgents: React.FC = () => {
   const [loadingId, setLoadingId] = React.useState<string | null>(null);
   const [viewingId, setViewingId] = React.useState<string | null>(null);
 
-  // Per-run model selection. Empty string = "use the server default", so a run
-  // never pins a model the user did not choose.
+  // These are the only two user-facing model decisions. Keep them in browser
+  // storage so the next run and the next page visit use the same choices.
   const [modelOptions, setModelOptions] = React.useState<TAModelOptions | null>(null);
-  const [showModels, setShowModels] = React.useState(false);
-  const [quickModel, setQuickModel] = React.useState('');
-  const [deepModel, setDeepModel] = React.useState('');
-  const [analystModels, setAnalystModels] = React.useState<Record<string, string>>({});
+  const savedModelSelection = React.useRef(loadModelSelection()).current;
+  const [selectedModels, setSelectedModels] = React.useState<ModelSelection>(
+    savedModelSelection ?? { quick: '', deep: '' },
+  );
+  const quickModel = selectedModels.quick;
+  const deepModel = selectedModels.deep;
   // Models the *last run* resolved to (echoed by the `started` event).
   const [ranModels, setRanModels] = React.useState<{
     quick: string;
@@ -242,7 +276,13 @@ const TradingAgents: React.FC = () => {
       .then(setHealth)
       .catch(() => setHealth(null));
     fetchModelOptions()
-      .then(setModelOptions)
+      .then((options) => {
+        setModelOptions(options);
+        setSelectedModels((current) => ({
+          quick: gatewayModelSpec(current.quick),
+          deep: gatewayModelSpec(current.deep),
+        }));
+      })
       .catch(() => setModelOptions(null));
     fetchTcbsStatus()
       .then(setTcbs)
@@ -250,6 +290,14 @@ const TradingAgents: React.FC = () => {
     loadHistory();
     return () => controllerRef.current?.abort();
   }, [loadHistory]);
+
+  React.useEffect(() => {
+    try {
+      localStorage.setItem(MODEL_SELECTION_STORAGE_KEY, JSON.stringify(selectedModels));
+    } catch {
+      // Storage may be disabled; the selections still work for the current tab.
+    }
+  }, [selectedModels]);
 
   const openAnalysis = async (id: string) => {
     setLoadingId(id);
@@ -276,7 +324,7 @@ const TradingAgents: React.FC = () => {
 
   const handleRun = () => {
     const sym = symbol.trim().toUpperCase();
-    if (!sym) return;
+    if (!sym || !quickModel.trim() || !deepModel.trim()) return;
 
     setRunning(true);
     setSections({});
@@ -287,19 +335,12 @@ const TradingAgents: React.FC = () => {
     setStatus('Connecting…');
     startMsRef.current = Date.now();
 
-    // Only send what the user actually picked — anything omitted falls back to
-    // the backend's env-configured model.
-    const pinned = Object.fromEntries(
-      Object.entries(analystModels).filter(([, model]) => model.trim()),
-    );
-
     const { controller } = startAnalysis(
       {
         symbol: sym,
         trade_date: tradeDate || undefined,
-        quick_think_llm: quickModel.trim() || undefined,
-        deep_think_llm: deepModel.trim() || undefined,
-        analyst_models: Object.keys(pinned).length ? pinned : undefined,
+        quick_think_llm: gatewayModelSpec(quickModel) || undefined,
+        deep_think_llm: gatewayModelSpec(deepModel) || undefined,
       },
       {
         onStarted: (d) => {
@@ -407,21 +448,10 @@ const TradingAgents: React.FC = () => {
   const asOf = started?.date ?? tradeDate ?? '';
   const displaySymbol = started?.symbol ?? symbol.trim().toUpperCase();
 
-  // Analysts share the quick tier's catalog.
   const quickChoices = React.useMemo(
     () => modelChoices(modelOptions, 'quick'),
     [modelOptions],
   );
-
-  /** What a role runs on unless overridden, provider-qualified when mixed. */
-  const roleDefault = (role: string): string =>
-    specLabel(modelOptions?.defaults.llm_roles?.[role], modelOptions?.provider);
-
-  // Number of models explicitly chosen for the next run (badge on the toggle).
-  const pinnedCount =
-    (quickModel.trim() ? 1 : 0) +
-    (deepModel.trim() ? 1 : 0) +
-    Object.values(analystModels).filter((m) => m.trim()).length;
 
   // Everything the run used besides the manager model shown on the card.
   const analystModelSummary = [
@@ -573,7 +603,7 @@ const TradingAgents: React.FC = () => {
                 variant="contained"
                 startIcon={<PlayArrowIcon />}
                 onClick={handleRun}
-                disabled={!symbol.trim()}
+                disabled={!symbol.trim() || !quickModel.trim() || !deepModel.trim()}
               >
                 Run analysis
               </Button>
@@ -586,67 +616,37 @@ const TradingAgents: React.FC = () => {
                 </Typography>
               </Box>
             )}
-            <Box sx={{ flexGrow: 1 }} />
-            <Link
-              component="button"
-              type="button"
-              variant="body2"
-              underline="hover"
-              onClick={() => setShowModels((v) => !v)}
-              sx={{ whiteSpace: 'nowrap' }}
-            >
-              {showModels ? 'Hide models' : `Models${pinnedCount ? ` (${pinnedCount})` : ''}`}
-            </Link>
           </Stack>
 
-          {/* Per-run model selection. Blank = the backend's configured default. */}
-          <Collapse in={showModels}>
-            <Divider sx={{ my: 2 }} />
-            <Typography variant="caption" color="text.secondary">
-              Models for this run — leave blank to use the server default. Roles may
-              sit on different providers: pick a <code>provider:model</code> entry, or
-              type any model ID (a bare name goes to
-              {modelOptions ? ` ${modelOptions.provider}` : ' the default provider'}).
-              Only providers with an API key configured are listed.
-            </Typography>
-            <Stack
-              direction={{ xs: 'column', md: 'row' }}
-              spacing={2}
-              sx={{ mt: 1.5, flexWrap: 'wrap' }}
-            >
-              <ModelPicker
-                label="Analysts (default)"
-                placeholder={roleDefault('quick')}
-                value={quickModel}
-                onChange={setQuickModel}
-                choices={quickChoices}
-                disabled={running}
-              />
-              <ModelPicker
-                label="Managers (deep)"
-                placeholder={roleDefault('deep')}
-                value={deepModel}
-                onChange={setDeepModel}
-                choices={modelChoices(modelOptions, 'deep')}
-                disabled={running}
-              />
-              {MODEL_PICKABLE_ANALYSTS.map((key) => (
-                <ModelPicker
-                  key={key}
-                  label={AGENT_META[key]?.label ?? key}
-                  // Falls back through: env pin for this analyst → whatever the
-                  // user picked for analysts → the server's quick default.
-                  placeholder={roleDefault(key) || quickModel || roleDefault('quick')}
-                  value={analystModels[key] ?? ''}
-                  onChange={(model) =>
-                    setAnalystModels((prev) => ({ ...prev, [key]: model }))
-                  }
-                  choices={quickChoices}
-                  disabled={running}
-                />
-              ))}
-            </Stack>
-          </Collapse>
+          <Divider sx={{ my: 2 }} />
+          <Typography variant="caption" color="text.secondary">
+            These choices map to <code>TRADINGAGENTS_QUICK_THINK_LLM</code> and{' '}
+            <code>TRADINGAGENTS_DEEP_THINK_LLM</code>. They are saved automatically in
+            this browser and reused for future analyses. Every routed model is executed
+            through the <code>openai_compatible</code> gateway.
+          </Typography>
+          <Stack
+            direction={{ xs: 'column', md: 'row' }}
+            spacing={2}
+            sx={{ mt: 1.5 }}
+          >
+            <ModelPicker
+              label="Quick-thinking model"
+              placeholder="Select a model"
+              value={quickModel}
+              onChange={(quick) => setSelectedModels((current) => ({ ...current, quick }))}
+              choices={quickChoices}
+              disabled={running}
+            />
+            <ModelPicker
+              label="Deep-thinking model"
+              placeholder="Select a model"
+              value={deepModel}
+              onChange={(deep) => setSelectedModels((current) => ({ ...current, deep }))}
+              choices={modelChoices(modelOptions, 'deep')}
+              disabled={running}
+            />
+          </Stack>
         </Paper>
 
         {error && (

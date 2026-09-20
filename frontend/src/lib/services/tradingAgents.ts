@@ -26,6 +26,8 @@ export interface TALlmRole {
 export interface TAProviderModels {
   quick: string[];
   deep: string[];
+  /** Provider used to execute this catalog group; all gateway models use openai_compatible. */
+  execution_provider?: string;
   key_env: string | null;
   /** API key present (or none needed) — a run on this provider can start. */
   ready: boolean;
@@ -227,7 +229,11 @@ export const modelChoices = (
   return Object.entries(opts.providers ?? {})
     .filter(([name, p]) => p.ready || name === opts.provider)
     .flatMap(([name, p]) =>
-      (p[mode] ?? []).map((model) => ({ spec: `${name}:${model}`, provider: name, model })),
+      (p[mode] ?? []).map((model) => ({
+        spec: `${p.execution_provider ?? name}:${model}`,
+        provider: name,
+        model,
+      })),
     );
 };
 
