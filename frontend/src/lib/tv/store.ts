@@ -2,11 +2,10 @@
  * Shared in-memory store bridging the app's REST timeseries API to the
  * TradingView charting library.
  *
- * The backend computes every indicator server-side and returns the values as
- * arrays aligned to the OHLCV bars. The charting library, by contrast, expects
- * indicators to be computed in-browser by custom studies. This store is the
- * bridge: `getBars` asks it for one page of bars, and each bridged custom study
- * looks up its precomputed value for the current bar by time.
+ * The backend returns OHLCV plus arrays for legacy bridged indicators.
+ * Browser-side PineJS and OpenScript studies compute directly from the OHLCV
+ * bars and never enter this store's indicator payload. Bridged custom studies
+ * look up their precomputed values here by bar time.
  *
  * Pagination lives on the backend (`POST /timeseries/{symbol}/bars`): every
  * `getBars` call fetches exactly the page the library asked for (`count_back`

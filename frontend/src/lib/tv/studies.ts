@@ -1,21 +1,19 @@
 /**
- * The chart's custom studies. Two kinds live here:
+ * The chart's custom studies. Three execution paths live here:
  *
- * 1. **Bridged** ({@link STUDY_SPECS}) — the backend computes the indicator and
- *    returns arrays aligned to the bars. Each study's `main()` looks up the
- *    current bar (by time) in {@link tvStore} and returns the precomputed values
- *    for that bar; no in-browser math. Plots map positionally to
- *    `metainfo.plots`; colorer plots (for per-bar histogram/line colors) follow
- *    the value plots and return a palette index.
+ * 1. **Bridged** ({@link STUDY_SPECS}) — the backend computes legacy
+ *    indicators and returns arrays aligned to the bars. Each study's `main()`
+ *    looks up the current bar by time.
  *
- * 2. **Computed** ({@link COMPUTED_STUDY_SPECS}) — the study does the math
- *    in-browser with PineJS, like a native library study. These need no backend
- *    round-trip, take their parameters as real study inputs (so they recalculate
- *    live and survive symbol/resolution changes), and update with the real-time
- *    bar as ticks arrive.
+ * 2. **PineJS** ({@link COMPUTED_STUDY_SPECS}) — small native custom studies
+ *    that calculate in TradingView's browser runtime.
  *
- * For both, `id` matches the app's indicator config id and `name` is the study
- * name passed to `activeChart().createStudy(name)` — see {@link STUDY_CATALOGUE}.
+ * 3. **OpenScript** — browser-side studies compiled and run by
+ *    `openalgo-script`. They receive the same OHLCV bars as the chart and need
+ *    no indicator payload from the Python backend.
+ *
+ * In every path, `id` matches the app indicator config and `name` is passed to
+ * `activeChart().createStudy(name)` — see {@link STUDY_CATALOGUE}.
  */
 import { tvStore, indexAtTimeMs } from './store';
 import type {
@@ -27,6 +25,24 @@ import type {
   StudyInputValue,
 } from './charting_library';
 import { studyPalette } from './theme';
+import {
+  ATR_TRAILING_OPENSCRIPT,
+  BVC_OPENSCRIPT,
+  CHANDELIER_EXIT_OPENSCRIPT,
+  GKYZ_VOLATILITY_OPENSCRIPT,
+  GAUSSIAN_FRAMA_OPENSCRIPT,
+  HULL_BUTTERFLY_OPENSCRIPT,
+  KALMAN_ZSCORE_OPENSCRIPT,
+  KAMA_OPENSCRIPT,
+  LR_PREDICTION_OPENSCRIPT,
+  MATRIX_SERIES_OPENSCRIPT,
+  SMART_MONEY_FLOW_OPENSCRIPT,
+  SQUEEZE_TTM_OPENSCRIPT,
+  VWAP_BANDS_OPENSCRIPT,
+  WILLIAMS_VIX_FIX_OPENSCRIPT,
+  YZ_VOLATILITY_OPENSCRIPT,
+  buildOpenScriptStudy,
+} from './openscript';
 
 // LineStudyPlotStyle
 const PLOT_LINE = 0;
@@ -139,265 +155,13 @@ function num(v: number | null | undefined): number {
   return typeof v === 'number' && isFinite(v) ? v : NaN;
 }
 
-// ── Smart Money Flow Cloud ────────────────────────────────────────────────────
-// Mirrors the plotting of "Smart Money Flow Cloud [BOSWaves]" (PineScript):
-// a regime-colored basis cloud, adaptive bands shaded down to price, Buy/Sell
-// labels on regime switches, ✦ retest chars, and regime-painted candles.
-// The bands themselves are invisible in Pine (100% transparent) — only their
-// fill against price is drawn.
-
-const SMF_BULL = studyPalette.bull;
-const SMF_BEAR = studyPalette.bear;
-/** Palette slot for "don't draw this fill on this bar". */
-const SMF_OFF = studyPalette.transparent;
-/** Buy/Sell label text — dark, since the label itself is filled with a bright regime color. */
-
-const smf = (d: Record<string, any>) => d.smart_money_flow;
-/** Regime palette index: 0 = bull (last_signal +1), 1 = bear (-1). */
-const smfRegime: Getter = (d, i) => (smf(d)?.last_signal?.[i] === 1 ? 0 : 1);
-/** True only on bars where the regime matches, for the one-sided band fills. */
-const smfFillIndex = (want: number): Getter => (d, i, o) =>
-  o.showBands && smf(d)?.last_signal?.[i] === want ? 0 : 1;
-const smfFlag = (key: string, input: string): Getter => (d, i, o) =>
-  o[input] && smf(d)?.[key]?.[i] ? 1 : null;
-
-const SMART_MONEY_FLOW_SPEC: StudySpec = {
-  id: 'smart_money_flow', name: 'SMF Cloud (bridged)', priceStudy: true,
-  inputs: [
-    { id: 'showCloud', name: 'Show Cloud', defval: false },
-    { id: 'showBands', name: 'Show Adaptive Bands', defval: true },
-    { id: 'paintBars', name: 'Color Bars', defval: true },
-    { id: 'showSwitch', name: 'Show Buy/Sell Signals', defval: true },
-    { id: 'showDots', name: 'Trend Retest Signals', defval: true },
-  ],
-  plots: [
-    {
-      id: 'bOpen', title: 'Basis Open', color: SMF_BULL, width: 1,
-      get: (d, i, o) => (o.showCloud ? smf(d)?.b_open?.[i] : null),
-    },
-    {
-      id: 'bClose', title: 'Basis Close', color: SMF_BULL, width: 2,
-      get: (d, i, o) => (o.showCloud ? smf(d)?.b_close?.[i] : null),
-    },
-    {
-      id: 'upper', title: 'Upper Band', color: SMF_BEAR, width: 1,
-      transparency: 100, hiddenStyle: true,
-      get: (d, i, o) => (o.showBands ? smf(d)?.upper?.[i] : null),
-    },
-    {
-      id: 'lower', title: 'Lower Band', color: SMF_BULL, width: 1,
-      transparency: 100, hiddenStyle: true,
-      get: (d, i, o) => (o.showBands ? smf(d)?.lower?.[i] : null),
-    },
-    // Fill anchor for the band shading — Pine's `plot(close, display=none)`.
-    {
-      id: 'price', title: 'Price', color: SMF_BULL, width: 1,
-      transparency: 100, hiddenStyle: true,
-      fromBar: (pine, context) => pine.Std.close(context),
-    },
-  ],
-  // Both basis lines follow the regime color, like Pine's `st.barCol`.
-  palettes: [
-    { target: 'bOpen', colors: [SMF_BULL, SMF_BEAR], index: smfRegime },
-    { target: 'bClose', colors: [SMF_BULL, SMF_BEAR], index: smfRegime },
-  ],
-  fills: [
-    {
-      a: 'bOpen', b: 'bClose', title: 'Basis Cloud', color: SMF_BULL, transparency: 75,
-      palette: { colors: [SMF_BULL, SMF_BEAR], index: smfRegime },
-    },
-    // Pine gradients these from the band toward price; the library only does
-    // solid fills, so they run lighter than Pine's 40 to stay readable.
-    {
-      a: 'upper', b: 'price', title: 'Bear Fill', color: SMF_BEAR, transparency: 70,
-      palette: { colors: [SMF_BEAR, SMF_OFF], index: smfFillIndex(-1) },
-    },
-    {
-      a: 'lower', b: 'price', title: 'Bull Fill', color: SMF_BULL, transparency: 70,
-      palette: { colors: [SMF_BULL, SMF_OFF], index: smfFillIndex(1) },
-    },
-  ],
-  // shapes: [
-  //   {
-  //     id: 'buy', title: 'Buy', shape: 'shape_label_up', location: 'BelowBar',
-  //     color: SMF_BULL, text: 'Buy', textColor: SMF_LABEL_TEXT, size: 'small',
-  //     get: smfFlag('switch_up', 'showSwitch'),
-  //   },
-  //   {
-  //     id: 'sell', title: 'Sell', shape: 'shape_label_down', location: 'AboveBar',
-  //     color: SMF_BEAR, text: 'Sell', textColor: SMF_LABEL_TEXT, size: 'small',
-  //     get: smfFlag('switch_down', 'showSwitch'),
-  //   },
-  // ],
-  chars: [
-    {
-      id: 'bullDot', title: 'Bullish Retest', char: '✦', location: 'BelowBar',
-      color: SMF_BULL, get: smfFlag('bull_dot', 'showDots'),
-    },
-    {
-      id: 'bearDot', title: 'Bearish Retest', char: '✦', location: 'AboveBar',
-      color: SMF_BEAR, get: smfFlag('bear_dot', 'showDots'),
-    },
-  ],
-  barColors: {
-    colors: [SMF_BULL, SMF_BEAR],
-    index: (d, i, o) => (o.paintBars ? smfRegime(d, i, o) : null),
-  },
-};
 
 /** Declarative catalogue of every bridged indicator, keyed by app config id. */
 export const STUDY_SPECS: StudySpec[] = [
   // ── Separate-pane oscillators ──────────────────────────────────────────────
   // (RSI lives in COMPUTED_STUDY_SPECS — it is calculated in-browser.)
-  {
-    id: 'bvc', name: 'BVC (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'bvc', title: 'BVC', color: studyPalette.violet, width: 2, get: (d, i) => d.bvc?.[i] }],
-    bands: [{ value: 0, color: studyPalette.zeroLine }],
-  },
-  {
-    id: 'kalman_zscore', name: 'Kalman Z-Score (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'z', title: 'Kalman Z-Score', color: studyPalette.cyan, width: 2, get: (d, i) => d.kalman_zscore?.[i] }],
-    bands: [
-      { value: 2, color: studyPalette.overbought },
-      { value: -2, color: studyPalette.oversold },
-      { value: 0, color: studyPalette.zeroLine },
-    ],
-  },
-  {
-    id: 'yz_volatility', name: 'YZ Volatility (bridged)', priceStudy: false, precision: 4,
-    plots: [{ id: 'yz', title: 'YZ Volatility', color: studyPalette.pink, width: 2, get: (d, i) => d.yz_volatility?.[i] }],
-  },
-  {
-    id: 'gkyz_volatility', name: 'GKYZ Volatility (bridged)', priceStudy: false, precision: 3,
-    plots: [{ id: 'gkyz', title: 'GKYZ', color: studyPalette.orange, width: 2, get: (d, i) => d.gkyz_volatility?.[i] }],
-    bands: [
-      { value: 0.8, color: studyPalette.overboughtStrong },
-      { value: 0.2, color: studyPalette.oversoldStrong },
-    ],
-  },
-  {
-    id: 'matrix_series', name: 'Matrix Series (bridged)', priceStudy: false, precision: 1,
-    inputs: [
-      { id: 'showDot', name: 'Show Watch/Warning Point', defval: true },
-    ],
-    plots: [
-      { id: 'sup', title: 'MS Support', color: studyPalette.red, width: 2, get: (d, i) => d.matrix_series?.support_line?.[i] },
-      { id: 'res', title: 'MS Resistance', color: studyPalette.green, width: 2, get: (d, i) => d.matrix_series?.resistance_line?.[i] },
-      { id: 'up', title: 'MS Up', color: studyPalette.teal, width: 1, get: (d, i) => d.matrix_series?.up_line?.[i] },
-      { id: 'down', title: 'MS Down', color: studyPalette.yellow, width: 1, get: (d, i) => d.matrix_series?.down_line?.[i] },
-      { id: 'hh', title: 'MS HH', color: studyPalette.greenFill, width: 1, get: (d, i) => d.matrix_series?.hh?.[i] },
-      { id: 'll', title: 'MS LL', color: studyPalette.redFill, width: 1, get: (d, i) => d.matrix_series?.ll?.[i] },
-    ],
-    fills: [{ a: 'hh', b: 'll', color: studyPalette.rangeFill, title: 'MS Range' }],
-    // Amber circles marking overbought/oversold watch points (Pine's UP/DOWN
-    // Shape plots). UPshape is non-na iff `up > ob`; DOWNshape iff `down < os`
-    // (the h01/h02/l01/l02 split only sets the y-level), so we anchor each dot
-    // to its line value at the moment the threshold is crossed.
-    shapes: [
-      {
-        id: 'upDot', title: 'UP Shape', shape: 'shape_circle', location: 'Absolute',
-        color: studyPalette.amber, size: 'tiny',
-        get: (d, i, o) => {
-          if (!o.showDot) return null;
-          const up = d.matrix_series?.up_line?.[i];
-          return typeof up === 'number' && up > 200 ? up : null;
-        },
-      },
-      {
-        id: 'downDot', title: 'DOWN Shape', shape: 'shape_circle', location: 'Absolute',
-        color: studyPalette.amber, size: 'tiny',
-        get: (d, i, o) => {
-          if (!o.showDot) return null;
-          const down = d.matrix_series?.down_line?.[i];
-          return typeof down === 'number' && down < -200 ? down : null;
-        },
-      },
-    ],
-  },
-  {
-    id: 'squeeze_ttm', name: 'Squeeze TTM (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'hist', title: 'Squeeze TTM', color: studyPalette.neutral, histogram: true, get: (d, i) => d.squeeze_ttm?.histogram?.[i] }],
-    palettes: [{
-      target: 'hist',
-      colors: [studyPalette.neutralBar, studyPalette.redBar, studyPalette.greenBar],
-      index: (d, i) => d.squeeze_ttm?.squeeze_state?.[i],
-    }],
-  },
-  {
-    id: 'williams_vix_fix', name: 'Williams VIX Fix (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'wvf', title: 'WVF', color: studyPalette.greenBar, histogram: true, get: (d, i) => d.williams_vix_fix?.wvf?.[i] }],
-    palettes: [{
-      target: 'wvf',
-      colors: [studyPalette.greenBar, studyPalette.yellowBar],
-      index: (d, i) => (d.williams_vix_fix?.filtered?.[i] ? 1 : 0),
-    }],
-    // Blue dot just below the histogram baseline on filtered-entry (cond_fe) bars.
-    shapes: [{
-      id: 'fe', title: 'FE', shape: 'shape_circle', location: 'Absolute', color: studyPalette.blue,
-      get: (d, i) => (d.williams_vix_fix?.cond_fe?.[i] ? 1 : null),
-    }],
-  },
 
   // ── Price-pane overlays ─────────────────────────────────────────────────────
-  {
-    id: 'atr_trailing', name: 'ATR Trailing Stop (bridged)', priceStudy: true,
-    plots: [{ id: 'atr', title: 'Trailing Stop', color: studyPalette.green, width: 2, dashed: true, get: (d, i) => d.atr_trailing?.[i] }],
-  },
-  {
-    id: 'vwap', name: 'VWAP Bands (bridged)', priceStudy: true,
-    plots: [
-      { id: 'high', title: 'VWAP High', color: studyPalette.blue, width: 2, get: (d, i) => d.vwap_highest?.[i] },
-      { id: 'low', title: 'VWAP Low', color: studyPalette.orange, width: 2, get: (d, i) => d.vwap_lowest?.[i] },
-    ],
-  },
-  {
-    id: 'kama', name: 'KAMA (bridged)', priceStudy: true,
-    plots: [{ id: 'kama', title: 'KAMA', color: studyPalette.yellow, width: 2, get: (d, i) => d.kama?.[i] }],
-  },
-  {
-    id: 'chandelier_exit', name: 'Chandelier Exit (bridged)', priceStudy: true,
-    plots: [{ id: 'ce', title: 'CE', color: studyPalette.trendUp, width: 2, dashed: true, get: (d, i) => d.chandelier_exit?.value?.[i] }],
-    palettes: [{
-      target: 'ce',
-      colors: [studyPalette.trendUp, studyPalette.trendDown],
-      index: (d, i) => (d.chandelier_exit?.direction?.[i] === 1 ? 0 : 1),
-    }],
-  },
-  {
-    id: 'linreg_channel', name: 'LR Prediction Channel (bridged)', priceStudy: true,
-    plots: [
-      { id: 'reg', title: 'LR Reg', color: studyPalette.regression, width: 1, get: (d, i) => d.linreg_channel?.reg?.[i] },
-      { id: 'piUp', title: 'LR PI Up', color: studyPalette.regressionBand, width: 1, dashed: true, get: (d, i) => d.linreg_channel?.pi_upper?.[i] },
-      { id: 'piLow', title: 'LR PI Low', color: studyPalette.regressionBand, width: 1, dashed: true, get: (d, i) => d.linreg_channel?.pi_lower?.[i] },
-    ],
-    fills: [{ a: 'piUp', b: 'piLow', color: studyPalette.regressionFill, title: 'LR Channel' }],
-  },
-  {
-    id: 'gaussian_frama', name: 'Gaussian FRAMA (bridged)', priceStudy: true,
-    plots: [
-      { id: 'frama', title: 'G-FRAMA', color: studyPalette.neutral, width: 2, get: (d, i) => d.gaussian_frama?.frama?.[i] },
-      { id: 'longV', title: 'G-FRAMA Long', color: studyPalette.blue, width: 1, dashed: true, get: (d, i) => d.gaussian_frama?.long_v?.[i] },
-      { id: 'shortV', title: 'G-FRAMA Short', color: studyPalette.red, width: 1, dashed: true, get: (d, i) => d.gaussian_frama?.short_v?.[i] },
-    ],
-    // Regime coloring: blue (qb=+1, bullish) / red (qb=-1, bearish) / gray (neutral).
-    palettes: [{
-      target: 'frama',
-      colors: [studyPalette.blue, studyPalette.red, studyPalette.neutral],
-      index: (d, i) => (d.gaussian_frama?.qb?.[i] === 1 ? 0 : d.gaussian_frama?.qb?.[i] === -1 ? 1 : 2),
-    }],
-    fills: [{ a: 'longV', b: 'shortV', color: studyPalette.cloudFill, title: 'G-FRAMA Cloud' }],
-  },
-  {
-    id: 'hull_butterfly', name: 'Hull Butterfly Oscillator (bridged)', priceStudy: false, precision: 2,
-    plots: [{ id: 'hso', title: 'HBO', color: studyPalette.neutral, histogram: true, get: (d, i) => d.hull_butterfly?.hso?.[i] }],
-    // Bullish/bearish/neutral state coloring driven by the discrete `os` signal.
-    palettes: [{
-      target: 'hso',
-      colors: [studyPalette.green, studyPalette.red, studyPalette.neutralFill],
-      index: (d, i) => (d.hull_butterfly?.os?.[i] === 1 ? 0 : d.hull_butterfly?.os?.[i] === -1 ? 1 : 2),
-    }],
-  },
-  SMART_MONEY_FLOW_SPEC,
 ];
 
 // ── PineJS-computed studies ───────────────────────────────────────────────────
@@ -605,22 +369,43 @@ export const COMPUTED_STUDY_SPECS: ComputedStudySpec[] = [
   },
 ];
 
+const OPENSCRIPT_STUDY_SPECS = [
+  ATR_TRAILING_OPENSCRIPT,
+  BVC_OPENSCRIPT,
+  KAMA_OPENSCRIPT,
+  CHANDELIER_EXIT_OPENSCRIPT,
+  HULL_BUTTERFLY_OPENSCRIPT,
+  KALMAN_ZSCORE_OPENSCRIPT,
+  GAUSSIAN_FRAMA_OPENSCRIPT,
+  YZ_VOLATILITY_OPENSCRIPT,
+  LR_PREDICTION_OPENSCRIPT,
+  WILLIAMS_VIX_FIX_OPENSCRIPT,
+  GKYZ_VOLATILITY_OPENSCRIPT,
+  SQUEEZE_TTM_OPENSCRIPT,
+  VWAP_BANDS_OPENSCRIPT,
+  MATRIX_SERIES_OPENSCRIPT,
+  SMART_MONEY_FLOW_OPENSCRIPT,
+];
+
 /**
  * Every study the chart can create, bridged and computed alike, in the order the
  * Indicators panel lists them.
  */
 export const STUDY_CATALOGUE: { id: string; name: string; computed: boolean }[] = [
   ...COMPUTED_STUDY_SPECS.map((s) => ({ id: s.id, name: s.name, computed: true })),
+  ...OPENSCRIPT_STUDY_SPECS.map((s) => ({ id: s.id, name: s.name, computed: true })),
   ...STUDY_SPECS.map((s) => ({ id: s.id, name: s.name, computed: false })),
 ];
 
-/** Study inputs for a computed study, or null when the study is bridged. */
+/** Study inputs for an in-browser PineJS/OpenScript study, or null when bridged. */
 export function computedStudyInputs(
   id: string,
   params: Record<string, number>,
 ): Record<string, StudyInputValue> | null {
-  const spec = COMPUTED_STUDY_SPECS.find((s) => s.id === id);
-  return spec ? spec.inputsFrom(params) : null;
+  const pineStudy = COMPUTED_STUDY_SPECS.find((s) => s.id === id);
+  if (pineStudy) return pineStudy.inputsFrom(params);
+  const openScriptStudy = OPENSCRIPT_STUDY_SPECS.find((s) => s.id === id);
+  return openScriptStudy ? openScriptStudy.inputsFrom(params) : null;
 }
 
 /** Map of app indicator id → the study name to pass to `createStudy`. */
@@ -831,10 +616,11 @@ function buildStudy(pine: PineJS, spec: StudySpec): CustomIndicator {
   } as unknown as CustomIndicator;
 }
 
-/** Widget `custom_indicators_getter`: every computed + bridged study. */
+/** Widget `custom_indicators_getter`: PineJS, OpenScript, then backend bridges. */
 export function customIndicatorsGetter(pine: PineJS): Promise<CustomIndicator[]> {
   return Promise.resolve([
     ...COMPUTED_STUDY_SPECS.map((spec) => spec.build(pine)),
+    ...OPENSCRIPT_STUDY_SPECS.map((spec) => buildOpenScriptStudy(pine, spec)),
     ...STUDY_SPECS.map((spec) => buildStudy(pine, spec)),
   ]);
 }

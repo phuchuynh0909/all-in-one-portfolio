@@ -54,6 +54,50 @@ type StockChartProps = {
   onWatchListResolved?: (resolved: ResolvedWatchList) => void;
 };
 
+type ExecutionMark = {
+  time: number;
+  price: number;
+  quantity: number;
+  side: 'buy' | 'sell';
+};
+
+type ExecutionSummary = {
+  quantity: number;
+  value: number;
+};
+
+/**
+ * Charts use daily bars, so one execution shape per day keeps all activity on
+ * that bar readable. Its direction and price represent the larger side; the
+ * tooltip preserves both sides' daily totals.
+ */
+function consolidateExecutionMarks(marks: ExecutionMark[]) {
+  const days = new Map<number, Record<'buy' | 'sell', ExecutionSummary>>();
+
+  for (const mark of marks) {
+    const day = days.get(mark.time) ?? {
+      buy: { quantity: 0, value: 0 },
+      sell: { quantity: 0, value: 0 },
+    };
+    const summary = day[mark.side];
+    summary.quantity += mark.quantity;
+    summary.value += mark.price * mark.quantity;
+    days.set(mark.time, day);
+  }
+
+  return [...days].map(([time, { buy, sell }]) => {
+    const side = sell.quantity > buy.quantity ? 'sell' : 'buy';
+    const summary = side === 'buy' ? buy : sell;
+    const averagePrice = summary.quantity > 0 ? summary.value / summary.quantity : 0;
+    const tooltip = [
+      buy.quantity > 0 && `Mua ${buy.quantity.toFixed(0)} \n CP @ ${(buy.value / buy.quantity).toFixed(2)}`,
+      sell.quantity > 0 && `Ban ${sell.quantity.toFixed(0)} \n CP @ ${(sell.value / sell.quantity).toFixed(2)}`,
+    ].filter(Boolean).join('\n');
+
+    return { time, price: averagePrice, side, tooltip };
+  });
+}
+
 export interface ParamDef {
   key: string;
   label: string;
@@ -70,8 +114,8 @@ export interface IndicatorConfig {
   visible: boolean;
   paramDefs: ParamDef[];
   /**
-   * True when the study computes itself in the browser (PineJS). Its params are
-   * passed as study inputs and it is left out of the backend indicator request.
+   * True when the study computes itself in the browser (PineJS or OpenScript).
+   * Its params become study inputs and it is omitted from backend requests.
    */
   computed?: boolean;
 }
@@ -96,7 +140,7 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
   {
     id: 'atr_trailing', name: 'atr_trailing', label: 'ATR Trailing Stop',
-    params: { timeperiod: 10, multiplier: 1.8 }, visible: true,
+    computed: true, params: { timeperiod: 10, multiplier: 1.8 }, visible: true,
     paramDefs: [
       { key: 'timeperiod', label: 'ATR Period',   min: 2,   max: 100, step: 1   },
       { key: 'multiplier', label: 'Multiplier',   min: 0.5, max: 10,  step: 0.1 },
@@ -104,17 +148,17 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
   {
     id: 'vwap', name: 'vwap', label: 'VWAP',
-    params: { window: 200 }, visible: true,
+    computed: true, params: { window: 200 }, visible: true,
     paramDefs: [{ key: 'window', label: 'Window', min: 10, max: 1000, step: 10 }],
   },
   {
-    id: 'kama', name: 'kama', label: 'KAMA',
+    id: 'kama', name: 'kama', label: 'KAMA', computed: true,
     params: { timeperiod: 10 }, visible: true,
     paramDefs: [{ key: 'timeperiod', label: 'Period', min: 2, max: 200, step: 1 }],
   },
   {
-    id: 'linreg_channel', name: 'linreg_channel', label: 'LR Prediction Channel',
-    params: { reg_window: 50, confidence: 0.85 }, visible: true,
+    id: 'linreg_channel', name: 'linreg_channel', label: 'LR Prediction Channel', computed: true,
+    params: { reg_window: 50, confidence: 0.85 }, visible: false,
     paramDefs: [
       { key: 'reg_window', label: 'Reg Window', min: 10, max: 200,  step: 5    },
       { key: 'confidence', label: 'Confidence', min: 0.5, max: 0.99, step: 0.01 },
@@ -122,7 +166,7 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
   {
     id: 'bvc', name: 'bvc', label: 'BVC',
-    params: { window: 20, kappa: 0.1 }, visible: true,
+    computed: true, params: { window: 20, kappa: 0.1 }, visible: true,
     paramDefs: [
       { key: 'window', label: 'Window', min: 5, max: 200, step: 1 },
       { key: 'kappa', label: 'Kappa', min: 0.01, max: 1, step: 0.01 },
@@ -130,12 +174,12 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
   {
     id: 'kalman_zscore', name: 'kalman_zscore', label: 'Kalman Z-Score',
-    params: { window: 20 }, visible: true,
+    computed: true, params: { window: 20 }, visible: true,
     paramDefs: [{ key: 'window', label: 'Window', min: 5, max: 200, step: 1 }],
   },
   {
     id: 'yz_volatility', name: 'yz_volatility', label: 'YZ Volatility',
-    params: { window: 30, periods: 252 }, visible: true,
+    computed: true, params: { window: 30, periods: 252 }, visible: true,
     paramDefs: [
       { key: 'window', label: 'Window', min: 5, max: 200, step: 1 },
       { key: 'periods', label: 'Annual Periods', min: 52, max: 365, step: 1 },
@@ -143,14 +187,14 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
   {
     id: 'gkyz_volatility', name: 'gkyz_volatility', label: 'GKYZ Volatility',
-    params: { window: 21 }, visible: true,
+    computed: true, params: { window: 21 }, visible: true,
     paramDefs: [
       { key: 'window', label: 'Window', min: 5, max: 200, step: 1 },
     ],
   },
   {
     id: 'matrix_series', name: 'matrix_series', label: 'Matrix Series',
-    params: { price_period: 20, sup_res_period: 50, sup_res_percentage: 100, smoother: 5 },
+    computed: true, params: { price_period: 20, sup_res_period: 50, sup_res_percentage: 100, smoother: 5 },
     visible: true,
     paramDefs: [
       { key: 'price_period', label: 'Price Period', min: 5, max: 200, step: 1 },
@@ -161,23 +205,23 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
   {
     id: 'williams_vix_fix', name: 'williams_vix_fix', label: 'Williams VIX Fix',
-    params: {}, visible: true, paramDefs: [],
+    computed: true, params: {}, visible: true, paramDefs: [],
   },
   {
     id: 'squeeze_ttm', name: 'squeeze_ttm', label: 'Squeeze TTM',
-    params: {}, visible: true, paramDefs: [],
+    computed: true, params: {}, visible: true, paramDefs: [],
   },
   {
-    id: 'chandelier_exit', name: 'chandelier_exit', label: 'Chandelier Exit',
-    params: { length: 31, multiplier: 2.2 }, visible: true,
+    id: 'chandelier_exit', name: 'chandelier_exit', label: 'Chandelier Exit', computed: true,
+    params: { length: 22, multiplier: 3 }, visible: true,
     paramDefs: [
-      { key: 'length',     label: 'Length',     min: 5,   max: 100, step: 1   },
-      { key: 'multiplier', label: 'Multiplier', min: 0.5, max: 10,  step: 0.1 },
+      { key: 'length',     label: 'ATR Length',     min: 1, max: 100, step: 1   },
+      { key: 'multiplier', label: 'ATR Multiplier', min: 0, max: 10,  step: 0.1 },
     ],
   },
   {
     id: 'gaussian_frama', name: 'gaussian_frama', label: 'Gaussian FRAMA',
-    params: {
+    computed: true, params: {
       gaussian_length: 4, sigma: 2.0, fm_len: 20, upper_limit: 8, lower_limit: 40,
       atr_period: 14, atr_mult: 1.9,
     },
@@ -194,7 +238,7 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
   {
     id: 'hull_butterfly', name: 'hull_butterfly', label: 'Hull Butterfly Oscillator',
-    params: { length: 14, mult: 2.0 }, visible: true,
+    computed: true, params: { length: 14, mult: 2.0 }, visible: true,
     paramDefs: [
       { key: 'length', label: 'Length', min: 4,   max: 50, step: 1   },
       { key: 'mult',   label: 'Mult',   min: 0.5, max: 5,  step: 0.1 },
@@ -202,7 +246,7 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
   {
     id: 'smart_money_flow', name: 'smart_money_flow', label: 'SMF Cloud',
-    params: {
+    computed: true, params: {
       trend_len: 34, basis_type: 1, alma_offset: 0.85, alma_sigma: 6.0, basis_smooth: 3,
       mf_len: 24, mf_smooth: 5, mf_power: 1.2, atr_len: 14, min_mult: 0.9, max_mult: 2.2,
     },
@@ -266,10 +310,10 @@ const DAILY = '1D' as ResolutionString;
  */
 function toIndicatorParams(configs: IndicatorConfig[]): IndicatorParams[] {
   return configs
-    .filter((c) => !c.computed)
-    .map((c) => ({
-      name: c.name,
-      ...(Object.keys(c.params).length > 0 ? { params: c.params } : {}),
+    .filter((config) => STUDY_CATALOGUE.some((study) => study.id === config.id && !study.computed))
+    .map((config) => ({
+      name: config.name,
+      ...(Object.keys(config.params).length > 0 ? { params: config.params } : {}),
     }));
 }
 
@@ -440,20 +484,22 @@ export default function StockChart({
 
     const symbolKey = symbol.trim().toUpperCase();
     const [txs, positions] = await Promise.all([
-      getTransactions().then((d) => d.filter((t) => t.ticker?.toUpperCase() === symbolKey)).catch(() => [] as Transaction[]),
-      getPositions().then((d) => d.filter((p) => p.ticker?.toUpperCase() === symbolKey)).catch(() => [] as Position[]),
+      getTransactions().then((data) => data.filter((tx) => tx.ticker?.toUpperCase() === symbolKey)).catch(() => [] as Transaction[]),
+      getPositions().then((data) => data.filter((pos) => pos.ticker?.toUpperCase() === symbolKey)).catch(() => [] as Position[]),
     ]);
 
     const chart = widget.activeChart();
     const addMark = (
-      time: number, price: number, side: 'buy' | 'sell', text: string, tooltip: string,
+      time: number, price: number, side: 'buy' | 'sell', tooltip: string,
     ) => {
       try {
         chart.createExecutionShape()
           .setTime(time)
           .setPrice(price)
           .setDirection(side)
-          .setText(text)
+          // The execution renderer suppresses an empty label. A directional
+          // glyph keeps the marker visible while preserving icon-only chrome.
+          .setText(side === 'buy' ? '▲' : '▼')
           .setTooltip(tooltip)
           .setArrowColor(tvSideColor(modeRef.current, side))
           .setTextColor(tvSideColor(modeRef.current, side));
@@ -465,29 +511,35 @@ export default function StockChart({
     // Only real trades get an execution marker. A dividend row is not a sell:
     // drawn as one it became a red "S" labelled e.g. `Ban 10900 CP @ 800.00`,
     // which never happened.
-    const trades = txs.filter(
-      (tx) => tx.transaction_type === 'buy' || tx.transaction_type === 'sell',
-    );
+    const executionMarks: ExecutionMark[] = [];
+    // Positions are the entry source for holdings created through the Positions
+    // screen. The data model has no link between it and a manual buy transaction,
+    // so equal date-and-price rows describe the same entry and must not be counted
+    // twice. A transaction is preferred because its quantity is immutable after
+    // partial position closes.
+    const transactionBuyKeys = new Set<string>();
+    for (const tx of txs) {
+      if (tx.transaction_type !== 'buy' && tx.transaction_type !== 'sell') continue;
+      const time = formatChartTime(tx.transaction_date);
+      const price = Number(tx.price);
+      if (tx.transaction_type === 'buy') transactionBuyKeys.add(`${time}:${price}`);
+      executionMarks.push({
+        time,
+        price,
+        quantity: Number(tx.quantity),
+        side: tx.transaction_type,
+      });
+    }
+    for (const pos of positions) {
+      const time = formatChartTime(pos.purchase_date);
+      const price = Number(pos.purchase_price);
+      if (transactionBuyKeys.has(`${time}:${price}`)) continue;
+      executionMarks.push({ time, price, quantity: Number(pos.quantity), side: 'buy' });
+    }
 
-    trades.forEach((tx) => {
-      const side = tx.transaction_type === 'buy' ? 'buy' : 'sell';
-      addMark(
-        formatChartTime(tx.transaction_date),
-        Number(tx.price),
-        side,
-        side === 'buy' ? 'B' : 'S',
-        `${side === 'buy' ? 'Mua' : 'Ban'} ${tx.quantity} CP @ ${Number(tx.price).toFixed(2)}`,
-      );
-    });
-    positions.forEach((pos) => {
-      addMark(
-        formatChartTime(pos.purchase_date),
-        Number(pos.purchase_price),
-        'buy',
-        'B',
-        `Mua ${pos.quantity} CP @ ${Number(pos.purchase_price).toFixed(2)}`,
-      );
-    });
+    for (const mark of consolidateExecutionMarks(executionMarks)) {
+      addMark(mark.time, mark.price, mark.side, mark.tooltip);
+    }
   };
 
   // ── Create the widget once on mount ────────────────────────────────────────
