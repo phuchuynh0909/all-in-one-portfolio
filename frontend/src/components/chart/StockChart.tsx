@@ -88,6 +88,13 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
     ],
   },
   {
+    id: 'rvol', name: 'rvol', label: 'RVOL', computed: true,
+    params: { period: 20 }, visible: true,
+    paramDefs: [
+      { key: 'period', label: 'Period', min: 2, max: 200, step: 1 },
+    ],
+  },
+  {
     id: 'atr_trailing', name: 'atr_trailing', label: 'ATR Trailing Stop',
     params: { timeperiod: 10, multiplier: 1.8 }, visible: true,
     paramDefs: [
@@ -221,21 +228,21 @@ export interface ChartLayout {
 /** Indicators that live in the secondary layout. */
 const LAYOUT_2_IDS = ['rsi', 'bvc', 'kalman_zscore', 'yz_volatility'];
 
-/** Indicators for the backtest_012 (Gaussian FRAMA + Hull Butterfly) strategy. */
-const LAYOUT_3_IDS = ['gaussian_frama', 'hull_butterfly'];
+/** Indicators for the backtest_012 strategy plus breakout-volume confirmation. */
+const LAYOUT_3_IDS = ['gaussian_frama', 'hull_butterfly', 'rvol'];
 
 /**
- * Selectable indicator layouts. Layout 1 holds everything except the Layout 2
- * and Layout 3 indicators; Layout 2 holds BVC + RSI + Kalman Z-Score + YZ
- * Volatility; Layout 3 holds the Gaussian FRAMA + Hull Butterfly Oscillator
- * strategy (notebooks/backtest_012.ipynb).
+ * Selectable indicator layouts. Layout 1 excludes LR Prediction Channel and
+ * every Layout 2 / Layout 3 indicator; Layout 2 holds BVC + RSI + Kalman
+ * Z-Score + YZ Volatility; Layout 3 holds Gaussian FRAMA + Hull Butterfly
+ * Oscillator + RVOL.
  */
 const CHART_LAYOUTS: ChartLayout[] = [
   {
     id: 'layout1',
     name: 'Layout 1',
     indicators: DEFAULT_INDICATOR_CONFIGS.map((c) => c.id).filter(
-      (id) => !LAYOUT_2_IDS.includes(id) && !LAYOUT_3_IDS.includes(id),
+      (id) => id !== 'linreg_channel' && !LAYOUT_2_IDS.includes(id) && !LAYOUT_3_IDS.includes(id),
     ),
   },
   {

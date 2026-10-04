@@ -58,6 +58,124 @@ Production uses `docker-compose.prod.yml` + `prod.env` via `make prod-*`.
 **Never** run `make prod-up` / `make prod-down` or otherwise touch production
 without an explicit request.
 
+## Fast research experiments
+
+**Notebook/strategy experiments:** start from the local HDF cache. Do not call
+`load_stocks()`, Delta Lake, MinIO, or another network source unless the user
+explicitly asks to refresh data.
+
+From the repository root:
+
+```python
+from pathlib import Path
+import pandas as pd
+
+DATA = Path("notebooks/stocks_data_latest.h5")
+panel = pd.read_hdf(DATA, key="stocks").sort_index()
+
+# panel: DatetimeIndex named "date"; MultiIndex columns: (field, symbol)
+open_ = panel["open"]
+high = panel["high"]
+low = panel["low"]
+close = panel["close"]
+volume = panel["volume"]
+```
+
+List and select symbols without scanning notebook code:
+
+```python
+all_symbols = panel.columns.get_level_values("symbol").unique()
+non_stocks = {"VNINDEX", "VIETNAM_1Y", "VIETNAM_5Y", "VIETNAM_10Y"}
+symbols = all_symbols[~all_symbols.isin(non_stocks)]
+
+# Optional: restrict to the repository watchlist.
+watchlist = pd.read_csv("backend/models/watchlist.csv").iloc[:, 0].astype(str)
+symbols = symbols.intersection(watchlist, sort=False)
+
+# Vectorized date × symbol panels.
+open_, high, low, close, volume = [
+    frame.loc[:, symbols] for frame in (open_, high, low, close, volume)
+]
+
+# One symbol as an OHLCV DataFrame.
+bars = panel.xs("FPT", axis=1, level="symbol")
+bars = bars[["open", "high", "low", "close", "volume"]]
+```
+
+Keep experiments fast and causal:
+
+- Slice dates before expensive indicators, for example `panel.loc["2019":]`.
+- Prefer vectorized DataFrame operations; loop by symbol only for genuinely
+  path-dependent state machines.
+- The cache contains zero-volume / flat-price pre-listing padding. Mask those
+  rows with `volume > 0`; do not use `bfill()`.
+- Exclude the current bar from historical thresholds:
+  `high.shift(1).rolling(60).max()` and
+  `volume.shift(1).rolling(20).mean()`.
+- A close-`t`, next-open experiment aligns outcomes as:
+  `entry = open_.shift(-1)` and
+  `ret20 = close.shift(-20).div(entry).sub(1)`.
+- Extract a compact event table without Python loops:
+
+  ```python
+  events = (
+      ret20.where(signal)
+      .stack()
+      .rename("ret20")
+      .reset_index()  # date, symbol, ret20
+  )
+  ```
+
+### VectorBT backtest template
+
+Use VectorBT for fast panel backtests. A signal calculated after close `t` must
+be shifted to row `t+1` and filled with that row's open:
+
+```python
+import numpy as np
+import vectorbt as vbt
+
+# Boolean date × symbol frames computed from completed bars.
+entry_at_close = signal.fillna(False)
+exit_at_close = exit_signal.fillna(False)
+
+entries = entry_at_close.shift(1, fill_value=False) & open_.notna()
+exits = exit_at_close.shift(1, fill_value=False) & open_.notna()
+
+pf = vbt.Portfolio.from_signals(
+    close=close,          # valuation series
+    entries=entries,
+    exits=exits,
+    price=open_,          # execution price on the shifted order row
+    init_cash=100_000_000,
+    fees=0.002,           # per order; about 0.4% for entry + exit
+    freq="1D",
+    cash_sharing=False,   # independent capital per symbol
+)
+
+summary = pd.DataFrame({
+    "total_return": pf.total_return(),
+    "sharpe": pf.sharpe_ratio(),
+    "max_drawdown": pf.max_drawdown(),
+    "trades": pf.trades.count(),
+}).replace([np.inf, -np.inf], np.nan)
+
+trades = pf.trades.records_readable
+```
+
+- Shift signals, not prices. `price=close` on an unshifted close-derived signal
+  assumes an unavailable signal-bar fill.
+- `cash_sharing=False` measures symbols independently. For a deployable
+  portfolio, explicitly define shared cash, position sizing, grouping, and
+  simultaneous-signal priority; do not present mean per-symbol return as
+  portfolio return.
+- Print raw/shifted signal counts, trade count, and the first trade records
+  before trusting aggregate metrics.
+
+Report the data range, symbol count, signal count, date split, execution timing,
+and costs. Treat the HDF universe as a current/survivor universe rather than a
+point-in-time constituent history.
+
 ## The check that must pass (verify a change)
 
 There is no single root verify command yet. Use the check that matches what you

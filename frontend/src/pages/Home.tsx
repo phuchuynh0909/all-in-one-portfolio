@@ -4,6 +4,7 @@ import { Box, Button, Stack, Typography } from '@mui/material';
 import ArrowForwardIcon from '@mui/icons-material/ArrowForward';
 
 import MarketBreadthChart from '../components/market/MarketBreadthChart';
+import DailyPicksHistory from '../components/market/DailyPicksHistory';
 import {
   PageContainer,
   PageHeader,
@@ -212,6 +213,11 @@ export default function Home() {
               </Box>
             </QueryState>
           </Panel>
+      </Box>
+
+      {/* --- Daily picks history ------------------------------------------ */}
+      <Box sx={{ mb: 2.5 }}>
+        <DailyPicksHistory />
       </Box>
 
       {/* --- Capability surface -------------------------------------------- */}

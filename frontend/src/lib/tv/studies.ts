@@ -18,7 +18,14 @@
  * name passed to `activeChart().createStudy(name)` — see {@link STUDY_CATALOGUE}.
  */
 import { tvStore, indexAtTimeMs } from './store';
-import type { CustomIndicator, IContext, PineJS, StudyInputValue } from './charting_library';
+import type {
+  CustomIndicator,
+  IContext,
+  IPineStudyResult,
+  LibraryPineStudy,
+  PineJS,
+  StudyInputValue,
+} from './charting_library';
 import { studyPalette } from './theme';
 
 // LineStudyPlotStyle
@@ -516,6 +523,68 @@ function buildRsiStudy(pine: PineJS): CustomIndicator {
   } as unknown as CustomIndicator;
 }
 
+const RVOL_NAME = 'RVOL';
+
+/**
+ * Current volume divided by the simple average of the prior N bars. Excluding
+ * the current bar from the denominator keeps a breakout spike from diluting
+ * its own relative-volume reading.
+ */
+function buildRvolStudy(pine: PineJS): CustomIndicator {
+  const metainfo = {
+    _metainfoVersion: 53,
+    id: 'rvol@tv-custom-1',
+    name: RVOL_NAME,
+    description: RVOL_NAME,
+    shortDescription: RVOL_NAME,
+    isCustomIndicator: true,
+    is_price_study: false,
+    format: { type: 'price', precision: 2 },
+    plots: [{ id: 'rvol', type: 'line' }],
+    inputs: [
+      { id: 'length', name: 'Length', type: 'integer', defval: 20, min: 2, max: 500 },
+    ],
+    bands: [
+      { id: 'average', name: 'Average volume' },
+      { id: 'confirmation', name: 'Breakout confirmation' },
+    ],
+    styles: {
+      rvol: { title: 'RVOL', histogramBase: 0, isHidden: false },
+    },
+    defaults: {
+      styles: {
+        rvol: {
+          linestyle: LINE_SOLID, linewidth: 2, plottype: PLOT_HISTOGRAM,
+          trackPrice: false, transparency: 0, visible: true, color: studyPalette.cyan,
+        },
+      },
+      bands: [
+        { color: studyPalette.zeroLine, linestyle: LINE_DASHED, linewidth: 1, value: 1, visible: true },
+        { color: studyPalette.rsiUpper, linestyle: LINE_DASHED, linewidth: 1, value: 1.5, visible: true },
+      ],
+      precision: 2,
+      inputs: { length: 20 },
+    },
+  };
+
+  return {
+    name: RVOL_NAME,
+    metainfo,
+    constructor: function (this: LibraryPineStudy<IPineStudyResult>) {
+      this.main = function (context, inputCallback) {
+        const length = Math.max(2, Math.round(inputCallback<number>(0)));
+        const currentVolume = pine.Std.volume(context);
+        const volumeSeries = context.new_var(currentVolume);
+        const priorVolumeSeries = context.new_var(volumeSeries.get(1));
+        const priorAverage = pine.Std.sma(priorVolumeSeries, length, context);
+
+        return [priorAverage > 0 ? currentVolume / priorAverage : NaN];
+      };
+    },
+  } as unknown as CustomIndicator;
+}
+
+
 export const COMPUTED_STUDY_SPECS: ComputedStudySpec[] = [
   {
     id: 'rsi',
@@ -527,6 +596,12 @@ export const COMPUTED_STUDY_SPECS: ComputedStudySpec[] = [
       source: 'close',
     }),
     build: buildRsiStudy,
+  },
+  {
+    id: 'rvol',
+    name: RVOL_NAME,
+    inputsFrom: (params) => ({ length: params.period ?? 20 }),
+    build: buildRvolStudy,
   },
 ];
 

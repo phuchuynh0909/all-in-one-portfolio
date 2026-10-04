@@ -7,7 +7,7 @@ from typing import Any, Iterable
 import requests
 
 DEFAULT_MODEL_CATALOG_URL = "http://192.168.1.3:20128/api/models"
-ALLOWED_MODEL_PROVIDERS = ("deepseek", "openai", "ag")
+ALLOWED_MODEL_PROVIDERS = ("deepseek", "openai", "ag", "cx")
 
 
 def _provider_name(value: Any) -> str:
