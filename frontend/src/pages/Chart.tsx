@@ -227,6 +227,7 @@ export default function ChartPage() {
               {activePanel === 'watchlist' && watchList ? (
                 <Watchlist
                   api={watchList.api}
+                  persistence={watchList.persistence}
                   activeSymbol={currentSymbol}
                   onSelect={setCurrentSymbol}
                 />

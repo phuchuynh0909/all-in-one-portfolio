@@ -11,6 +11,7 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { UNAUTHORIZED_EVENT, clearToken, getToken, setToken } from '../../lib/auth/token';
 import { fetchMe, login, type AuthUser } from '../../lib/services/auth';
+import { resetWatchListConnection } from '../../lib/tv/watchlist';
 
 export type AuthStatus = 'loading' | 'authed' | 'anon';
 
@@ -35,6 +36,7 @@ export default function AuthProvider({ children }: { children: ReactNode }) {
   const [status, setStatus] = useState<AuthStatus>(getToken() ? 'loading' : 'anon');
 
   const signOut = useCallback(() => {
+    resetWatchListConnection();
     clearToken();
     setUser(null);
     setStatus('anon');

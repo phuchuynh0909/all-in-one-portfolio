@@ -1,16 +1,12 @@
 import {
-  DiagnosticBag,
-  check,
-  emit,
   load,
-  parse,
-  renderDiagnostics,
-  sourceFile,
   type CompiledProgram,
   type Engine,
   type SourceFile,
   type HostBar,
 } from 'openalgo-script';
+
+import { compileOpenScript } from './scriptCompiler';
 
 import iakfOscillatorSource from './indicators/iakf-oscillator.os?raw';
 
@@ -47,20 +43,12 @@ export interface OpenScriptStudySpec {
   plotColors?: Record<string, string[]>;
   markerAnchors?: string[];
   source: string;
+  onError?: (message: string) => void;
   inputsFrom: (params: Record<string, number>) => Record<string, StudyInputValue>;
 }
 
 function compileStudy(spec: OpenScriptStudySpec): CompiledStudy {
-  const file = sourceFile(`${spec.id}.os`, spec.source);
-  const diagnostics = new DiagnosticBag();
-  const checked = check(file, parse(file, diagnostics), diagnostics);
-  const { program } = emit(file, checked, diagnostics);
-
-  if (diagnostics.hasErrors || !program) {
-    throw new Error(`Invalid OpenScript study ${spec.id}:\n${renderDiagnostics(file, diagnostics.ordered())}`);
-  }
-
-  return { file, program };
+  return compileOpenScript(spec.source, spec.id);
 }
 
 
@@ -109,10 +97,16 @@ function loadEngine(
 export function buildOpenScriptStudy(pine: PineJS, spec: OpenScriptStudySpec): CustomIndicator {
   const study = compileStudy(spec);
   const { program } = study;
+  // Levels use normal plots so their values also appear in the data window.
+  const levels = program.outputs.levels.map((level, index) => ({
+    key: `__level${index}`, title: level.title, channel: level.channel,
+    color: level.color, width: level.lineWidth, type: 'line', colorChannel: null,
+  }));
+  const plots = [...program.outputs.plots, ...levels];
 
   const barColors = spec.barColors ?? [];
   const hasBarColors = program.outputs.barColor != null && barColors.length > 0;
-  const barPaletteColors = Object.fromEntries(barColors.map((color, index) => [
+  const barPaletteColors = Object.fromEntries(barColors.map((_, index) => [
     index,
     { name: `Color ${index}` },
   ]));
@@ -121,7 +115,7 @@ export function buildOpenScriptStudy(pine: PineJS, spec: OpenScriptStudySpec): C
     { color, width: 1, style: LINE_SOLID },
   ]));
   const plotColors = spec.plotColors ?? {};
-  const dynamicColorPlots = program.outputs.plots.filter(
+  const dynamicColorPlots = plots.filter(
     (plot) => plot.colorChannel != null && (plotColors[String(plot.title)]?.length ?? 0) > 0,
   );
   const dynamicPlotPalettes = Object.fromEntries(dynamicColorPlots.map((plot, index) => {
@@ -129,7 +123,7 @@ export function buildOpenScriptStudy(pine: PineJS, spec: OpenScriptStudySpec): C
     return [
       `plotPal${index}`,
       {
-        colors: Object.fromEntries(colors.map((color, colorIndex) => [colorIndex, { name: `Color ${colorIndex}` }])),
+        colors: Object.fromEntries(colors.map((_, colorIndex) => [colorIndex, { name: `Color ${colorIndex}` }])),
         valToIndex: Object.fromEntries(colors.map((_, colorIndex) => [colorIndex, colorIndex])),
         addDefaultColor: false,
       },
@@ -146,7 +140,7 @@ export function buildOpenScriptStudy(pine: PineJS, spec: OpenScriptStudySpec): C
   const hiddenPlots = spec.hiddenPlots ?? [];
   const markerAnchorChannels = program.outputs.markers.map((_, index) => {
     const title = markerAnchors[index];
-    return program.outputs.plots.find((plot) => plot.title === title)?.channel ?? null;
+    return plots.find((plot) => plot.title === title)?.channel ?? null;
   });
   const markerStyles = Object.fromEntries(program.outputs.markers.map((marker) => [
     marker.key,
@@ -169,15 +163,15 @@ export function buildOpenScriptStudy(pine: PineJS, spec: OpenScriptStudySpec): C
       visible: true,
     },
   ]));
-  const outputCount = program.outputs.plots.length + program.outputs.markers.length + dynamicColorPlots.length + (hasBarColors ? 1 : 0);
+  const outputCount = plots.length + program.outputs.markers.length + dynamicColorPlots.length + (hasBarColors ? 1 : 0);
   const styles = Object.fromEntries([
-    ...program.outputs.plots.map((plot) => [
+    ...plots.map((plot) => [
       plot.key,
       { title: String(plot.title), histogramBase: 0, isHidden: hiddenPlots.includes(String(plot.title)) },
     ]),
     ...Object.entries(markerStyles),
   ]);
-  const defaultStyles = Object.fromEntries(program.outputs.plots.map((plot) => [
+  const defaultStyles = Object.fromEntries(plots.map((plot) => [
     plot.key,
     {
       linestyle: spec.dashed || (spec.dashedPlots ?? []).includes(String(plot.title)) ? LINE_DASHED : LINE_SOLID,
@@ -220,7 +214,7 @@ export function buildOpenScriptStudy(pine: PineJS, spec: OpenScriptStudySpec): C
       ? { type: 'inherit' }
       : { type: 'price', precision: typeof program.meta.precision === 'number' ? program.meta.precision : 2 },
     plots: [
-      ...program.outputs.plots.map((plot) => ({ id: plot.key, type: 'line' })),
+      ...plots.map((plot) => ({ id: plot.key, type: 'line' })),
       ...program.outputs.markers.map((marker) => ({ id: marker.key, type: 'shapes' })),
       ...dynamicColorPlots.map((plot, index) => ({
         id: `__plotColor${index}`, type: 'colorer', target: plot.key, palette: `plotPal${index}`,
@@ -232,10 +226,15 @@ export function buildOpenScriptStudy(pine: PineJS, spec: OpenScriptStudySpec): C
       return {
         id: input.key,
         name: input.label,
-        type: typeof defaultValue === 'number' && Number.isInteger(defaultValue) && (input.step ?? 1) >= 1
+        type: typeof defaultValue === 'boolean'
+          ? 'bool'
+          : typeof defaultValue === 'string'
+            ? 'text'
+            : typeof defaultValue === 'number' && Number.isInteger(defaultValue) && (input.step ?? 1) >= 1
           ? 'integer'
           : 'float',
         defval: defaultValue,
+        ...(input.options == null ? {} : { options: input.options.map((option) => option[1]) }),
         ...(input.min == null ? {} : { min: input.min }),
         ...(input.max == null ? {} : { max: input.max }),
         ...(input.step == null ? {} : { step: input.step }),
@@ -267,11 +266,14 @@ export function buildOpenScriptStudy(pine: PineJS, spec: OpenScriptStudySpec): C
       let engine: Engine | null = null;
       let lastTime: number | null = null;
       let settingsKey = '';
+      let reportedError = '';
 
       const reset = (inputCallback: InputCallback) => {
         const settings = settingsFor(program, inputCallback);
         settingsKey = JSON.stringify(settings);
         engine = loadEngine(study, settings);
+        reportedError = '';
+        if (!engine) spec.onError?.('The indicator could not start with these input settings.');
         lastTime = null;
       };
 
@@ -317,19 +319,24 @@ export function buildOpenScriptStudy(pine: PineJS, spec: OpenScriptStudySpec): C
         const result = lastTime === bar.time ? engine.update(bar) : engine.append(bar);
         lastTime = bar.time;
         if (result.diagnostic) {
+          const message = `${result.diagnostic.code}: ${result.diagnostic.message}`;
+          if (reportedError !== message) spec.onError?.(message);
+          reportedError = message;
           console.warn(
             `OpenScript stopped ${spec.name}: ${result.diagnostic.code} ${result.diagnostic.message}`,
           );
           return new Array(outputCount).fill(NaN);
         }
 
-        const outputs = program.outputs.plots.map((plot) => {
+        const outputs = plots.map((plot) => {
           const value = result.columns[plot.channel];
           return typeof value === 'number' && Number.isFinite(value) ? value : NaN;
         });
         program.outputs.markers.forEach((marker, index) => {
           const anchor = markerAnchorChannels[index];
-          const value = anchor == null ? NaN : result.columns[anchor];
+          const value = anchor != null ? result.columns[anchor]
+            : marker.position === 'above' ? bar.high
+              : marker.position === 'below' ? bar.low : NaN;
           outputs.push(
             typeof result.columns[marker.channel] === 'string' && typeof value === 'number' && Number.isFinite(value)
               ? value

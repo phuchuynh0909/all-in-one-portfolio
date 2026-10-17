@@ -1,8 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Box } from '@mui/material';
+import { Alert, Box, Button, Checkbox, Dialog, DialogActions, DialogContent, DialogTitle, FormControlLabel, TextField, Typography } from '@mui/material';
+
+import { listChartLayouts, saveChartLayout, selectChartLayout, importChartLayouts, renameChartLayout, deleteChartLayout } from '../../lib/services/chartLayouts';
+
+import { listOpenScripts, saveOpenScript, deleteOpenScript, updateOpenScriptVisibility, importOpenScripts } from '../../lib/services/openscripts';
 
 import { createTvWidget, LIBRARY_PATH } from '../../lib/tv';
 import type {
+  DropdownParams,
   EntityId,
   IChartingLibraryWidget,
   IDropdownApi,
@@ -16,7 +21,6 @@ import { tvOverrides, tvSideColor } from '../../lib/tv/theme';
 import { useColorMode } from '../../theme';
 import { tvStore, HISTORY_YEARS } from '../../lib/tv/store';
 import {
-  DEFAULT_WATCHLIST_SYMBOLS,
   resolveWatchListApi,
   type ResolvedWatchList,
 } from '../../lib/tv/watchlist';
@@ -34,7 +38,14 @@ import {
   type Transaction,
 } from '../../lib/services/portfolio';
 
+import { readCustomLayouts, type ChartLayout } from '../../lib/tv/chartLayouts';
+export type { ChartLayout } from '../../lib/tv/chartLayouts';
+
 import IndicatorManager from './IndicatorManager';
+import ScriptEditor from './ScriptEditor';
+import { buildOpenScriptStudy } from '../../lib/tv/openscript';
+import { validateUserScript } from '../../lib/tv/scriptCompiler';
+import { readUserScripts, userScriptSpec, type UserScript } from '../../lib/tv/userScripts';
 
 type StockChartProps = {
   symbol: string;
@@ -86,7 +97,7 @@ function consolidateExecutionMarks(marks: ExecutionMark[]) {
   }
 
   return [...days].map(([time, { buy, sell }]) => {
-    const side = sell.quantity > buy.quantity ? 'sell' : 'buy';
+    const side: 'buy' | 'sell' = sell.quantity > buy.quantity ? 'sell' : 'buy';
     const summary = side === 'buy' ? buy : sell;
     const averagePrice = summary.quantity > 0 ? summary.value / summary.quantity : 0;
     const tooltip = [
@@ -281,13 +292,6 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
   },
 ];
 
-/** A named preset controlling which indicators are visible. */
-export interface ChartLayout {
-  id: string;
-  name: string;
-  indicators: string[];
-}
-
 /** Indicators that live in the secondary layout. */
 const LAYOUT_2_IDS = ['rsi', 'bvc', 'kalman_zscore', 'yz_volatility'];
 
@@ -359,6 +363,178 @@ export default function StockChart({
   const studyEntitiesRef = useRef<Map<string, EntityId>>(new Map());
   const executionShapesRef = useRef<IExecutionLineAdapter[]>([]);
   const [ready, setReady] = useState(false);
+  const readyRef = useRef(ready);
+  readyRef.current = ready;
+
+  const [serverLayouts, setServerLayouts] = useState<ChartLayout[]>([]);
+  const layouts = useMemo(() => [
+    ...CHART_LAYOUTS.map((preset) => serverLayouts.find((layout) => layout.id === preset.id) ?? preset),
+    ...serverLayouts.filter((layout) => layout.id.startsWith('custom_')),
+  ], [serverLayouts]);
+  const [activeLayoutId, setActiveLayoutId] = useState(CHART_LAYOUTS[0].id);
+  const activeLayout = layouts.find((layout) => layout.id === activeLayoutId) ?? CHART_LAYOUTS[0];
+  const activeLayoutRef = useRef(activeLayout);
+  activeLayoutRef.current = activeLayout;
+  const [legacyLayouts, setLegacyLayouts] = useState<ChartLayout[]>(() => {
+    try {
+      const old = readCustomLayouts(localStorage);
+      const selected = localStorage.getItem('chartLayoutId');
+      const preset = CHART_LAYOUTS.find((layout) => layout.id === selected);
+      const configs = JSON.parse(localStorage.getItem('indicatorConfigs') ?? '[]');
+      if (preset && Array.isArray(configs) && configs.length) {
+        old.push({
+          ...preset, id: `custom_browser_${preset.id}`, name: `Imported ${preset.name}`,
+          indicators: configs.filter((config) => config?.visible && typeof config.id === 'string').map((config) => config.id),
+          params: Object.fromEntries(configs.filter((config) => config?.params && typeof config.id === 'string').map((config) => [config.id, config.params])),
+          scripts: readUserScripts(localStorage).filter((script) => script.visible).map((script) => script.id),
+        });
+      }
+      return old;
+    } catch { return []; }
+  });
+  const [importingLayouts, setImportingLayouts] = useState(false);
+  const [layoutSaveStatus, setLayoutSaveStatus] = useState('');
+  const layoutSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const layoutSaveQueueRef = useRef<Promise<unknown>>(Promise.resolve());
+  const scheduleLayoutSaveRef = useRef<() => void>(() => {});
+  const skipRestoredInputsRef = useRef(false);
+  const switchingLayoutRef = useRef(false);
+  const [layoutDialog, setLayoutDialog] = useState<{ kind: 'create' } | { kind: 'rename' | 'delete'; layout: ChartLayout } | null>(null);
+  const [layoutName, setLayoutName] = useState('');
+  const [emptyLayout, setEmptyLayout] = useState(false);
+  const [changingLayout, setChangingLayout] = useState(false);
+  const [layoutNameError, setLayoutNameError] = useState('');
+  const [layoutError, setLayoutError] = useState('');
+  const layoutDropdownRef = useRef<IDropdownApi | null>(null);
+
+  const [scriptEditorOpen, setScriptEditorOpen] = useState(false);
+  const [scriptError, setScriptError] = useState('');
+  const [userScripts, setUserScripts] = useState<UserScript[]>([]);
+  const [scriptsLoaded, setScriptsLoaded] = useState(false);
+  const [scriptsLoading, setScriptsLoading] = useState(true);
+  const [scriptLoadAttempt, setScriptLoadAttempt] = useState(0);
+  const [legacyScripts, setLegacyScripts] = useState<UserScript[]>(() => {
+    try { return readUserScripts(localStorage); } catch { return []; }
+  });
+  const [importingScripts, setImportingScripts] = useState(false);
+  const userScriptsRef = useRef(userScripts);
+  userScriptsRef.current = userScripts;
+  const replaceScripts = (scripts: UserScript[]) => {
+    userScriptsRef.current = scripts;
+    setUserScripts(scripts);
+  };
+
+  useEffect(() => {
+    let cancelled = false;
+    setScriptsLoading(true);
+    void Promise.all([listOpenScripts(), listChartLayouts()]).then(async ([scripts, library]) => {
+      if (cancelled) return;
+      if (!library.layouts.length) {
+        const defaults = Object.fromEntries(DEFAULT_INDICATOR_CONFIGS.map((config) => [config.id, config.params]));
+        library = await importChartLayouts(CHART_LAYOUTS.map((preset) => ({
+          ...preset, params: defaults,
+          scripts: preset.id === CHART_LAYOUTS[0].id ? scripts.filter((script) => script.visible).map((script) => script.id) : [],
+        })), CHART_LAYOUTS[0].id);
+      }
+      if (cancelled) return;
+      const layout = library.layouts.find((item) => item.id === library.activeLayoutId) ?? library.layouts[0];
+      setServerLayouts(library.layouts);
+      setActiveLayoutId(layout.id);
+      activeLayoutRef.current = layout;
+      savedLayoutRef.current = layout.chartState;
+      setIndicatorConfigs(DEFAULT_INDICATOR_CONFIGS.map((config) => ({
+        ...config, params: { ...config.params, ...layout.params?.[config.id] }, visible: layout.indicators.includes(config.id),
+      })));
+      replaceScripts(scripts.map((script) => ({ ...script, visible: (layout.scripts ?? []).includes(script.id) })));
+      const serverIds = new Set(scripts.map((script) => script.id));
+      setLegacyScripts((legacy) => legacy.filter((script) => !serverIds.has(script.id)));
+      const layoutIds = new Set(library.layouts.map((item) => item.id));
+      setLegacyLayouts((legacy) => legacy.filter((item) => !layoutIds.has(item.id)));
+      setScriptError('');
+      setLayoutSaveStatus('Layout saved to server');
+      setScriptsLoaded(true);
+    }).catch((error) => {
+      if (!cancelled) setScriptError(`Could not load your server chart setup: ${error instanceof Error ? error.message : String(error)}`);
+    }).finally(() => { if (!cancelled) setScriptsLoading(false); });
+    return () => { cancelled = true; };
+    // Load once before constructing the chart so every saved definition is registered.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scriptLoadAttempt]);
+
+  const scriptEntitiesRef = useRef(new Map<string, EntityId>());
+  const savedLayoutRef = useRef<object | undefined>(undefined);
+  const restoredEntitiesRef = useRef<{ studies: Map<string, EntityId>; scripts: Map<string, EntityId> } | null>(null);
+  const [scriptRevision, setScriptRevision] = useState(0);
+
+  const persistScripts = async (scripts: UserScript[]) => {
+    const changes = scripts.filter((script) => userScriptsRef.current.find((current) => current.id === script.id)?.visible !== script.visible)
+      .map(({ id, visible }) => ({ id, visible }));
+    if (changes.length) await updateOpenScriptVisibility(changes);
+    // Merge visibility only so a delayed layout request cannot overwrite source edits.
+    const visibleById = new Map(changes.map((change) => [change.id, change.visible]));
+    replaceScripts(userScriptsRef.current.map((script) => visibleById.has(script.id) ? { ...script, visible: visibleById.get(script.id)! } : script));
+  };
+
+  const importBrowserScripts = async () => {
+    setImportingScripts(true);
+    try {
+      const scripts = await importOpenScripts(legacyScripts);
+      replaceScripts(scripts);
+      setLegacyScripts([]);
+      // Existing local copies are retained as a recovery backup, never used for new saves.
+      setScriptError('');
+      if (ready && widgetRef.current) {
+        savedLayoutRef.current = await new Promise<object>((resolve) => widgetRef.current!.save(resolve));
+        restoredEntitiesRef.current = { studies: new Map(studyEntitiesRef.current), scripts: new Map(scriptEntitiesRef.current) };
+      }
+      setReady(false);
+      setScriptRevision((revision) => revision + 1);
+    } catch (error) {
+      setScriptError(`Could not import browser scripts: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { setImportingScripts(false); }
+  };
+
+  const saveScript = async (id: string, source: string, add: boolean) => {
+    const { title } = validateUserScript(source, id);
+    const previous = userScriptsRef.current.find((item) => item.id === id);
+    const next: UserScript = {
+      id, source, title, visible: add || (previous?.visible ?? false),
+      appliedSource: add ? source : previous?.appliedSource,
+    };
+    const widget = widgetRef.current;
+    if (add && (!ready || !widget)) throw new Error('Wait for the chart to finish loading.');
+    // Only update the running chart after the server confirms the source is saved.
+    const saved = await saveOpenScript(next);
+    replaceScripts([...userScriptsRef.current.filter((item) => item.id !== id), saved]);
+    setScriptError('');
+    if (!add || !widget) return;
+    const oldEntity = scriptEntitiesRef.current.get(id);
+    // Remove the old definition from the snapshot; the new study can have a
+    // different plot/input schema. All other studies and drawings are restored.
+    if (oldEntity) {
+      scriptEntitiesRef.current.delete(id);
+      widget.activeChart().removeEntity(oldEntity);
+    }
+    savedLayoutRef.current = await new Promise<object>((resolve) => widget.save(resolve));
+    restoredEntitiesRef.current = {
+      studies: new Map(studyEntitiesRef.current), scripts: new Map(scriptEntitiesRef.current),
+    };
+    setReady(false);
+    setScriptRevision((revision) => revision + 1);
+  };
+
+  const removeScript = async (id: string, deleteScript: boolean) => {
+    const scripts = deleteScript ? userScriptsRef.current.filter((item) => item.id !== id)
+      : userScriptsRef.current.map((item) => item.id === id ? { ...item, visible: false } : item);
+    if (deleteScript) {
+      await deleteOpenScript(id);
+      replaceScripts(userScriptsRef.current.filter((item) => item.id !== id));
+    } else await persistScripts(scripts);
+    const entity = scriptEntitiesRef.current.get(id);
+    scriptEntitiesRef.current.delete(id);
+    if (entity) widgetRef.current?.activeChart().removeEntity(entity);
+    setScriptError('');
+  };
 
   // Header DOM controls (created imperatively in the widget header) + latest
   // handler snapshot so their event listeners always call current props.
@@ -373,63 +549,222 @@ export default function StockChart({
   const onWatchListResolvedRef = useRef(onWatchListResolved);
   useEffect(() => { onWatchListResolvedRef.current = onWatchListResolved; }, [onWatchListResolved]);
 
-  const [indicatorConfigs, setIndicatorConfigs] = useState<IndicatorConfig[]>(() => {
-    try {
-      const stored = localStorage.getItem('indicatorConfigs');
-      if (!stored) return DEFAULT_INDICATOR_CONFIGS;
-      const parsed: IndicatorConfig[] = JSON.parse(stored);
-      return DEFAULT_INDICATOR_CONFIGS.map((def) => {
-        const saved = parsed.find((s) => s.id === def.id);
-        return saved ? { ...def, params: saved.params, visible: saved.visible } : def;
-      });
-    } catch {
-      return DEFAULT_INDICATOR_CONFIGS;
-    }
-  });
+  const [indicatorConfigs, setIndicatorConfigs] = useState<IndicatorConfig[]>(DEFAULT_INDICATOR_CONFIGS);
+  const indicatorConfigsRef = useRef(indicatorConfigs);
+  indicatorConfigsRef.current = indicatorConfigs;
+  const pendingStudiesRef = useRef(new Set<string>());
   const [indicatorPanelOpen, setIndicatorPanelOpen] = useState(false);
 
-  // Active indicator layout — persisted; drives which indicators are visible.
-  const [activeLayoutId, setActiveLayoutId] = useState<string>(() => {
-    try {
-      const stored = localStorage.getItem('chartLayoutId');
-      if (stored === 'layout4') {
-        localStorage.setItem('chartLayoutId', 'layout3');
-        return 'layout3';
-      }
-      if (CHART_LAYOUTS.some((layout) => layout.id === stored)) return stored as string;
-    } catch {
-      /* local storage unavailable */
-    }
-    return CHART_LAYOUTS[0].id;
-  });
-  const layoutDropdownRef = useRef<IDropdownApi | null>(null);
-
-  /** Selects a layout: updates visibility preset, persists, and syncs the header dropdown. */
-  const applyLayout = (layoutId: string) => {
-    const layout = CHART_LAYOUTS.find((l) => l.id === layoutId);
-    if (!layout) return;
-    setActiveLayoutId(layout.id);
-    try { localStorage.setItem('chartLayoutId', layout.id); } catch { /* ignore */ }
-    // An indicator is visible iff it belongs to this layout.
-    const inLayout = new Set(layout.indicators);
-    setIndicatorConfigs((prev) => prev.map((c) => ({ ...c, visible: inLayout.has(c.id) })));
-    layoutDropdownRef.current?.applyOptions({ title: layout.name });
+  const replaceLayout = (layout: ChartLayout) => {
+    setServerLayouts((previous) => [...previous.filter((item) => item.id !== layout.id), layout]);
+    if (activeLayoutRef.current.id === layout.id) activeLayoutRef.current = layout;
   };
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('indicatorConfigs', JSON.stringify(
-        indicatorConfigs.map(({ id, params, visible }) => ({ id, params, visible })),
-      ));
-    } catch { /* quota / private mode — ignore */ }
-  }, [indicatorConfigs]);
+  const captureLayout = async (): Promise<ChartLayout> => {
+    const widget = widgetRef.current;
+    if (!widget || !readyRef.current) throw new Error('Wait for the chart to finish loading.');
+    const layout = activeLayoutRef.current;
+    // Wait for indicator calculations/creation before taking the snapshot.
+    const deadline = Date.now() + 15_000;
+    while (pendingStudiesRef.current.size || pendingScriptsRef.current.size) {
+      if (Date.now() > deadline || widgetRef.current !== widget) throw new Error('Indicators are still loading. Try saving again.');
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    const chartState = await new Promise<object>((resolve) => widget.save(resolve));
+    if (widgetRef.current !== widget || !readyRef.current) throw new Error('The chart changed before it could be saved. Try again.');
+    return {
+      ...layout,
+      indicators: indicatorConfigsRef.current.filter((config) => config.visible).map((config) => config.id),
+      params: Object.fromEntries(indicatorConfigsRef.current.map((config) => [config.id, config.params])),
+      scripts: userScriptsRef.current.filter((script) => script.visible).map((script) => script.id),
+      chartState,
+    };
+  };
 
-  // Apply the persisted layout once on mount so visibility matches the preset.
+  const saveCurrentLayout = async () => {
+    if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
+    setLayoutSaveStatus('Saving layout…');
+    const operation = layoutSaveQueueRef.current.catch(() => {}).then(async () => {
+      const snapshot = await captureLayout();
+      const saved = await saveChartLayout(snapshot);
+      replaceLayout(saved);
+      setLayoutError('');
+      setLayoutSaveStatus('Layout saved to server');
+      return saved;
+    });
+    layoutSaveQueueRef.current = operation;
+    try { return await operation; }
+    catch (error) {
+      setLayoutSaveStatus('Layout not saved');
+      setLayoutError(`Could not save layout: ${error instanceof Error ? error.message : String(error)}`);
+      throw error;
+    }
+  };
+
+  const scheduleLayoutSave = () => {
+    if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
+    if (!ready || switchingLayoutRef.current) return;
+    setLayoutSaveStatus('Unsaved layout changes');
+    layoutSaveTimerRef.current = setTimeout(() => { void saveCurrentLayout().catch(() => {}); }, 700);
+  };
+  scheduleLayoutSaveRef.current = scheduleLayoutSave;
+
+  const restoreLayout = (layout: ChartLayout) => {
+    if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
+    activeLayoutRef.current = layout;
+    savedLayoutRef.current = layout.chartState;
+    restoredEntitiesRef.current = null;
+    replaceLayout(layout);
+    replaceScripts(userScriptsRef.current.map((script) => ({ ...script, visible: (layout.scripts ?? []).includes(script.id) })));
+    setIndicatorConfigs(DEFAULT_INDICATOR_CONFIGS.map((config) => ({
+      ...config, params: { ...config.params, ...layout.params?.[config.id] }, visible: layout.indicators.includes(config.id),
+    })));
+    setActiveLayoutId(layout.id);
+    setReady(false);
+    setScriptRevision((revision) => revision + 1);
+  };
+
+  const applyLayout = async (layoutId: string) => {
+    if (!ready || switchingLayoutRef.current || layoutId === activeLayoutRef.current.id) return;
+    switchingLayoutRef.current = true;
+    try {
+      await saveCurrentLayout();
+      // Read the latest server version and persist selection in the same transaction.
+      const layout = await selectChartLayout(layoutId);
+      restoreLayout(layout);
+    } catch (error) {
+      setLayoutError(`Could not switch layouts: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { switchingLayoutRef.current = false; }
+  };
+
+  const importBrowserLayouts = async () => {
+    if (!ready || switchingLayoutRef.current) return;
+    switchingLayoutRef.current = true;
+    setImportingLayouts(true);
+    try {
+      await saveCurrentLayout();
+      let selected = legacyLayouts[0]?.id ?? activeLayoutRef.current.id;
+      try {
+        const oldSelected = localStorage.getItem('chartLayoutId');
+        if (legacyLayouts.some((layout) => layout.id === oldSelected)) selected = oldSelected!;
+        else if (legacyLayouts.some((layout) => layout.id === `custom_browser_${oldSelected}`)) selected = `custom_browser_${oldSelected}`;
+      } catch { /* Import the first available layout when browser storage is blocked. */ }
+      const library = await importChartLayouts(legacyLayouts, selected);
+      setServerLayouts(library.layouts);
+      setLegacyLayouts([]);
+      const layout = library.layouts.find((item) => item.id === library.activeLayoutId);
+      if (layout) restoreLayout(layout);
+    } catch (error) {
+      setLayoutError(`Could not import browser layouts: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { setImportingLayouts(false); switchingLayoutRef.current = false; }
+  };
+
+  const createLayout = async () => {
+    if (changingLayout || switchingLayoutRef.current) return;
+    const name = layoutName.trim();
+    if (!name) { setLayoutNameError('Enter a layout name.'); return; }
+    if (name.length > 60) { setLayoutNameError('Use 60 characters or fewer.'); return; }
+    if (layouts.some((layout) => layout.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      setLayoutNameError('A layout with this name already exists.'); return;
+    }
+    setChangingLayout(true);
+    switchingLayoutRef.current = true;
+    try {
+      const current = await saveCurrentLayout();
+      const layout = await saveChartLayout({
+        ...current, id: `custom_${crypto.randomUUID()}`, name,
+        indicators: emptyLayout ? [] : current.indicators,
+        scripts: emptyLayout ? [] : current.scripts,
+        chartState: emptyLayout ? undefined : current.chartState,
+      });
+      const selected = await selectChartLayout(layout.id);
+      restoreLayout(selected);
+      setLayoutDialog(null);
+    } catch (error) {
+      setLayoutNameError(`Could not save this layout: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { setChangingLayout(false); switchingLayoutRef.current = false; }
+  };
+
+  const renameLayout = async () => {
+    if (layoutDialog?.kind !== 'rename' || changingLayout || switchingLayoutRef.current) return;
+    const { layout } = layoutDialog;
+    const name = layoutName.trim();
+    if (!name) { setLayoutNameError('Enter a layout name.'); return; }
+    if (name.length > 60) { setLayoutNameError('Use 60 characters or fewer.'); return; }
+    if (layouts.some((item) => item.id !== layout.id && item.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+      setLayoutNameError('A layout with this name already exists.'); return;
+    }
+    setChangingLayout(true);
+    switchingLayoutRef.current = true;
+    try {
+      // Drain autosaves before changing the name so an older save cannot undo it.
+      await saveCurrentLayout();
+      const saved = await renameChartLayout(layout.id, name);
+      replaceLayout(saved);
+      setLayoutSaveStatus('Layout saved to server');
+      setLayoutDialog(null);
+    } catch (error) {
+      setLayoutNameError(`Could not rename this layout: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { setChangingLayout(false); switchingLayoutRef.current = false; }
+  };
+
+  const deleteLayout = async () => {
+    if (layoutDialog?.kind !== 'delete' || changingLayout || switchingLayoutRef.current) return;
+    const { layout } = layoutDialog;
+    setChangingLayout(true);
+    switchingLayoutRef.current = true;
+    if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
+    try {
+      // Complete in-flight writes before deletion so autosave cannot recreate it.
+      await layoutSaveQueueRef.current.catch(() => {});
+      if (layout.id === activeLayoutRef.current.id) {
+        const fallback = layouts.find((item) => item.id === CHART_LAYOUTS[0].id)!;
+        await saveChartLayout(fallback);
+      }
+      const library = await deleteChartLayout(layout.id);
+      setServerLayouts(library.layouts);
+      if (layout.id === activeLayoutRef.current.id) {
+        const fallback = library.layouts.find((item) => item.id === library.activeLayoutId)!;
+        restoreLayout(fallback);
+      }
+      setLayoutSaveStatus('Layout saved to server');
+      setLayoutError('');
+      setLayoutDialog(null);
+    } catch (error) {
+      setLayoutNameError(`Could not delete this layout: ${error instanceof Error ? error.message : String(error)}`);
+    } finally { setChangingLayout(false); switchingLayoutRef.current = false; }
+  };
+
+  const layoutOptionsRef = useRef<DropdownParams>({ title: activeLayout.name, align: 'right', items: [] });
+  layoutOptionsRef.current = {
+    title: activeLayout.name, tooltip: 'Chart layout', align: 'right',
+    items: [
+      ...layouts.map((layout) => ({ title: layout.name, onSelect: () => { void applyLayout(layout.id); } })),
+      ...(activeLayout.id.startsWith('custom_') ? [
+        { title: 'Rename layout…', onSelect: () => {
+          if (!readyRef.current || switchingLayoutRef.current) return;
+          setLayoutName(activeLayout.name); setLayoutNameError(''); setLayoutDialog({ kind: 'rename', layout: activeLayout });
+        } },
+        { title: 'Delete layout…', onSelect: () => {
+          if (!readyRef.current || switchingLayoutRef.current) return;
+          setLayoutNameError(''); setLayoutDialog({ kind: 'delete', layout: activeLayout });
+        } },
+      ] : []),
+      { title: '+ Create new layout…', onSelect: () => {
+        if (!readyRef.current || switchingLayoutRef.current) return;
+        setLayoutName(''); setEmptyLayout(false); setLayoutNameError(''); setLayoutDialog({ kind: 'create' });
+      } },
+    ],
+  };
+  useEffect(() => { layoutDropdownRef.current?.applyOptions(layoutOptionsRef.current); }, [layouts, activeLayoutId]);
+
   useEffect(() => {
-    const layout = CHART_LAYOUTS.find((l) => l.id === activeLayoutId) ?? CHART_LAYOUTS[0];
-    const inLayout = new Set(layout.indicators);
-    setIndicatorConfigs((prev) => prev.map((c) => ({ ...c, visible: inLayout.has(c.id) })));
+    scheduleLayoutSaveRef.current();
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLayoutId, indicatorConfigs, userScripts, ready]);
+
+  useEffect(() => () => {
+    if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
   }, []);
 
   // Params are split by study kind: only the backend-computed ones require a
@@ -464,20 +799,26 @@ export default function StockChart({
     if (!widget) return;
     const chart = widget.activeChart();
     const entities = studyEntitiesRef.current;
-    const visibleById = new Map(indicatorConfigs.map((c) => [c.id, c.visible]));
-
-    const paramsById = new Map(indicatorConfigs.map((c) => [c.id, c.params]));
-
     for (const spec of STUDY_CATALOGUE) {
-      const shouldShow = visibleById.get(spec.id) ?? false;
+      if (widgetRef.current !== widget) return;
+      const config = indicatorConfigsRef.current.find((item) => item.id === spec.id);
+      const shouldShow = config?.visible ?? false;
       const existing = entities.get(spec.id);
       if (shouldShow && !existing) {
+        if (pendingStudiesRef.current.has(spec.id)) continue;
+        pendingStudiesRef.current.add(spec.id);
         try {
-          const inputs = computedStudyInputs(spec.id, paramsById.get(spec.id) ?? {}) ?? {};
+          const inputs = computedStudyInputs(spec.id, config?.params ?? {}) ?? {};
           const id = await chart.createStudy(STUDY_NAME_BY_ID[spec.id], false, false, inputs);
-          if (id) entities.set(spec.id, id);
+          if (widgetRef.current !== widget) return;
+          if (id) {
+            if (indicatorConfigsRef.current.find((item) => item.id === spec.id)?.visible) entities.set(spec.id, id);
+            else chart.removeEntity(id);
+          }
         } catch (e) {
           console.warn(`Failed to create study ${spec.id}:`, e);
+        } finally {
+          if (widgetRef.current === widget) pendingStudiesRef.current.delete(spec.id);
         }
       } else if (!shouldShow && existing) {
         try {
@@ -494,7 +835,7 @@ export default function StockChart({
   /** Resize the main price pane (pane 0) to 50% of the total pane area. */
   const setMainPaneHeight = () => {
     const widget = widgetRef.current;
-    if (!widget) return;
+    if (!widget || savedLayoutRef.current) return;
     try {
       const panes = widget.activeChart().getPanes();
       if (panes.length < 2) return; // nothing to redistribute into
@@ -573,9 +914,9 @@ export default function StockChart({
     }
   };
 
-  // ── Create the widget once on mount ────────────────────────────────────────
+  // Register new script metadata by rebuilding from the saved chart layout.
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current || !scriptsLoaded) return;
 
     tvStore.setIndicators(toIndicatorParams(indicatorConfigs));
     tvStore.reset();
@@ -595,13 +936,18 @@ export default function StockChart({
       autosize: true,
       theme: mode,
       timezone: 'Asia/Ho_Chi_Minh',
-      custom_indicators_getter: customIndicatorsGetter,
-      // Trading Terminal only: asks for the widget bar's Watch List. The
-      // Advanced Charts build has no widget bar and ignores this, which is why
-      // resolveWatchListApi below decides who actually renders the list.
+      saved_data: savedLayoutRef.current,
+      auto_save_delay: 1,
+      custom_indicators_getter: async (pine) => [
+        ...await customIndicatorsGetter(pine),
+        ...userScriptsRef.current.map((script) => buildOpenScriptStudy(pine, {
+          ...userScriptSpec(script),
+          onError: (message) => { if (!disposed) setScriptError(`${script.title}: ${message}`); },
+        })),
+      ],
+      // The app panel owns server-backed lists independently of chart layouts.
       widgetbar: {
-        watchlist: true,
-        watchlist_settings: { default_symbols: DEFAULT_WATCHLIST_SYMBOLS },
+        watchlist: false,
       },
       disabled_features: [],
       overrides: tvOverrides(mode),
@@ -610,10 +956,45 @@ export default function StockChart({
       widgetRef.current = widget;
       widget.onChartReady(() => {
         if (disposed) return;
+        skipRestoredInputsRef.current = Boolean(savedLayoutRef.current);
+        const restored = restoredEntitiesRef.current;
+        const existingStudies = widget.activeChart().getAllStudies();
+        if (restored) {
+          const ids = new Set(existingStudies.map((study) => study.id));
+          studyEntitiesRef.current = new Map([...restored.studies].filter(([, id]) => ids.has(id)));
+          scriptEntitiesRef.current = new Map([...restored.scripts].filter(([, id]) => ids.has(id)));
+          restoredEntitiesRef.current = null;
+        }
+        // Reconcile by name as well: saved layouts can be restored independently
+        // of our in-memory IDs (for example after a development hot reload).
+        for (const spec of STUDY_CATALOGUE) {
+          const existing = existingStudies.find((study) => study.name === STUDY_NAME_BY_ID[spec.id]);
+          if (existing) studyEntitiesRef.current.set(spec.id, existing.id);
+        }
+        for (const script of userScriptsRef.current) {
+          const name = userScriptSpec(script).name;
+          const existing = existingStudies.find((study) => study.name === name);
+          if (existing) scriptEntitiesRef.current.set(script.id, existing.id);
+        }
         setReady(true);
-        void applyStudies();
         void drawPositions();
       });
+      widget.subscribe('study_event', (entityId, event) => {
+        if (disposed || event !== 'remove') return;
+        const builtin = [...studyEntitiesRef.current].find(([, id]) => id === entityId);
+        if (builtin) {
+          studyEntitiesRef.current.delete(builtin[0]);
+          setIndicatorConfigs((configs) => configs.map((config) => config.id === builtin[0] ? { ...config, visible: false } : config));
+        }
+        scheduleLayoutSaveRef.current();
+        const entry = [...scriptEntitiesRef.current].find(([, id]) => id === entityId);
+        if (!entry) return;
+        scriptEntitiesRef.current.delete(entry[0]);
+        void persistScripts(userScriptsRef.current.map((script) => script.id === entry[0] ? { ...script, visible: false } : script))
+          .catch(() => { if (!disposed) setScriptError('Could not save indicator visibility on the server.'); });
+      });
+      widget.subscribe('onAutoSaveNeeded', () => { if (!disposed) scheduleLayoutSaveRef.current(); });
+      widget.subscribe('study_properties_changed', () => { if (!disposed) scheduleLayoutSaveRef.current(); });
       void resolveWatchListApi(widget).then((resolved) => {
         if (disposed) return;
         onWatchListResolvedRef.current?.(resolved);
@@ -659,15 +1040,10 @@ export default function StockChart({
         syncBtnElRef.current = syncBtn;
 
         // ── Layout picker + indicators (right side) ──────────────────────────
-        const initial = CHART_LAYOUTS.find((l) => l.id === activeLayoutId) ?? CHART_LAYOUTS[0];
-        widget.createDropdown({
-          title: initial.name,
-          tooltip: 'Chart layout',
-          align: 'right',
-          items: CHART_LAYOUTS.map((l) => ({ title: l.name, onSelect: () => applyLayout(l.id) })),
-        }).then((dropdown) => {
+        widget.createDropdown(layoutOptionsRef.current).then((dropdown) => {
           if (disposed) { dropdown.remove(); return; }
           layoutDropdownRef.current = dropdown;
+          dropdown.applyOptions(layoutOptionsRef.current);
         });
 
         const btn = widget.createButton({ align: 'right', useTradingViewStyle: false });
@@ -678,22 +1054,66 @@ export default function StockChart({
           '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 17 9 11 13 15 21 7"/><polyline points="14 7 21 7 21 14"/></svg>' +
           'Indicators</span>';
         btn.addEventListener('click', () => setIndicatorPanelOpen((p) => !p));
+        const scriptButton = widget.createButton({ align: 'right', useTradingViewStyle: false });
+        scriptButton.textContent = 'OpenScript Editor';
+        scriptButton.title = 'Write or paste a custom indicator';
+        scriptButton.addEventListener('click', () => setScriptEditorOpen((open) => !open));
       });
-    }).catch((e) => console.error('Failed to create TradingView widget:', e));
+    }).catch((e) => {
+      console.error('Failed to create TradingView widget:', e);
+      if (!disposed) setScriptError('Could not load the chart. Reload the page to try again.');
+    });
 
     return () => {
       disposed = true;
+      if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
       setReady(false);
       studyEntitiesRef.current.clear();
+      pendingStudiesRef.current.clear();
+      scriptEntitiesRef.current.clear();
+      pendingScriptsRef.current.clear();
       executionShapesRef.current = [];
       if (widgetRef.current) {
         try { widgetRef.current.remove(); } catch { /* already gone */ }
         widgetRef.current = null;
       }
     };
-    // Mount-only: symbol / params handled by dedicated effects below.
+    // Symbol / params are handled by dedicated effects below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [scriptRevision, scriptsLoaded]);
+
+  const scriptVisibilityKey = userScripts.map((script) => `${script.id}:${script.visible}`).join(',');
+  const pendingScriptsRef = useRef(new Set<string>());
+  useEffect(() => {
+    if (!ready || !widgetRef.current) return;
+    const widget = widgetRef.current;
+    const chart = widget.activeChart();
+    for (const [scriptId, entityId] of scriptEntitiesRef.current) {
+      if (userScriptsRef.current.some((script) => script.id === scriptId && script.visible)) continue;
+      scriptEntitiesRef.current.delete(scriptId);
+      chart.removeEntity(entityId);
+    }
+    void (async () => {
+      for (const script of userScriptsRef.current) {
+        if (widgetRef.current !== widget) return;
+        if (!script.visible || scriptEntitiesRef.current.has(script.id) || pendingScriptsRef.current.has(script.id)) continue;
+        pendingScriptsRef.current.add(script.id);
+        try {
+          const id = await chart.createStudy(userScriptSpec(script).name, false, false);
+          if (widgetRef.current !== widget) return;
+          if (!id) throw new Error('The chart did not create an indicator.');
+          if (userScriptsRef.current.some((current) => current.id === script.id && current.visible)) scriptEntitiesRef.current.set(script.id, id);
+          else chart.removeEntity(id);
+        } catch (error) {
+          if (widgetRef.current === widget) setScriptError(`Could not add ${script.title}: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+          if (widgetRef.current === widget) pendingScriptsRef.current.delete(script.id);
+        }
+      }
+      if (widgetRef.current === widget) setMainPaneHeight();
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, scriptRevision, scriptVisibilityKey]);
 
   // ── Symbol change ──────────────────────────────────────────────────────────
   useEffect(() => {
@@ -739,6 +1159,7 @@ export default function StockChart({
   useEffect(() => {
     const widget = widgetRef.current;
     if (!ready || !widget) return;
+    if (skipRestoredInputsRef.current) { skipRestoredInputsRef.current = false; return; }
     const chart = widget.activeChart();
     for (const config of indicatorConfigs) {
       const entity = studyEntitiesRef.current.get(config.id);
@@ -787,12 +1208,51 @@ export default function StockChart({
     <Box sx={{
       width: '100%',
       height: resolvedHeight,
+      display: 'flex',
+      flexDirection: 'column',
       position: 'relative',
       bgcolor: 'surface.inset',
       borderRadius: 1,
       overflow: 'hidden',
     }}>
-      <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
+      <div ref={containerRef} style={{ width: '100%', flex: 1, minHeight: 160 }} />
+      <Box sx={{ borderTop: 1, borderColor: 'divider', px: 1, flexShrink: 0 }}>
+        <Button size="small" onClick={() => setScriptEditorOpen((open) => !open)} aria-expanded={scriptEditorOpen}>OpenScript Editor</Button>
+        <Button size="small" disabled={!ready || changingLayout || layoutSaveStatus === 'Saving layout…'} onClick={() => { void saveCurrentLayout().catch(() => {}); }}>Save layout</Button>
+        <Typography component="span" variant="caption" color="text.secondary" role="status">{layoutSaveStatus}</Typography>
+      </Box>
+      {scriptEditorOpen && scriptsLoaded && <ScriptEditor scripts={userScripts} ready={ready} error={scriptError} onSave={saveScript} onRemove={removeScript} onClose={() => setScriptEditorOpen(false)} />}
+      {scriptsLoading && <Alert severity="info">Loading your chart layouts and indicators from server…</Alert>}
+      {(!scriptEditorOpen || !scriptsLoaded) && scriptError && <Alert severity="error" action={!scriptsLoaded ? <Button onClick={() => setScriptLoadAttempt((attempt) => attempt + 1)}>Retry</Button> : undefined}>{scriptError}</Alert>}
+      {legacyScripts.length > 0 && scriptsLoaded && <Alert severity="info" action={<Button disabled={importingScripts} onClick={() => void importBrowserScripts()}>{importingScripts ? 'Importing…' : 'Import browser scripts'}</Button>}>{legacyScripts.length} scripts from the old browser library can be imported into your server library.</Alert>}
+
+      {legacyLayouts.length > 0 && scriptsLoaded && <Alert severity="info" action={<Button disabled={importingLayouts || !ready} onClick={() => void importBrowserLayouts()}>{importingLayouts ? 'Importing…' : 'Import browser layouts'}</Button>}>{legacyLayouts.length} browser layouts can be imported into your account.</Alert>}
+      {layoutError && <Alert severity="error" onClose={() => setLayoutError('')}>{layoutError}</Alert>}
+      <Dialog open={layoutDialog?.kind === 'create' || layoutDialog?.kind === 'rename'} onClose={() => { if (!changingLayout) setLayoutDialog(null); }} maxWidth="xs" fullWidth>
+        <Box component="form" onSubmit={(event) => { event.preventDefault(); void (layoutDialog?.kind === 'rename' ? renameLayout() : createLayout()); }}>
+          <DialogTitle>{layoutDialog?.kind === 'rename' ? 'Rename layout' : 'Create new layout'}</DialogTitle>
+          <DialogContent>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>{layoutDialog?.kind === 'rename' ? 'Choose a new name for this layout. Your indicators and settings stay with it.' : 'Save your indicator selection and settings as a named layout. Layouts and their indicators are saved automatically to your account on the server.'}</Typography>
+            <TextField autoFocus fullWidth size="small" disabled={changingLayout} label="Layout name" value={layoutName} onChange={(event) => { setLayoutName(event.target.value); setLayoutNameError(''); }} error={!!layoutNameError} helperText={layoutNameError || 'For example, Momentum or My OpenScript indicators'} inputProps={{ maxLength: 60 }} />
+            {layoutDialog?.kind === 'create' && <FormControlLabel sx={{ mt: 1 }} control={<Checkbox disabled={changingLayout} checked={emptyLayout} onChange={(event) => setEmptyLayout(event.target.checked)} />} label="Start without indicators" />}
+          </DialogContent>
+          <DialogActions sx={{ px: 3, pb: 2 }}>
+            <Button disabled={changingLayout} onClick={() => setLayoutDialog(null)}>Cancel</Button>
+            <Button disabled={changingLayout || !ready} type="submit" variant="contained">{changingLayout ? 'Saving…' : layoutDialog?.kind === 'rename' ? 'Save name' : 'Create layout'}</Button>
+          </DialogActions>
+        </Box>
+      </Dialog>
+      <Dialog open={layoutDialog?.kind === 'delete'} onClose={() => { if (!changingLayout) setLayoutDialog(null); }} maxWidth="xs" fullWidth aria-labelledby="delete-layout-title">
+        <DialogTitle id="delete-layout-title">Delete layout?</DialogTitle>
+        <DialogContent>
+          <Typography variant="body2">Delete “{layoutDialog && 'layout' in layoutDialog ? layoutDialog.layout.name : ''}” from your account? The chart will switch to Layout 1. Your saved OpenScripts will remain in your library.</Typography>
+          {layoutNameError && <Alert severity="error" sx={{ mt: 2 }}>{layoutNameError}</Alert>}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button disabled={changingLayout} onClick={() => setLayoutDialog(null)}>Cancel</Button>
+          <Button disabled={changingLayout || !ready} color="error" variant="contained" onClick={() => void deleteLayout()}>{changingLayout ? 'Deleting…' : 'Delete layout'}</Button>
+        </DialogActions>
+      </Dialog>
 
       {/* Layout dropdown + indicators button live in the chart header toolbar
           (added imperatively via widget.createDropdown / createButton). */}
@@ -803,6 +1263,7 @@ export default function StockChart({
           onToggleVisible={handleToggleIndicator}
           onChangeParams={handleChangeParams}
           onClose={() => setIndicatorPanelOpen(false)}
+          onOpenScriptEditor={() => { setIndicatorPanelOpen(false); setScriptEditorOpen(true); }}
         />
       )}
     </Box>

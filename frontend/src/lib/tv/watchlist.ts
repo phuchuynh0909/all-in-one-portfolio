@@ -1,22 +1,10 @@
 /**
- * Watch List API bridge.
- *
- * The charting library's Watch List widget lives in the widget bar and exposes
- * `IWatchListApi` through `widget.watchList()` — but only in the Trading
- * Terminal package. The Advanced Charts build served from `public/` stubs the
- * whole widget bar out: its `library.*.js` compiles to `watchlist(){H()}` where
- * `function H(){throw new Error("not implemented")}`, and `window.widgetbar` is
- * never assigned, so `widgetbar.watchlist: true` renders nothing.
- *
- * So the app speaks only `IWatchListApi`. `resolveWatchListApi` hands back the
- * library's own object when it exists (native widget, app panel steps aside)
- * and otherwise an identical localStorage-backed implementation that drives the
- * app-side panel. Swapping in a Trading Terminal build is then a file drop, not
- * a rewrite.
- *
- * List contents follow the widget's own convention: an item prefixed with `###`
- * is a section divider rather than a symbol.
+ * Account-owned Watch List API bridge. The chart panel uses TradingView's
+ * IWatchListApi contract while MySQL stores lists independently of layouts.
+ * Browser storage is read only to offer migration of older watchlists.
  */
+import { getToken } from '../auth/token';
+import { createWatchlistTransport, type WatchlistLibrary, type WatchlistTransport, type WatchlistWrite } from '../services/watchlists';
 import type {
   EmptyCallback,
   IChartingLibraryWidget,
@@ -57,7 +45,7 @@ const LEGACY_STORAGE_KEY = 'chartWatchlist';
 const DEFAULT_LIST_ID = 'default';
 const DEFAULT_LIST_TITLE = 'Watchlist';
 
-interface StoredState {
+export interface StoredState {
   lists: WatchListSymbolListMap;
   activeId: string;
 }
@@ -127,9 +115,9 @@ function defaultState(): StoredState {
   };
 }
 
-function readState(): StoredState {
+export function readLegacyWatchlists(storage: Pick<Storage, 'getItem'>): StoredState | null {
   try {
-    const stored = localStorage.getItem(STORAGE_KEY);
+    const stored = storage.getItem(STORAGE_KEY);
     if (stored) {
       const parsed = JSON.parse(stored) as Partial<StoredState>;
       const lists = parsed.lists;
@@ -150,7 +138,7 @@ function readState(): StoredState {
 
     // Migrate the single pre-multi-list array, leaving the old key in place so
     // an older deployment on this origin still finds its symbols.
-    const legacy = localStorage.getItem(LEGACY_STORAGE_KEY);
+    const legacy = storage.getItem(LEGACY_STORAGE_KEY);
     if (legacy) {
       const parsed: unknown = JSON.parse(legacy);
       if (Array.isArray(parsed)) {
@@ -161,7 +149,7 @@ function readState(): StoredState {
       }
     }
   } catch { /* corrupt / private mode — fall through to defaults */ }
-  return defaultState();
+  return null;
 }
 
 let idCounter = 0;
@@ -171,10 +159,10 @@ function nextListId(): string {
 }
 
 /**
- * localStorage-backed `IWatchListApi`, method-for-method with the widget's own.
+ * In-memory `IWatchListApi`; mutations are persisted by the server connection.
  */
-function createLocalWatchListApi(): IWatchListApi {
-  let state = readState();
+function createWatchListApi(initial: StoredState, onChange: (state: StoredState) => void) {
+  let state = initial;
 
   const listChanged = new Emitter<WatchListSymbolListChangedCallback>();
   const activeListChanged = new Emitter<EmptyCallback>();
@@ -182,18 +170,16 @@ function createLocalWatchListApi(): IWatchListApi {
   const listRemoved = new Emitter<WatchListSymbolListRemovedCallback>();
   const listRenamed = new Emitter<WatchListSymbolListRenamedCallback>();
 
-  const persist = () => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    } catch { /* quota / private mode — in-memory state stays correct */ }
-  };
+  const persist = () => onChange(snapshot());
 
   const copy = (list: WatchListSymbolList): WatchListSymbolList => ({
     ...list,
     symbols: [...list.symbols],
   });
 
-  return {
+  const snapshot = (): StoredState => ({ lists: Object.fromEntries(Object.entries(state.lists).map(([id, list]) => [id, copy(list)])), activeId: state.activeId });
+
+  const api: IWatchListApi = {
     defaultList: () => [...DEFAULT_WATCHLIST_SYMBOLS],
 
     getList: (id?: string) => {
@@ -244,7 +230,7 @@ function createLocalWatchListApi(): IWatchListApi {
     },
 
     createList: (listName?: string, symbols: string[] = []) => {
-      if (!listName?.trim()) return null;
+      if (!state.activeId || !listName?.trim()) return null;
       const list: WatchListSymbolList = {
         id: nextListId(),
         title: listName.trim(),
@@ -260,7 +246,7 @@ function createLocalWatchListApi(): IWatchListApi {
 
     saveList: (list: WatchListSymbolList) => {
       const title = list.title?.trim();
-      if (!title) return false;
+      if (!state.activeId || !title) return false;
       const symbols = normaliseItems(list.symbols);
       const duplicate = Object.values(state.lists).some(
         (existing) => existing.title === title && existing.symbols.join(' ') === symbols.join(' '),
@@ -293,40 +279,149 @@ function createLocalWatchListApi(): IWatchListApi {
     onListRemoved: () => listRemoved,
     onListRenamed: () => listRenamed,
   };
+  return {
+    api, snapshot,
+    hydrate: (next: StoredState) => {
+      const previous = state;
+      state = next;
+      for (const id of Object.keys(previous.lists)) if (!next.lists[id]) listRemoved.fire(id);
+      for (const [id, list] of Object.entries(next.lists)) {
+        if (!previous.lists[id]) listAdded.fire(id, [...list.symbols]);
+        else if (previous.lists[id].title !== list.title) listRenamed.fire(id, previous.lists[id].title, list.title);
+        listChanged.fire(id);
+      }
+      activeListChanged.fire();
+    },
+  };
 }
 
-let localApi: IWatchListApi | null = null;
+export interface WatchlistStatus {
+  phase: 'loading' | 'saving' | 'saved' | 'error';
+  ready: boolean;
+  message: string;
+  canImport: boolean;
+}
 
-/**
- * The app-side `IWatchListApi` singleton. Deliberately shared: every consumer
- * must see the same lists, the way they would when the library owns the state.
- */
-export function getLocalWatchListApi(): IWatchListApi {
-  if (!localApi) localApi = createLocalWatchListApi();
-  return localApi;
+export interface WatchlistPersistence {
+  getStatus(): WatchlistStatus;
+  onStatusChanged(): ISubscription<EmptyCallback>;
+  retry(): void;
+  importBrowserLists(): Promise<void>;
 }
 
 export interface ResolvedWatchList {
   api: IWatchListApi;
-  /**
-   * True when `api` is the library's own Watch List widget (Trading Terminal).
-   * The app panel must then stay hidden — the widget bar already shows one.
-   */
   native: boolean;
+  persistence: WatchlistPersistence;
+  dispose(): void;
+}
+
+function decodeLibrary(library: WatchlistLibrary): StoredState {
+  if (!Array.isArray(library.lists) || !library.lists.length) throw new Error('The server returned no watchlists.');
+  const lists = Object.fromEntries(library.lists.map((list) => [list.id, { ...list, symbols: normaliseItems(list.symbols) }]));
+  if (!library.active_list_id || !lists[library.active_list_id]) throw new Error('The selected server watchlist does not exist.');
+  return { lists, activeId: library.active_list_id };
+}
+
+function encodeState(state: StoredState): WatchlistWrite {
+  return { lists: Object.values(state.lists).map((list) => ({ ...list, symbols: [...list.symbols] })), active_list_id: state.activeId };
 }
 
 /**
- * Prefers the library's Watch List widget, falls back to the app-side list.
- *
- * On Advanced Charts `watchList()` throws (`new Error("not implemented")`),
- * which is the signal that the widget bar is absent from this build.
+ * Synchronous UI edits are queued in order; only a confirmed server response is
+ * reported as saved. Failed writes remain in memory for Retry, never on disk.
  */
-export async function resolveWatchListApi(
-  widget: IChartingLibraryWidget,
-): Promise<ResolvedWatchList> {
-  try {
-    const api = await widget.watchList();
-    if (api) return { api, native: true };
-  } catch { /* Advanced Charts build — no widget bar */ }
-  return { api: getLocalWatchListApi(), native: false };
+export function createServerWatchListApi(
+  transport: WatchlistTransport = createWatchlistTransport(),
+  legacy: StoredState | null = (() => { try { return readLegacyWatchlists(localStorage); } catch { return null; } })(),
+): ResolvedWatchList {
+  let disposed = false;
+  let loaded = false;
+  let revision = 0;
+  let importedIds: string[] = [];
+  let queue: Promise<void> = Promise.resolve();
+  let status: WatchlistStatus = { phase: 'loading', ready: false, message: 'Loading watchlists…', canImport: false };
+  const statusChanged = new Emitter<EmptyCallback>();
+  const report = (phase: WatchlistStatus['phase'], message: string) => {
+    if (disposed) return;
+    const server = store.api.getAllLists() ?? {};
+    const canImport = Boolean(legacy && Object.values(legacy.lists).some((list) => !importedIds.includes(list.id)
+      && JSON.stringify(server[list.id]) !== JSON.stringify(list)));
+    status = { phase, ready: loaded, message, canImport };
+    statusChanged.fire();
+  };
+  const fail = (error: unknown) => report('error', error instanceof Error ? error.message : 'Could not save watchlists.');
+  const persist = (snapshot: StoredState): Promise<void> => {
+    const current = ++revision;
+    report('saving', 'Saving watchlist…');
+    const operation = queue.then(async () => {
+      if (disposed) return;
+      const saved = await transport.save(encodeState(snapshot));
+      if (disposed) return;
+      importedIds = saved.imported_ids;
+      if (revision === current) {
+        store.hydrate(decodeLibrary(saved));
+        report('saved', 'Watchlist saved to server');
+      }
+    });
+    queue = operation.catch((error) => { if (revision === current) fail(error); });
+    return operation;
+  };
+  const store = createWatchListApi({ lists: {}, activeId: '' }, (snapshot) => {
+    if (!loaded || disposed) return;
+    void persist(snapshot).catch(() => {});
+  });
+  const load = async () => {
+    report('loading', 'Loading watchlists…');
+    try {
+      let library = await transport.load();
+      if (disposed) return;
+      if (!library.lists.length) library = await transport.initialize(encodeState(defaultState()));
+      if (disposed) return;
+      importedIds = library.imported_ids;
+      store.hydrate(decodeLibrary(library));
+      loaded = true;
+      report('saved', 'Watchlist saved to server');
+    } catch (error) { fail(error); }
+  };
+  void load();
+  return {
+    api: store.api, native: false,
+    persistence: {
+      getStatus: () => status,
+      onStatusChanged: () => statusChanged,
+      retry: () => { if (!disposed) { if (!loaded) void load(); else void persist(store.snapshot()).catch(() => {}); } },
+      importBrowserLists: async () => {
+        if (!legacy || !loaded || disposed || status.phase === 'error') return;
+        report('saving', 'Importing browser watchlists…');
+        try {
+          await queue;
+          if (disposed) return;
+          const library = await transport.import(encodeState(legacy));
+          if (disposed) return;
+          importedIds = library.imported_ids;
+          store.hydrate(decodeLibrary(library));
+          report('saved', 'Browser watchlists imported to server');
+        } catch (error) { fail(error); }
+      },
+    },
+    dispose: () => { disposed = true; transport.dispose(); },
+  };
+}
+
+// Reuse one connection across widget/layout rebuilds, scoped to the login.
+let cached: { token: string | null; connection: ResolvedWatchList } | null = null;
+
+export function resetWatchListConnection(): void {
+  cached?.connection.dispose();
+  cached = null;
+}
+
+export async function resolveWatchListApi(_widget: IChartingLibraryWidget): Promise<ResolvedWatchList> {
+  const token = getToken();
+  if (!cached || cached.token !== token) {
+    resetWatchListConnection();
+    cached = { token, connection: createServerWatchListApi() };
+  }
+  return cached.connection;
 }

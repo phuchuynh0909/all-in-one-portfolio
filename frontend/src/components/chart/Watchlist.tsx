@@ -46,7 +46,7 @@ import {
 } from '@mui/icons-material';
 
 import type { IWatchListApi, WatchListSymbolListMap } from '../../lib/tv';
-import { isSectionDivider, listSymbols, sectionTitle, SECTION_PREFIX } from '../../lib/tv/watchlist';
+import { isSectionDivider, listSymbols, sectionTitle, SECTION_PREFIX, type WatchlistPersistence } from '../../lib/tv/watchlist';
 import { fetchQuotes, isVnMarketSession, type LatestQuote } from '../../lib/services/quote';
 
 /** How often quotes refresh while the market is open. */
@@ -76,13 +76,24 @@ function colorFor(pct: number | null | undefined): string {
 export interface WatchlistProps {
   /** List state and change events — the library's own API, or the app's. */
   api: IWatchListApi;
+  persistence?: WatchlistPersistence;
   /** Symbol currently shown on the chart (highlighted in the list). */
   activeSymbol: string;
   /** Called when a row is clicked. */
   onSelect: (symbol: string) => void;
 }
 
-export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProps) {
+export default function Watchlist({ api, persistence, activeSymbol, onSelect }: WatchlistProps) {
+  const [sync, setSync] = useState(() => persistence?.getStatus());
+  useEffect(() => {
+    if (!persistence) { setSync(undefined); return; }
+    const owner = {};
+    const refreshStatus = () => setSync(persistence.getStatus());
+    refreshStatus();
+    persistence.onStatusChanged().subscribe(owner, refreshStatus);
+    return () => persistence.onStatusChanged().unsubscribeAll(owner);
+  }, [persistence]);
+  const canEdit = !sync || (sync.ready && sync.phase !== 'loading' && sync.message !== 'Importing browser watchlists…');
   const [lists, setLists] = useState<WatchListSymbolListMap>({});
   const [activeListId, setActiveListId] = useState<string | null>(null);
   /** Raw list contents — symbols *and* `###` section dividers, in order. */
@@ -205,6 +216,7 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
       <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ px: 0.5, pb: 0.5 }}>
         <Button
           size="small"
+          disabled={!canEdit}
           endIcon={<ArrowDropDown />}
           onClick={(e) => setListMenuAnchor(e.currentTarget)}
           sx={{
@@ -222,11 +234,17 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
           </Box>
         </Button>
         <Tooltip title={adding ? 'Cancel' : 'Add symbol'}>
-          <IconButton size="small" onClick={() => { setAdding((p) => !p); setDraft(''); }} sx={{ color: 'text.secondary' }}>
+          <IconButton aria-label={adding ? 'Cancel adding symbol' : 'Add symbol'} disabled={!canEdit} size="small" onClick={() => { setAdding((p) => !p); setDraft(''); }} sx={{ color: 'text.secondary' }}>
             {adding ? <Close fontSize="small" /> : <Add fontSize="small" />}
           </IconButton>
         </Tooltip>
       </Stack>
+
+      {sync && <Box sx={{ px: 1, pb: 0.75 }}>
+        <Typography variant="caption" role="status" sx={{ color: sync.phase === 'error' ? DOWN : FLAT }}>{sync.phase === 'error' ? `Watchlist not saved: ${sync.message}` : sync.message}</Typography>
+        {sync.phase === 'error' && <Button size="small" onClick={() => persistence?.retry()}>Retry</Button>}
+        {sync.canImport && <Button size="small" disabled={sync.phase !== 'saved'} onClick={() => { void persistence?.importBrowserLists(); }}>Import browser watchlists</Button>}
+      </Box>}
 
       <Menu
         anchorEl={listMenuAnchor}
@@ -284,6 +302,7 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
             size="small"
             placeholder="Ticker, or ###Section"
             value={draft}
+            inputProps={{ maxLength: 120 }}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') addItem();
@@ -313,7 +332,7 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
       )}
 
       <List dense disablePadding sx={{ overflowY: 'auto', flex: 1, minHeight: 0 }}>
-        {items.length === 0 && (
+        {items.length === 0 && canEdit && (
           <Typography variant="caption" sx={{ px: 1, color: FLAT }}>
             No symbols yet — add one with the + button.
           </Typography>
@@ -427,6 +446,7 @@ export default function Watchlist({ api, activeSymbol, onSelect }: WatchlistProp
             size="small"
             placeholder="List name"
             value={nameDraft}
+            inputProps={{ maxLength: 80 }}
             onChange={(e) => setNameDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') submitName(); }}
             sx={{ mt: 1 }}

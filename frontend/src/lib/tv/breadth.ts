@@ -5,6 +5,7 @@ import type {
   CustomIndicator,
   DatafeedConfiguration,
   ErrorCallback,
+  HistoryCallback,
   IPineStudyResult,
   IBasicDataFeed,
   LibraryPineStudy,

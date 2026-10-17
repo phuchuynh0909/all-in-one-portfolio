@@ -21,9 +21,10 @@ interface Props {
   onToggleVisible: (id: string) => void;
   onChangeParams: (id: string, params: Record<string, number>) => void;
   onClose: () => void;
+  onOpenScriptEditor: () => void;
 }
 
-export default function IndicatorManager({ configs, onToggleVisible, onChangeParams, onClose }: Props) {
+export default function IndicatorManager({ configs, onToggleVisible, onChangeParams, onClose, onOpenScriptEditor }: Props) {
   const [settingsFor, setSettingsFor] = useState<IndicatorConfig | null>(null);
   const [draftParams, setDraftParams] = useState<Record<string, string>>({});
 
@@ -73,7 +74,9 @@ export default function IndicatorManager({ configs, onToggleVisible, onChangePar
 
       <Divider sx={{ borderColor: 'var(--color-border-subtle)', mb: 0.75 }} />
 
-      <Stack spacing={0}>
+      <Button size="small" fullWidth onClick={onOpenScriptEditor} sx={{ mb: 1 }}>Create custom indicator</Button>
+
+      <Stack spacing={0} sx={{ maxHeight: '60vh', overflowY: 'auto' }}>
         {configs.map((cfg) => (
           <Stack
             key={cfg.id}

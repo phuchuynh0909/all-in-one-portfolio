@@ -6,9 +6,9 @@ from app.db.base import Base
 class User(Base):
     """An application login. Seeded by ``app/scripts/create_user.py``.
 
-    Carries no ownership of data: every authenticated user sees the same single
-    portfolio. The row exists so one person can be revoked (``is_active``)
-    without rotating everyone else's tokens.
+    Every authenticated user sees the same single portfolio. Saved chart layouts
+    and OpenScript sources belong to this login. The row also lets one person be revoked
+    (``is_active``) without rotating everyone else's tokens.
     """
 
     __tablename__ = "users"

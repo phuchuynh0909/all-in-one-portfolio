@@ -35,6 +35,9 @@ from app.api.v1.routes.quote import router as quote_router
 from app.api.v1.routes.mvf import router as mvf_router
 from app.api.v1.routes.corporate_actions import router as corporate_actions_router
 from app.api.v1.routes.daily_picks import router as daily_picks_router
+from app.api.v1.routes.openscripts import router as openscripts_router
+from app.api.v1.routes.chart_layouts import router as chart_layouts_router
+from app.api.v1.routes.watchlists import router as watchlists_router
 
 
 def get_app() -> FastAPI:
@@ -103,6 +106,9 @@ def get_app() -> FastAPI:
     app.include_router(mvf_router, prefix=api_prefix)
     app.include_router(corporate_actions_router, prefix=api_prefix)
     app.include_router(daily_picks_router, prefix=api_prefix)
+    app.include_router(openscripts_router, prefix=api_prefix)
+    app.include_router(chart_layouts_router, prefix=api_prefix)
+    app.include_router(watchlists_router, prefix=api_prefix)
 
     # Create a custom cache decorator that logs hits and misses
     def cache_with_logging(**cache_kwargs):
