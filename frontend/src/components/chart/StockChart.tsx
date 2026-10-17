@@ -245,6 +245,25 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
     ],
   },
   {
+    id: 'iakf_oscillator',
+    name: 'iakf_oscillator',
+    label: 'IAKF Oscillator',
+    computed: true,
+    params: {
+      smoothing_period: 20,
+      noise_lookback: 20,
+      anomaly_multiple: 2.05,
+      outlier_rejection: 0.05,
+    },
+    visible: false,
+    paramDefs: [
+      { key: 'smoothing_period', label: 'Trend Smoothness', min: 2, max: 200, step: 1 },
+      { key: 'noise_lookback', label: 'Noise Lookback', min: 2, max: 200, step: 1 },
+      { key: 'anomaly_multiple', label: 'Unusual-Move Threshold', min: 1, max: 10, step: 0.05 },
+      { key: 'outlier_rejection', label: 'Damping Strength', min: 0, max: 1, step: 0.05 },
+    ],
+  },
+  {
     id: 'smart_money_flow', name: 'smart_money_flow', label: 'SMF Cloud',
     computed: true, params: {
       trend_len: 34, basis_type: 1, alma_offset: 0.85, alma_sigma: 6.0, basis_smooth: 3,
@@ -272,21 +291,24 @@ export interface ChartLayout {
 /** Indicators that live in the secondary layout. */
 const LAYOUT_2_IDS = ['rsi', 'bvc', 'kalman_zscore', 'yz_volatility'];
 
-/** Indicators for the backtest_012 strategy plus breakout-volume confirmation. */
-const LAYOUT_3_IDS = ['gaussian_frama', 'hull_butterfly', 'rvol'];
+/** Indicators for the backtest_012 strategy, breakout volume, and IAKF. */
+const LAYOUT_3_IDS = ['gaussian_frama', 'hull_butterfly', 'rvol', 'iakf_oscillator'];
+
 
 /**
  * Selectable indicator layouts. Layout 1 excludes LR Prediction Channel and
- * every Layout 2 / Layout 3 indicator; Layout 2 holds BVC + RSI + Kalman
- * Z-Score + YZ Volatility; Layout 3 holds Gaussian FRAMA + Hull Butterfly
- * Oscillator + RVOL.
+ * every indicator reserved for another layout. Layout 2 holds BVC + RSI +
+ * Kalman Z-Score + YZ Volatility; Layout 3 holds Gaussian FRAMA + Hull
+ * Butterfly Oscillator + RVOL + IAKF.
  */
 const CHART_LAYOUTS: ChartLayout[] = [
   {
     id: 'layout1',
     name: 'Layout 1',
     indicators: DEFAULT_INDICATOR_CONFIGS.map((c) => c.id).filter(
-      (id) => id !== 'linreg_channel' && !LAYOUT_2_IDS.includes(id) && !LAYOUT_3_IDS.includes(id),
+      (id) => id !== 'linreg_channel'
+        && !LAYOUT_2_IDS.includes(id)
+        && !LAYOUT_3_IDS.includes(id),
     ),
   },
   {
@@ -368,8 +390,17 @@ export default function StockChart({
 
   // Active indicator layout — persisted; drives which indicators are visible.
   const [activeLayoutId, setActiveLayoutId] = useState<string>(() => {
-    const stored = localStorage.getItem('chartLayoutId');
-    return CHART_LAYOUTS.some((l) => l.id === stored) ? (stored as string) : CHART_LAYOUTS[0].id;
+    try {
+      const stored = localStorage.getItem('chartLayoutId');
+      if (stored === 'layout4') {
+        localStorage.setItem('chartLayoutId', 'layout3');
+        return 'layout3';
+      }
+      if (CHART_LAYOUTS.some((layout) => layout.id === stored)) return stored as string;
+    } catch {
+      /* local storage unavailable */
+    }
+    return CHART_LAYOUTS[0].id;
   });
   const layoutDropdownRef = useRef<IDropdownApi | null>(null);
 

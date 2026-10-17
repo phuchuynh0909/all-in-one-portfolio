@@ -12,6 +12,8 @@ import {
   type HostBar,
 } from 'openalgo-script';
 
+import iakfOscillatorSource from './indicators/iakf-oscillator.os?raw';
+
 import type {
   CustomIndicator,
   IContext,
@@ -1093,6 +1095,21 @@ fill(bearUpperPlot, bearPricePlot, fade(#FF005D, 70))
 fill(bullLowerPlot, bullPricePlot, fade(#00C8FF, 70))
 barColor(signalState == 1 ? #00C8FF : #FF005D)
 `,
+};
+
+export const IAKF_OSCILLATOR_OPENSCRIPT: OpenScriptStudySpec = {
+  id: 'iakf_oscillator',
+  name: 'Innovation Adaptive Kalman Filter Oscillator',
+  dashedPlots: ['Shift Level (Surprise)', 'Shift Level (Damping)'],
+  hiddenPlots: ['Surprise Area', 'Damping Area', 'Ceiling', 'Floor'],
+  markerAnchors: ['Zero', 'Zero'],
+  inputsFrom: (params) => ({
+    smoothingPeriod: params.smoothing_period ?? 20,
+    noiseLookback: params.noise_lookback ?? 20,
+    anomalyMultiple: params.anomaly_multiple ?? 2.05,
+    outlierRejection: params.outlier_rejection ?? 0.05,
+  }),
+  source: iakfOscillatorSource,
 };
 
 // fill(bullOpenPlot, bullClosePlot, fade(#00C8FF, 75))
