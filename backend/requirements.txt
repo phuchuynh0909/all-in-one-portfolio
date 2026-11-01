@@ -39,7 +39,7 @@ numba>=0.61.0
 tables>=3.9.0
 
 # Machine Learning
-xgboost>=2.0.3
+xgboost>=3.2.0
 lightgbm>=4.3.0
 catboost>=1.2.10
 scikit-learn>=1.4.1
