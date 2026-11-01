@@ -10,3 +10,10 @@ class WatchlistLibrary(Base):
     lists = Column(JSON, nullable=False)
     active_list_id = Column(String(72), nullable=False)
     imported_ids = Column(JSON, nullable=False)
+
+
+class SharedWatchlistSymbol(Base):
+    __tablename__ = "shared_watchlist_symbols"
+
+    symbol = Column(String(20), primary_key=True)
+    position = Column(Integer, nullable=False, unique=True)

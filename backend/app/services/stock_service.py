@@ -114,18 +114,12 @@ def _load_delta_stocks(
     import time
     total_start = time.perf_counter()
     
-    # Load watchlist if no symbols provided
     if not symbols:
-        watchlist_path = os.path.join("models", "watchlist.csv")
-        if os.path.exists(watchlist_path):
-            with open(watchlist_path, 'r') as f:
-                # Exclude index symbols (VNINDEX, VN30) from stock list
-                exclude_symbols = {"VNINDEX", "VN30"}
-                symbols = [line.strip() for line in f if line.strip() and line.strip() not in exclude_symbols]
-            logger.info(f"Loaded {len(symbols)} symbols from watchlist (excluding indices)")
-        else:
-            logger.warning(f"Watchlist not found at {watchlist_path}, using all available symbols")
-            symbols = None
+        from app.services.shared_watchlist import load_shared_watchlist
+
+        symbols = [s for s in load_shared_watchlist() if s not in {"VNINDEX", "VN30"}]
+        if not symbols:
+            raise ValueError("Shared watchlist contains no stock symbols")
 
     query_columns = columns or DEFAULT_STOCK_COLUMNS
     required_cols = ["date", "symbol"]

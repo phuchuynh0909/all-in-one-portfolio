@@ -66,7 +66,7 @@ export default function SectorDominanceTable({
     };
   }, [level, metric, timeframe, lookback, reloadKey]);
 
-  const rows = data?.rows ?? [];
+  const rows = useMemo(() => (data?.rows ?? []).filter((row) => row.breadth != null), [data]);
 
   /**
    * Only watchlist symbols reach `ohlc_eod`, so breadth is measured over a

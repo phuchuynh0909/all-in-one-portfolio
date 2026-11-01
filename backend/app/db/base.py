@@ -15,7 +15,7 @@ from app.db.models.user import User
 from app.db.models.tcbs import TcbsOAuthToken
 from app.db.models.openscript import OpenScript
 from app.db.models.chart_layout import ChartLayout, ChartPreference
-from app.db.models.watchlist import WatchlistLibrary
+from app.db.models.watchlist import WatchlistLibrary, SharedWatchlistSymbol
 
 
 def _engine_kwargs(url: str) -> dict:

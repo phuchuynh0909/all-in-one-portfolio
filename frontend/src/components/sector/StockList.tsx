@@ -59,17 +59,9 @@ export default function StockList({
     };
   }, [sectorId, level, metric, timeframe]);
 
-  /**
-   * Server order is strongest first. Rows with neither an RS reading nor a
-   * market cap are dropped as noise, but a covered symbol is always kept — the
-   * old market-cap-only filter would have hidden strong names with a missing
-   * cap, which is exactly what this panel is for.
-   */
+  // Market cap is expressed in billions; exclude missing values and 1,000 itself.
   const rows = useMemo(
-    () =>
-      (data?.rows ?? []).filter(
-        (row) => row.rs != null || (row.vonhoa_d != null && Number(row.vonhoa_d) > 0),
-      ),
+    () => (data?.rows ?? []).filter((row) => row.vonhoa_d != null && Number(row.vonhoa_d) > 1000),
     [data],
   );
 

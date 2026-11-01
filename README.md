@@ -229,3 +229,14 @@ To add new fields:
 ## License
 
 This schema and tooling is provided as-is for educational and commercial use.
+### Shared backend watchlist
+
+The stock universe used by backtests, daily picks, stock queries and model training
+is stored in MySQL in `shared_watchlist_symbols`. Apply migrations with
+`docker compose exec -T backend alembic upgrade head`; the migration seeds the
+original symbols in their original order. Edit rows in that table to maintain the
+shared universe: `symbol` is the primary key and `position` is a unique integer
+that controls ordering. Keep the table nonempty. The standalone training script
+uses `APP_DATABASE_URL`/`DATABASE_URL` or the `MYSQL_*` connection settings.
+The CSV remains in the repository for historical migrations and explicit file
+inputs; changing it no longer changes the default backend universe.

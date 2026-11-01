@@ -168,7 +168,7 @@ def rank_daily_candidates(
 class DailyPicksService:
     def __init__(self, client: Client, watchlist_path: Path | None = None):
         self.client = client
-        self.watchlist_path = watchlist_path or self._default_watchlist_path()
+        self.watchlist_path = watchlist_path
         self.database = self._identifier(settings.clickhouse_db, "database")
         self.ohlc_table = self._identifier(
             os.getenv("CLICKHOUSE_OHLC_EOD_TABLE", "ohlc_eod"), "OHLC table"
@@ -187,21 +187,19 @@ class DailyPicksService:
             raise ValueError(f"Invalid ClickHouse {label}: {value!r}")
         return value
 
-    @staticmethod
-    def _default_watchlist_path() -> Path:
-        configured = Path(settings.model_path) / "watchlist.csv"
-        if configured.exists():
-            return configured
-        return Path(__file__).resolve().parents[2] / "models" / "watchlist.csv"
-
     def _watchlist(self) -> list[str]:
-        symbols = []
-        for line in self.watchlist_path.read_text(encoding="utf-8").splitlines():
-            symbol = line.strip().upper()
-            if symbol and symbol not in {BENCHMARK_SYMBOL, "VN30"} and symbol not in symbols:
-                symbols.append(symbol)
+        if self.watchlist_path is None:
+            from app.services.shared_watchlist import load_shared_watchlist
+
+            lines = load_shared_watchlist()
+        else:
+            lines = self.watchlist_path.read_text(encoding="utf-8").splitlines()
+        symbols = list(dict.fromkeys(
+            symbol.strip().upper() for symbol in lines
+            if symbol.strip() and symbol.strip().upper() not in {BENCHMARK_SYMBOL, "VN30"}
+        ))
         if not symbols:
-            raise ValueError(f"Watchlist is empty: {self.watchlist_path}")
+            raise ValueError("Watchlist contains no stock symbols")
         return symbols
 
     @staticmethod

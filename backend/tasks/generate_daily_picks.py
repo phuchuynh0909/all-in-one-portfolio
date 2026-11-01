@@ -12,6 +12,7 @@ is omitted. It never places orders; it only writes an auditable snapshot.
 from __future__ import annotations
 
 import argparse
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -59,6 +60,9 @@ def generate_daily_picks_flow(
     limit: int = 10,
 ) -> dict:
     """Prefect entry point scheduled after EOD sync and model refresh."""
+    backend_path = str(PROJECT_ROOT / "backend")
+    if backend_path not in sys.path:
+        sys.path.insert(0, backend_path)
     parsed_date = date.fromisoformat(as_of) if as_of else None
     snapshot = generate_daily_picks(as_of=parsed_date, limit=limit)
     return snapshot.model_dump(mode="json")

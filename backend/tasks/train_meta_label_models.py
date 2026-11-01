@@ -104,11 +104,14 @@ def _collect_garbage() -> None:
 
 
 def _load_watchlist_symbols(watchlist_path: Path | None = None) -> list[str]:
+    if watchlist_path is None:
+        _configure_runtime()
+        from app.services.shared_watchlist import load_shared_watchlist
+
+        return load_shared_watchlist()
     import pandas as pd
 
-    path = watchlist_path or (PROJECT_ROOT / "backend/models/watchlist.csv")
-    watchlist_df = pd.read_csv(path)
-    return watchlist_df.iloc[:, 0].astype(str).tolist()
+    return pd.read_csv(watchlist_path, header=None).iloc[:, 0].dropna().astype(str).tolist()
 
 
 def load_ohlc_panel(

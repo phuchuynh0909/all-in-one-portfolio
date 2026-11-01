@@ -77,18 +77,10 @@ def _safe_value(val):
 
 @router.get("/watchlist", response_model=List[str])
 async def get_watchlist() -> List[str]:
-    """Get list of symbols from watchlist.csv"""
-    watchlist_path = Path("/app/models/watchlist.csv")
-    if not watchlist_path.exists():
-        raise HTTPException(status_code=404, detail=f"Watchlist file not found: {watchlist_path}")
-    
-    try:
-        with open(watchlist_path, 'r') as f:
-            symbols = [line.strip() for line in f if line.strip()]
-        return sorted(symbols)
-    except Exception as e:
-        logger.error(f"Error reading watchlist: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    """Get the shared stock universe."""
+    from app.services.shared_watchlist import load_shared_watchlist
+
+    return sorted(load_shared_watchlist())
 
 
 @router.get("/h5/results", response_model=H5BacktestResultsResponse)

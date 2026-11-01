@@ -27,28 +27,7 @@ PROJECT_ROOT = Path(__file__).resolve()
 PIPELINE_OUTPUT_DIR = "notebooks"
 MODELS_DIR =  "models"
 USE_GPU: bool = False  # set to True via --gpu flag or USE_GPU=1 env var
-DEFAULT_WATCHLIST_SYMBOLS = (
-    "AAH", "AAA", "ABB", "ACB", "ACV", "ADS", "AGG", "AGR", "ANV", "APH",
-    "ASM", "BAF", "BCM", "BFC", "BID", "BMP", "BSI", "BSR", "BVB",
-    "BVH", "BVS", "BWE", "C4G", "CEO", "CII", "CMG", "CNG", "CSV", "CTD",
-    "MIG", "CTG", "CTI", "CTR", "CTS", "DBC", "DCM", "DDV", "DGC", "DGW",
-    "DHC", "DIG", "DPG", "DPM", "DPR", "DRC", "DRI", "DTD", "DVM", "DXG",
-    "DXS", "EIB", "ELC", "EVF", "EVG", "FCN", "FOX", "FPT", "FRT", "FTS",
-    "GAS", "GEG", "GEX", "GIL", "GKM", "GMD", "GVR", "HAG", "HAH", "HAX",
-    "HBC", "HCM", "HDB", "HDC", "HDG", "HHS", "HHV", "HNG", "HPG", "HPX",
-    "HQC", "HSG", "HTN", "HUT", "HVN", "IDC", "IDI", "IDJ", "IJC", "ITA",
-    "KBC", "KDC", "KDH", "KHG", "KOS", "KSB", "LAS", "LCG", "LPB", "LSS",
-    "MBB", "MBS", "MCH", "MSB", "MSH", "MSN", "MSR", "MWG", "NAB", "NHA",
-    "NHH", "NKG", "NLG", "NT2", "NTL", "NVL", "OCB", "OIL", "ORS", "PAN",
-    "PC1", "PDR", "PET", "PHR", "PLC", "PLX", "PNJ", "POW", "PSH", "PTB",
-    "PVB", "PVC", "PVI", "PVD", "PVP", "PVS", "PVT", "QCG", "QNS", "REE",
-    "SAB", "SBT", "SCR", "SCS", "SHB", "SHS", "SIP", "SJS", "SKG", "SMC",
-    "SSB", "SSI", "STB", "SZC", "TCB", "TCH", "TCM", "TIG", "TNG", "TPB",
-    "TV2", "VC3", "VC7", "VCB", "VCG", "VCI", "VCS", "VDS", "VFS", "VGC",
-    "VGI", "VGS", "VGT", "VHC", "VHM", "VIB", "VIC", "VIX", "VJC", "VND",
-    "VNM", "VOS", "VPB", "VPG", "VPI", "VRE", "VSC", "VTP", "YEG", "IMP",
-    "L18", "QTP", "KSV", "VNINDEX", "VN30", "PAT", "STK", "PAC", "TLG",
-)
+
 
 
 # ── Inlined: app.services.indicators.zcore ──────────────────────────────────
@@ -911,26 +890,33 @@ def _r2_upload(local_path: Path, r2_key: str) -> None:
 
 
 def _load_watchlist_symbols(watchlist_path: str | Path | None = None) -> list[str]:
-    import pandas as pd
+    if watchlist_path is not None:
+        import pandas as pd
 
-    path = (
-        Path(watchlist_path)
-        if watchlist_path is not None
-        else PROJECT_ROOT / "backend/models/watchlist.csv"
+        return (pd.read_csv(watchlist_path, header=None).iloc[:, 0].dropna()
+                .astype(str).str.strip().loc[lambda values: values != ""].tolist())
+
+    from sqlalchemy import create_engine, text
+    from sqlalchemy.engine import URL
+
+    url = os.getenv("APP_DATABASE_URL") or os.getenv("DATABASE_URL") or URL.create(
+        "mysql+pymysql", username=os.getenv("MYSQL_USER", "root"),
+        password=os.getenv("MYSQL_PASSWORD", "kyostyle1"),
+        host=os.getenv("MYSQL_HOST", "192.168.1.3"),
+        port=int(os.getenv("MYSQL_PORT", "3306")),
+        database=os.getenv("MYSQL_DB", "my_portfolio"),
     )
-    if not path.exists():
-        if watchlist_path is not None:
-            raise FileNotFoundError(f"watchlist file not found: {path}")
-        return list(DEFAULT_WATCHLIST_SYMBOLS)
-    watchlist_df = pd.read_csv(path, header=None)
-    return (
-        watchlist_df.iloc[:, 0]
-        .dropna()
-        .astype(str)
-        .str.strip()
-        .loc[lambda symbols: symbols != ""]
-        .tolist()
-    )
+    engine = create_engine(url)
+    try:
+        with engine.connect() as connection:
+            symbols = list(connection.execute(text(
+                "SELECT symbol FROM shared_watchlist_symbols ORDER BY position"
+            )).scalars())
+    finally:
+        engine.dispose()
+    if not symbols:
+        raise ValueError("Shared watchlist is empty; populate shared_watchlist_symbols")
+    return symbols
 
 
 def load_ohlc_panel(

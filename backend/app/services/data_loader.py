@@ -16,9 +16,6 @@ _STORAGE_OPTIONS = {
     "aws_conditional_put":       "etag",
 }
 
-_DEFAULT_WATCHLIST = os.path.join(
-    os.path.dirname(__file__), "../../models/watchlist.csv"
-)
 _DEFAULT_H5   = "stocks_data_latest.h5"
 _DEFAULT_KEY  = "stocks"
 
@@ -44,7 +41,7 @@ def _fetch_from_delta(symbols, years: int = 10) -> pd.DataFrame:
 
 
 def load_stocks(
-    watchlist_path: str = _DEFAULT_WATCHLIST,
+    watchlist_path: str | None = None,
     local_file: str     = _DEFAULT_H5,
     store_key: str      = _DEFAULT_KEY,
     years: int          = 10,
@@ -56,7 +53,7 @@ def load_stocks(
 
     Parameters
     ----------
-    watchlist_path : CSV with symbol list in the first column
+    watchlist_path : optional CSV override; defaults to the shared MySQL watchlist
     local_file     : HDF5 cache path (relative to CWD, i.e. the notebook dir)
     store_key      : key inside the HDF5 store
     years          : how many years of history to pull from DeltaLake
@@ -69,7 +66,12 @@ def load_stocks(
       df_raw  — MultiIndex DataFrame (dates × (field, symbol))
       rest    — each a plain DataFrame (dates × symbols)
     """
-    symbols = _read_watchlist(watchlist_path)
+    if watchlist_path is None:
+        from app.services.shared_watchlist import load_shared_watchlist
+
+        symbols = np.array(load_shared_watchlist())
+    else:
+        symbols = _read_watchlist(watchlist_path)
     if exclude:
         exclude_set = set(exclude)
         symbols = np.array([s for s in symbols if s not in exclude_set])
