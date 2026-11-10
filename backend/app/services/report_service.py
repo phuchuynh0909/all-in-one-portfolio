@@ -22,7 +22,7 @@ def _query_raw_reports(symbol: str | None = None, report_id: int | None = None) 
     return _query_raw(report_id=report_id, mack=symbol)
 
 
-async def get_reports(symbol: str | None = None) -> List[Report]:
+def get_reports(symbol: str | None = None) -> List[Report]:
     df = _query_raw_reports(symbol=symbol)
     if df is None or df.empty:
         return []
@@ -65,7 +65,7 @@ def _enrichment(report_id: int) -> dict:
         return {}
 
 
-async def get_report_by_id(report_id: int) -> Optional[ReportDetail]:
+def get_report_by_id(report_id: int) -> Optional[ReportDetail]:
     df = _query_raw_reports(report_id=report_id)
     if df is None or df.empty:
         return None
@@ -94,7 +94,7 @@ async def get_report_by_id(report_id: int) -> Optional[ReportDetail]:
     )
 
 
-async def create_report(payload: ReportCreate) -> Report:
+def create_report(payload: ReportCreate) -> Report:
     """Add a report by hand to the feed and return it with its id.
 
     Goes into the same table the crawler fills, so the new report shows up in
@@ -126,13 +126,13 @@ async def create_report(payload: ReportCreate) -> Report:
     )
 
 
-async def update_report_summary(report_id: int, summary: str) -> bool:
+def update_report_summary(report_id: int, summary: str) -> bool:
     """Update llm_summary field in wichart_reports table."""
     store = WichartReportStore()
     return store.update_summary(report_id, summary)
 
 
-async def sync_latest_reports(limit: int = 100) -> dict:
+def sync_latest_reports(limit: int = 100) -> dict:
     """Sync latest reports from raw_wichart_report to wichart_reports."""
     store = WichartReportStore()
     return store.sync_latest_reports(limit=limit)

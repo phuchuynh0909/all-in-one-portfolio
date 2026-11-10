@@ -8,6 +8,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 from app.schemas.mvf import MvfRequest
 from app.services import mvf_lstm_service as svc
@@ -137,6 +140,40 @@ def test_second_run_reuses_the_cached_model(monkeypatch, req):
 
     second = {e["symbol"]: e["source"] for k, e in svc.stream_mvf(req) if k == "asset"}
     assert set(second.values()) == {"cached"}
+
+
+def test_concurrent_cache_requests_train_once_and_publish_atomically(monkeypatch, req):
+    monkeypatch.setattr(svc, '_fingerprint', lambda *args: 'same')
+    calls = []
+    def train(*args):
+        calls.append(1)
+        time.sleep(0.1)
+        return svc.PriceLSTM(**svc.ARCH).to(svc.DEVICE)
+    monkeypatch.setattr(svc, '_train', train)
+    barrier = threading.Barrier(2)
+    def run():
+        barrier.wait()
+        return svc._train_cached('AAA', np.zeros((5, 3)), np.zeros(5), req, pd.Timestamp('2025-12-31'))[1]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        results = list(pool.map(lambda _: run(), range(2)))
+    assert sorted(results) == ['cached', 'trained']
+    assert len(calls) == 1
+    assert len(list(svc._CACHE_DIR.glob('*.pt'))) == 1
+    assert not list(svc._CACHE_DIR.glob('.mvf-*'))
+
+
+def test_failed_cache_write_preserves_previous_model(monkeypatch, req):
+    monkeypatch.setattr(svc, '_fingerprint', lambda *args: 'same')
+    monkeypatch.setattr(svc, '_train', lambda *args: svc.PriceLSTM(**svc.ARCH).to(svc.DEVICE))
+    args = ('AAA', np.zeros((5, 3)), np.zeros(5), req, pd.Timestamp('2025-12-31'))
+    svc._train_cached(*args)
+    path = next(svc._CACHE_DIR.glob('*.pt'))
+    original = path.read_bytes()
+    monkeypatch.setattr(svc.torch, 'save', lambda *args: (_ for _ in ()).throw(OSError('disk full')))
+    with pytest.raises(OSError, match='disk full'):
+        svc._train_cached('AAA', args[1], args[2], req.model_copy(update={'force_retrain': True}), args[4])
+    assert path.read_bytes() == original
+    assert not list(svc._CACHE_DIR.glob('.mvf-*'))
 
 
 def test_short_history_symbol_trains_without_caching(monkeypatch, req):

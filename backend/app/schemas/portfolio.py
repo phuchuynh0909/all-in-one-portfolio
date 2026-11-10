@@ -3,6 +3,7 @@ from decimal import Decimal
 from typing import List, Optional
 from pydantic import BaseModel, Field, model_validator
 from enum import Enum
+import math
 
 
 class PositionBase(BaseModel):
@@ -14,12 +15,20 @@ class PositionBase(BaseModel):
 
 
 class PositionCreate(PositionBase):
-    pass
+    quantity: Decimal = Field(..., gt=0, max_digits=15, decimal_places=6)
+    purchase_price: Decimal = Field(..., gt=0, max_digits=15, decimal_places=6)
+
+
+class PositionUpdate(PositionBase):
+    original: PositionBase
+    quantity: Decimal = Field(..., gt=0, max_digits=15, decimal_places=6)
+    purchase_price: Decimal = Field(..., gt=0, max_digits=15, decimal_places=6)
 
 
 class Position(PositionBase):
     id: int
     current_price: Optional[Decimal] = None  # Computed field, not stored in DB
+    current_price_date: Optional[date] = None
     created_at: datetime
 
     class Config:
@@ -56,11 +65,15 @@ class TransactionBase(BaseModel):
 
 
 class TransactionCreate(TransactionBase):
-    pass
+    quantity: Decimal = Field(..., gt=0, max_digits=15, decimal_places=6)
+    price: Decimal = Field(..., ge=0, max_digits=15, decimal_places=6)
+    close_price: Optional[Decimal] = Field(default=None, gt=0, max_digits=15, decimal_places=6)
+    fees: Optional[Decimal] = Field(default=0, ge=0, max_digits=10, decimal_places=2)
 
 
 class Transaction(TransactionBase):
     id: int
+    is_position_close: bool = False
     created_at: datetime
 
     class Config:
@@ -74,7 +87,7 @@ class InvestmentAmountBase(BaseModel):
 
 
 class InvestmentAmountCreate(InvestmentAmountBase):
-    pass
+    amount: Decimal = Field(..., gt=0, max_digits=15, decimal_places=2)
 
 
 class InvestmentAmount(InvestmentAmountBase):
@@ -86,10 +99,10 @@ class InvestmentAmount(InvestmentAmountBase):
 
 
 class PortfolioSummary(BaseModel):
-    total_value: Decimal
+    total_value: Optional[Decimal]
     total_invested: Decimal
-    total_profit_loss: Decimal
-    total_profit_loss_pct: Decimal
+    total_profit_loss: Optional[Decimal]
+    total_profit_loss_pct: Optional[Decimal]
     total_realized_pl: Decimal
     # Gross is the factual record; the headline figure is net of withholding.
     total_dividend_income_gross: Decimal = Decimal(0)
@@ -132,15 +145,28 @@ class ReturnPredictionMethod(str, Enum):
     BVAR = "bvar"
 
 
+class OptimizationConstraints(BaseModel):
+    model_config = {"extra": "forbid"}
+
+    min_weight: float = Field(0.0, ge=0, le=1, allow_inf_nan=False)
+    max_weight: float = Field(1.0, ge=0, le=1, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def ordered_bounds(self):
+        if self.min_weight > self.max_weight:
+            raise ValueError("min_weight must not exceed max_weight")
+        return self
+
+
 class OptimizationRequest(BaseModel):
     """Request body for portfolio optimization."""
-    tickers: List[str]
+    tickers: List[str] = Field(..., min_length=1)
     start_date: date | None = None
     end_date: date | None = None
     method: OptimizationMethod
     risk_model: RiskModel = RiskModel.SAMPLE_COV  # Default to sample covariance
     risk_free_rate: float | None = 0.0
-    constraints: dict | None = None  # e.g., {"min_weight": 0.0, "max_weight": 0.2}
+    constraints: OptimizationConstraints | None = None
     
     # Additional parameters for specific optimization methods
     risk_aversion: float | None = None  # For max_quadratic_utility and black_litterman
@@ -154,7 +180,44 @@ class OptimizationRequest(BaseModel):
     
     # Return prediction method
     return_prediction_method: ReturnPredictionMethod = ReturnPredictionMethod.HISTORICAL_MEAN
-    bvar_forecast_periods: int | None = 21  # Number of periods to forecast for BVAR (only used if return_prediction_method is BVAR)
+    bvar_forecast_periods: int | None = Field(21, ge=1, le=252)
+
+    @model_validator(mode="after")
+    def validate_universe(self):
+        self.tickers = list(dict.fromkeys(ticker.strip().upper() for ticker in self.tickers))
+        if any(not ticker for ticker in self.tickers):
+            raise ValueError("tickers must not contain blank symbols")
+        for name in ("market_caps", "views", "view_confidences"):
+            values = getattr(self, name)
+            if values is None:
+                continue
+            normalized = {ticker.strip().upper(): value for ticker, value in values.items()}
+            if len(normalized) != len(values):
+                raise ValueError(f"{name} contains duplicate normalized tickers")
+            if set(normalized) - set(self.tickers):
+                raise ValueError(f"{name} contains tickers outside the requested universe")
+            if any(not math.isfinite(value) for value in normalized.values()):
+                raise ValueError(f"{name} must contain finite values")
+            if name != "views" and any(value < 0 for value in normalized.values()):
+                raise ValueError(f"{name} must not contain negative values")
+            setattr(self, name, normalized)
+        if self.market_caps and sum(self.market_caps.values()) <= 0:
+            raise ValueError("market_caps must have a positive total")
+        if self.view_confidences and set(self.view_confidences) - set(self.views or {}):
+            raise ValueError("view_confidences must refer to supplied views")
+        if self.constraints:
+            if self.method == OptimizationMethod.HRP:
+                raise ValueError("hrp does not support weight constraints")
+            low, high = self.weight_bounds
+            if len(self.tickers) * low > 1 + 1e-9 or len(self.tickers) * high < 1 - 1e-9:
+                raise ValueError("weight constraints cannot produce a fully invested portfolio")
+        return self
+
+    @property
+    def weight_bounds(self) -> tuple[float, float]:
+        if self.constraints is None:
+            return (0.0, 1.0)
+        return (self.constraints.min_weight, self.constraints.max_weight)
 
 
 class OptimizationResult(BaseModel):
@@ -168,10 +231,10 @@ class OptimizationResult(BaseModel):
 class ClosePositionRequest(BaseModel):
     """Request body for closing a position."""
     position_id: int = Field(..., gt=0)
-    quantity_to_close: Decimal = Field(..., gt=0)
-    closing_price: Decimal = Field(..., gt=0)
+    quantity_to_close: Decimal = Field(..., gt=0, max_digits=15, decimal_places=6)
+    closing_price: Decimal = Field(..., gt=0, max_digits=15, decimal_places=6)
     closing_date: date
-    fees: Optional[Decimal] = Field(default=0, ge=0)
+    fees: Optional[Decimal] = Field(default=0, ge=0, max_digits=10, decimal_places=2)
     notes: Optional[str] = None
 
 

@@ -111,6 +111,17 @@ def test_an_already_running_job_is_returned_even_at_the_cap(monkeypatch):
         gate.set()
 
 
+def test_same_symbol_with_different_options_is_rejected():
+    gate = threading.Event()
+    try:
+        first = jobs.start("VCG", "2026-08-27", make_stream([("done", {})], gate), options=(("market",), "model-a"))
+        assert jobs.start("VCG", "2026-08-27", make_stream([], gate), options=(("market",), "model-a")) is first
+        with pytest.raises(jobs.ConflictingRun):
+            jobs.start("VCG", "2026-08-27", make_stream([], gate), options=(("market",), "model-b"))
+    finally:
+        gate.set()
+
+
 def test_a_finished_job_leaves_the_registry():
     job = jobs.start("VCG", "2026-08-27", make_stream([("done", {})]))
     wait_for_done(job)

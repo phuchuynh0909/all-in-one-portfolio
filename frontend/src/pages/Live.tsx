@@ -27,6 +27,7 @@ import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import { getLatestAlerts } from '../lib/services/ispAlerts';
 import type { ISPAlert } from '../lib/services/ispAlerts';
 import { useAlertWorker } from '../hooks/useAlertWorker';
+import { mergeAlerts } from '../lib/alerts';
 
 interface GroupedAlert {
   symbol: string;
@@ -74,25 +75,16 @@ const Live = () => {
           limit: 5000,
           since: todayStart,
         });
-        setAlerts(data);
+        setAlerts(mergeAlerts([], data));
         setIsInitialLoad(false);
       } else {
         // Incremental load: Get only new alerts since max timestamp
         const maxTs = getMaxTimestamp();
-        if (maxTs) {
-          data = await getLatestAlerts({
-            limit: 1000,
-            since: maxTs,
-          });
-          
-          // Filter out duplicates and append new alerts
-          const existingTimestamps = new Set(alerts.map(a => a.ts));
-          const newAlerts = data.filter(alert => !existingTimestamps.has(alert.ts));
-          
-          if (newAlerts.length > 0) {
-            setAlerts(prev => [...newAlerts, ...prev].slice(0, 5000)); // Keep max 5000 alerts
-          }
-        }
+        data = await getLatestAlerts({
+          limit: 1000,
+          since: maxTs == null ? getTodayStart() : Math.max(0, maxTs - 1000),
+        });
+        setAlerts(prev => mergeAlerts(prev, data));
       }
       
       setLastUpdate(new Date());
@@ -104,10 +96,20 @@ const Live = () => {
     }
   }, [isInitialLoad, getMaxTimestamp, alerts]);
 
-  // Initial load
   useEffect(() => {
-    fetchAlerts();
-  }, []); // Only run once on mount
+    if (!isInitialLoad) return;
+    let cancelled = false;
+    let timeout: ReturnType<typeof setTimeout>;
+    const load = async () => {
+      await fetchAlerts();
+      if (!cancelled) timeout = setTimeout(load, refreshInterval);
+    };
+    void load();
+    return () => {
+      cancelled = true;
+      clearTimeout(timeout);
+    };
+  }, [isInitialLoad, refreshInterval]);
 
   // Web Worker for background polling
   const { isPolling } = useAlertWorker({
@@ -115,16 +117,7 @@ const Live = () => {
     interval: refreshInterval,
     onAlertsReceived: useCallback((newAlerts: ISPAlert[]) => {
       if (newAlerts && newAlerts.length > 0) {
-        // Filter out duplicates and append new alerts
-        setAlerts(prev => {
-          const existingTimestamps = new Set(prev.map(a => a.ts));
-          const filtered = newAlerts.filter(alert => !existingTimestamps.has(alert.ts));
-          
-          if (filtered.length > 0) {
-            return [...filtered, ...prev].slice(0, 5000); // Keep max 5000 alerts
-          }
-          return prev;
-        });
+        setAlerts(prev => mergeAlerts(prev, newAlerts));
         setLastUpdate(new Date());
         setError(null);
       }

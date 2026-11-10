@@ -86,6 +86,7 @@ export interface Position {
   purchase_date: string;
   notes?: string | null;
   current_price?: number | null;
+  current_price_date?: string | null;
   created_at: string;
 }
 
@@ -95,6 +96,7 @@ export interface Transaction {
   // Dividend rows share the transactions ledger. Narrowing this to buy|sell was
   // false and made every dividend read as a sell.
   transaction_type: 'buy' | 'sell' | 'dividend_cash' | 'dividend_stock';
+  is_position_close: boolean;
   quantity: number;
   price: number;
   close_price?: number | null;

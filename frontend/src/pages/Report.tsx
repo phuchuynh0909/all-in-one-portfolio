@@ -17,10 +17,9 @@ import {
   syncReports,
   fetchRagStatuses,
   triggerReportRag,
+  RAG_IN_PROGRESS,
 } from '../lib/services/report';
 import type { Report as ReportType, RagStatus, PdfParser } from '../lib/services/report';
-
-const RAG_IN_PROGRESS = ['PENDING', 'PARSING', 'EMBEDDING'];
 
 type Notice = { severity: 'success' | 'error'; message: string };
 

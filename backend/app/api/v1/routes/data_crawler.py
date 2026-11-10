@@ -8,6 +8,7 @@ and importing them into the database.
 import json
 import time
 import requests
+from loguru import logger
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from sqlalchemy.orm import Session
@@ -25,7 +26,7 @@ WICHART_BASE_URL = "https://wichart.vn/wichartapi/wichart/company/fs"
 SIGN_TOKEN = "ObBeWhVmYs3tP2Nz$C$FJ@P4AQfTjlPX"
 
 @router.post("/crawl-symbol/{symbol}")
-async def crawl_symbol_data(
+def crawl_symbol_data(
     symbol: str,
     background_tasks: BackgroundTasks,
     quarter: Optional[int] = 1,
@@ -55,17 +56,18 @@ async def crawl_symbol_data(
         crawl_and_import_data(symbol, quarter, db)
         
         return {
-            "status": "completed" if refresh else "started",
+            "status": "completed",
             "message": (
                 f"Refreshed and saved latest financial data for {symbol}"
                 if refresh
-                else f"Started crawling financial data for {symbol}"
+                else f"Crawled and saved financial data for {symbol}"
             ),
             "company": {"ticker": company.ticker, "name": company.name}
         }
         
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to start crawling: {str(e)}")
+        logger.exception("Financial data crawl failed for {}", symbol)
+        raise HTTPException(status_code=500, detail="Failed to crawl financial data") from e
 
 def crawl_and_import_data(symbol: str, quarter: int, db: Session):
     """Background task to crawl and import financial data"""
@@ -107,7 +109,7 @@ def crawl_and_import_data(symbol: str, quarter: int, db: Session):
         headers = getHeaders(token, nonce, hash_code, stime)
         
         print(f"Making request to wichart API for {symbol}")
-        response = requests.get(WICHART_BASE_URL, params=query_params, headers=headers)
+        response = requests.get(WICHART_BASE_URL, params=query_params, headers=headers, timeout=30)
         
         if response.status_code != 200:
             raise Exception(f"API request failed with status {response.status_code}")
@@ -134,7 +136,7 @@ def crawl_and_import_data(symbol: str, quarter: int, db: Session):
         raise
 
 @router.get("/available-symbols")
-async def get_available_symbols(db: Session = Depends(get_db)):
+def get_available_symbols(db: Session = Depends(get_db)):
     """Get list of companies that can be crawled (companies without financial data)"""
     
     query = """
@@ -159,7 +161,7 @@ async def get_available_symbols(db: Session = Depends(get_db)):
     ]
 
 @router.get("/crawl-status/{symbol}")
-async def get_crawl_status(symbol: str, db: Session = Depends(get_db)):
+def get_crawl_status(symbol: str, db: Session = Depends(get_db)):
     """Check crawling status for a symbol"""
     
     symbol = symbol.upper()

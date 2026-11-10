@@ -33,11 +33,14 @@ export default function Home() {
   );
 
   const summary = summaryQuery.data;
-  const totalValue = summary?.total_value ?? metrics.totalValue;
+  const totalValue = summary ? summary.total_value : metrics.staleCount ? null : metrics.totalValue;
   const totalCost = summary?.total_invested ?? metrics.totalCost;
-  const unrealizedPl = summary?.total_profit_loss ?? metrics.totalUnrealizedPl;
-  const unrealizedPlPct = summary?.total_profit_loss_pct ?? metrics.totalUnrealizedPlPct;
-  const realizedPl = summary?.total_realized_pl ?? metrics.realizedPl;
+  const unrealizedPl = summary ? summary.total_profit_loss : metrics.staleCount ? null : metrics.totalUnrealizedPl;
+  const unrealizedPlPct = summary ? summary.total_profit_loss_pct : metrics.staleCount ? null : metrics.totalUnrealizedPlPct;
+  const realizedPl = summary?.total_realized_pl ?? (
+    transactionsQuery.data && !transactionsQuery.data.some((t) => t.transaction_type === 'dividend_cash')
+      ? metrics.realizedPl : null
+  );
 
   const isLoading = positionsQuery.isLoading || summaryQuery.isLoading;
   const holdings = useMemo(
@@ -72,7 +75,7 @@ export default function Home() {
             format="currency"
             loading={isLoading}
             accent="primary"
-            hint={`${metrics.positionCount} position${metrics.positionCount === 1 ? '' : 's'}`}
+            hint={metrics.staleCount ? `${metrics.staleCount} missing closing prices` : 'Last available closes; dates below'}
           />
           <StatTile
             label="Unrealized P&L"
@@ -81,7 +84,7 @@ export default function Home() {
             signed
             showSign
             loading={isLoading}
-            accent={unrealizedPl >= 0 ? 'long' : 'short'}
+            accent={unrealizedPl == null ? 'warning' : unrealizedPl >= 0 ? 'long' : 'short'}
             hint={
               <Numeric
                 value={unrealizedPlPct}
@@ -109,7 +112,7 @@ export default function Home() {
           />
           <StatTile
             label="Dividends"
-            value={metrics.dividendIncome}
+            value={summary?.total_dividend_income ?? null}
             format="currency"
             loading={isLoading}
             hint="Cash received"
@@ -117,7 +120,7 @@ export default function Home() {
           <StatTile
             label="Win / loss"
             loading={isLoading}
-            hint={metrics.staleCount > 0 ? `${metrics.staleCount} without a live quote` : 'All quotes live'}
+            hint={metrics.staleCount > 0 ? `${metrics.staleCount} without a closing price` : 'Based on last available closes'}
           >
             <Stack direction="row" spacing={0.75} alignItems="baseline">
               <Numeric
@@ -192,14 +195,14 @@ export default function Home() {
                       </Typography>
                       <Typography variant="caption" component="div" sx={{ color: 'text.tertiary' }}>
                         {formatQuantity(p.quantity)} @ {formatNumber(p.purchase_price)}
-                        {p.isStale && ' · no quote'}
+                        {p.isStale ? ' · no closing price' : ` · close ${p.current_price_date ?? 'date unavailable'}`}
                       </Typography>
                     </Box>
                     <Box sx={{ textAlign: 'right', flexShrink: 0 }}>
-                      <Numeric value={p.marketValue} format="compact" sx={{ fontWeight: 600 }} />
+                      <Numeric value={p.isStale ? null : p.marketValue} format="compact" sx={{ fontWeight: 600 }} />
                       <Box>
                         <Numeric
-                          value={p.unrealizedPlPct}
+                          value={p.isStale ? null : p.unrealizedPlPct}
                           format="percent"
                           signed
                           showSign

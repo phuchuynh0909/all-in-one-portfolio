@@ -270,8 +270,8 @@ def login(email: str | None = None, password: str | None = None) -> str:
     """
     import requests
 
-    email = email or os.getenv("RUATICHSAN_EMAIL", "kyostyle1@gmail.com")
-    password = password or os.getenv("RUATICHSAN_PASSWORD", "kyostyle1")
+    email = email or os.getenv("RUATICHSAN_EMAIL")
+    password = password or os.getenv("RUATICHSAN_PASSWORD")
     if not email or not password:
         raise RuatichsanError(
             "credentials missing: set RUATICHSAN_EMAIL and RUATICHSAN_PASSWORD "

@@ -1,4 +1,5 @@
 import os
+from uuid import UUID
 
 from prefect.deployments import run_deployment
 
@@ -19,7 +20,7 @@ def _prefect_api_url() -> str:
     )
 
 
-def run_rag_pipeline_deployment(report_id: int, recreate: bool = False, parser: str | None = None):
+def run_rag_pipeline_deployment(report_id: int, recreate: bool = False, parser: str | None = None, *, idempotency_key: str):
     """Trigger the report RAG pipeline deployment (runs on the Prefect worker).
 
     Register it once with ``python tasks/rag_pipeline.py --deploy`` (deployment
@@ -34,24 +35,35 @@ def run_rag_pipeline_deployment(report_id: int, recreate: bool = False, parser: 
     with temporary_settings({PREFECT_API_URL: _prefect_api_url()}):
         return run_deployment(
             name="report-rag-pipeline/report-rag-pipeline",
-            parameters={"report_id": int(report_id), "recreate": recreate, "parser": parser},
+            parameters={"report_id": int(report_id), "recreate": recreate, "parser": parser,
+                        "submission_id": idempotency_key},
             timeout=0,
+            idempotency_key=idempotency_key,
         )
 
 
 def run_sync_stock_workflow(symbol: str):
     """
-    Run the stock sync workflow deployment and wait for completion.
+    Schedule the stock sync workflow deployment without waiting for completion.
     
     Args:
         symbol: The stock symbol to sync
         
     Returns:
-        FlowRun: The completed flow run object
+        FlowRun: The scheduled flow run object.
     """
     flow_run = run_deployment(
         name="1eb96644-fe2a-478e-a43a-a01a75687b6b",  # deployment ID
         parameters={"symbol": symbol},
-        timeout=None,  # Wait indefinitely for completion
+        timeout=0,
     )
     return flow_run
+
+
+def get_rag_flow_run(flow_run_id: str):
+    from prefect.client.orchestration import get_client
+    from prefect.settings import PREFECT_API_URL, temporary_settings
+
+    with temporary_settings({PREFECT_API_URL: _prefect_api_url()}):
+        with get_client(sync_client=True) as client:
+            return client.read_flow_run(UUID(flow_run_id))

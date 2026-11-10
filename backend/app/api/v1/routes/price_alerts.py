@@ -1,7 +1,9 @@
 """API routes for price alerts."""
+import asyncio
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from app.db.base import get_db
 from app.schemas.price_alert import (
@@ -36,20 +38,22 @@ async def list_alerts(
     db: Session = Depends(get_db),
 ) -> PriceAlertsResponse:
     """List price alerts with optional filtering."""
-    alerts, total = price_alert_service.get_alerts(
+    alerts, total = await run_in_threadpool(
+        price_alert_service.get_alerts,
         db, symbol=symbol, is_active=is_active, is_triggered=is_triggered, offset=offset, limit=limit
     )
-    
-    # Enrich alerts with current prices
-    enriched_alerts = []
-    for alert in alerts:
+
+    semaphore = asyncio.Semaphore(16)
+    async def get_price(ticker: str):
         try:
-            current_price = await get_current_price(alert.symbol)
+            async with semaphore:
+                return await get_current_price(ticker)
         except Exception:
-            current_price = None
-        enriched_alerts.append(
-            price_alert_service.enrich_alert_with_price(alert, current_price)
-        )
+            return None
+
+    tickers = list(dict.fromkeys(alert.symbol for alert in alerts))
+    prices = dict(zip(tickers, await asyncio.gather(*(get_price(ticker) for ticker in tickers))))
+    enriched_alerts = [price_alert_service.enrich_alert_with_price(alert, prices[alert.symbol]) for alert in alerts]
     
     return PriceAlertsResponse(alerts=enriched_alerts, total=total)
 
@@ -60,7 +64,7 @@ async def get_alert(
     db: Session = Depends(get_db),
 ) -> PriceAlertWithPrice:
     """Get a price alert by ID."""
-    alert = price_alert_service.get_alert(db, alert_id)
+    alert = await run_in_threadpool(price_alert_service.get_alert, db, alert_id)
     if not alert:
         raise HTTPException(status_code=404, detail="Alert not found")
     

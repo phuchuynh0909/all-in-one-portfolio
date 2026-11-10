@@ -6,7 +6,7 @@ import { DataGrid } from '@mui/x-data-grid';
 import type { GridColDef } from '@mui/x-data-grid';
 import EditIcon from '@mui/icons-material/Edit';
 import DeleteIcon from '@mui/icons-material/Delete';
-import { API_BASE_URL, apiGet } from '../../lib/api';
+import { apiDelete, apiGet } from '../../lib/api';
 import TransactionForm from './TransactionForm';
 import type { Transaction } from '../../lib/services/portfolio';
 import { ErrorState } from '../ui';
@@ -15,7 +15,7 @@ interface TransactionWithPL extends Transaction {
   realized_pl?: number;
 }
 
-export default function TransactionList() {
+export default function TransactionList({ onDataChanged }: { onDataChanged?: () => void }) {
   const [transactions, setTransactions] = useState<TransactionWithPL[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -75,12 +75,9 @@ export default function TransactionList() {
     }
 
     try {
-      const res = await fetch(
-        `${API_BASE_URL}/portfolio/transactions/${id}`,
-        { method: 'DELETE' }
-      );
-      if (!res.ok) throw new Error(`Error ${res.status}`);
+      await apiDelete(`/portfolio/transactions/${id}`);
       loadTransactions();
+      onDataChanged?.();
     } catch (e) {
       alert(e instanceof Error ? e.message : 'Error deleting transaction');
     }
@@ -167,6 +164,7 @@ export default function TransactionList() {
       flex: 0.8,
       minWidth: 80,
       renderCell: (params: any) => (
+        params.row.is_position_close || params.row.transaction_type.startsWith('dividend_') ? null :
         <Box sx={{ display: 'flex', gap: 1 }}>
           <EditIcon
             sx={{ cursor: 'pointer' }}
@@ -215,7 +213,7 @@ export default function TransactionList() {
       <TransactionForm
         open={formOpen}
         onClose={() => setFormOpen(false)}
-        onSuccess={loadTransactions}
+        onSuccess={() => { loadTransactions(); onDataChanged?.(); }}
         transaction={editTransaction}
         mode={editTransaction ? 'edit' : 'create'}
       />

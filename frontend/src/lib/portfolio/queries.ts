@@ -4,11 +4,12 @@ import { getPositions, getTransactions, type Position, type Transaction } from '
 
 /** Server-computed portfolio totals — authoritative over any client-side sum. */
 export interface PortfolioSummaryResponse {
-  total_value: number;
+  total_value: number | null;
   total_invested: number;
-  total_profit_loss: number;
-  total_profit_loss_pct: number;
+  total_profit_loss: number | null;
+  total_profit_loss_pct: number | null;
   total_realized_pl: number;
+  total_dividend_income: number;
   positions: Array<{
     id: number;
     ticker: string;

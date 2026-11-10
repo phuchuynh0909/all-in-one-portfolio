@@ -141,11 +141,15 @@ marker/embedding work runs on a Prefect worker instead of the API process:
 cd backend && python tasks/rag_pipeline.py --deploy   # deployment: report-rag-pipeline on my-worker
 ```
 
-It's **on-demand** (no cron) — triggered per `report_id`. To make the API
-dispatch to the deployment instead of running in-process, set
-`RAG_USE_DEPLOYMENT=1`; the trigger goes through
-`prefect_workflow_service.run_rag_pipeline_deployment` (fire-and-forget). Needs a
-running worker on the `my-worker` pool; otherwise leave it unset to run in-process.
+It's **on-demand** (no cron) — triggered per `report_id`. The API persists a
+submission before returning `202`, then retries dispatch to Prefect in the
+background. Supply a UUID `Idempotency-Key` header when retrying an uncertain
+request. The outbox uses the primary application database, so apply the
+`rag_submissions` Alembic migration first. Prefect requires the registered
+deployment and a running worker on the `my-worker` pool. Redeploy the flow so
+it accepts `submission_id`, and configure the API and worker to use the same
+primary application database as well as the same RAG status store. The CLI can still run
+the flow directly for maintenance.
 
 ### Container → host Prefect server
 

@@ -71,7 +71,7 @@ export const DataCrawler: React.FC<DataCrawlerProps> = ({ onDataCrawled }) => {
         
         // Poll for status updates
         startStatusPolling(selectedSymbol.ticker);
-      } else if (response.status === 'skipped') {
+      } else if (response.status === 'skipped' || response.status === 'completed') {
         setSuccess(response.message);
       }
 

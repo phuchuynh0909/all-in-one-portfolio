@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from anyio import to_process
 from fastapi import APIRouter, HTTPException
 from loguru import logger
 
@@ -19,7 +20,9 @@ async def list_columns() -> ScannerColumnsResponse:
 @router.post("/scan", response_model=ScannerResponse)
 async def scan(req: ScannerRequest) -> ScannerResponse:
     try:
-        return scanner_service.scan(req)
+        return await to_process.run_sync(scanner_service.scan, req)
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
     except Exception as e:
         logger.error(f"Error scanning: {e}")
         raise HTTPException(status_code=500, detail="Scan failed")

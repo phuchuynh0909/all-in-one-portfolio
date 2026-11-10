@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import List
 from urllib.parse import quote_plus
-from pydantic import AnyHttpUrl
+from pydantic import AliasChoices, AnyHttpUrl, Field, model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -19,8 +19,10 @@ def _build_mysql_url(
     the report stores cannot drift onto different servers. utf8mb4 is not
     optional — the data is Vietnamese.
     """
-    user = user if user is not None else os.getenv("MYSQL_USER", "root")
-    password = password if password is not None else os.getenv("MYSQL_PASSWORD", "kyostyle1")
+    user = user if user is not None else os.getenv("MYSQL_USER")
+    password = password if password is not None else os.getenv("MYSQL_PASSWORD")
+    if not user or not password:
+        raise ValueError("MYSQL_USER and MYSQL_PASSWORD must be set")
     host = host if host is not None else os.getenv("MYSQL_HOST", "192.168.1.3")
     port = port if port is not None else os.getenv("MYSQL_PORT", "3306")
     db = db if db is not None else os.getenv("MYSQL_DB", "my_portfolio")
@@ -30,26 +32,13 @@ def _build_mysql_url(
     )
 
 
-def _default_database_url() -> str:
-    """The ORM's DSN: an explicit override, else the MySQL server.
-
-    The app used to run on a local ``portfolio.db`` SQLite file. It now lives on
-    MySQL (``my_portfolio``) alongside the report stores. Setting
-    ``APP_DATABASE_URL``/``DATABASE_URL`` still points the ORM anywhere else —
-    including back at ``sqlite:///app/portfolio.db`` — which is how the tests
-    keep using a throwaway file.
-    """
-    override = os.getenv("APP_DATABASE_URL") or os.getenv("DATABASE_URL")
-    return override or _build_mysql_url()
-
-
 class Settings(BaseSettings):
     project_name: str = "Investment Tracker API"
     api_v1_prefix: str = "/api/v1"
     environment: str = "development"
 
-    # Database — MySQL (``my_portfolio``); see ``_default_database_url``.
-    database_url: str = _default_database_url()
+    # An explicit URL also permits SQLite without MySQL credentials.
+    database_url: str | None = Field(default=None, validation_alias=AliasChoices("APP_DATABASE_URL", "DATABASE_URL"))
 
     # ClickHouse
     clickhouse_host: str = os.getenv("CLICKHOUSE_HOST", "localhost")
@@ -62,11 +51,19 @@ class Settings(BaseSettings):
     # tables migrated off ``portfolio.db`` as well as the wichart report store:
     # the crawled feed (``raw_wichart_report``) and the enriched detail rows we
     # write back (``wichart_reports``: report_title, llm_summary, status …).
-    mysql_host: str = os.getenv("MYSQL_HOST", "192.168.1.3")
-    mysql_port: int = int(os.getenv("MYSQL_PORT", "3306"))
-    mysql_user: str = os.getenv("MYSQL_USER", "root")
-    mysql_password: str = os.getenv("MYSQL_PASSWORD", "kyostyle1")
-    mysql_db: str = os.getenv("MYSQL_DB", "my_portfolio")
+    mysql_host: str = Field(default="192.168.1.3", validation_alias=AliasChoices("MYSQL_HOST", "APP_MYSQL_HOST"))
+    mysql_port: int = Field(default=3306, validation_alias=AliasChoices("MYSQL_PORT", "APP_MYSQL_PORT"))
+    mysql_user: str = Field(default="", validation_alias=AliasChoices("MYSQL_USER", "APP_MYSQL_USER"))
+    mysql_password: str = Field(default="", validation_alias=AliasChoices("MYSQL_PASSWORD", "APP_MYSQL_PASSWORD"))
+    mysql_db: str = Field(default="my_portfolio", validation_alias=AliasChoices("MYSQL_DB", "APP_MYSQL_DB"))
+
+    @model_validator(mode="after")
+    def resolve_database_url(self):
+        if not self.database_url:
+            self.database_url = _build_mysql_url(
+                self.mysql_user, self.mysql_password, self.mysql_host, self.mysql_port, self.mysql_db
+            )
+        return self
 
     # DNSE OpenAPI (real-time matched prices; secret must stay server-side)
     dnse_api_key: str = os.getenv("DNSE_API_KEY", "")

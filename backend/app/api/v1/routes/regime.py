@@ -1,4 +1,4 @@
-from datetime import datetime
+from anyio import to_process
 
 import numpy as np
 import pandas as pd
@@ -30,18 +30,23 @@ _YZ_LOOKBACK = 252  # rolling window for percentile rank
 @router.post("/{symbol}", response_model=RegimeResponse)
 @cache(expire=3600)
 async def get_regime(symbol: str, request: RegimeRequest) -> RegimeResponse:
-    start = datetime.strptime(request.start_date, "%Y-%m-%d") if request.start_date else None
-    end   = datetime.strptime(request.end_date,   "%Y-%m-%d") if request.end_date   else None
+    result = await to_process.run_sync(_compute_regime, symbol, request)
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+    return result
+
+
+def _compute_regime(symbol: str, request: RegimeRequest) -> RegimeResponse | None:
 
     df = _load_delta_stocks(
         symbols=[symbol],
-        start=start,
-        end=end,
+        start=request.start_date,
+        end=request.end_date,
         columns=["date", "open", "high", "low", "close", "volume", "symbol"],
     )
     df = df[df["symbol"] == symbol].drop(columns=["symbol"])
     if df.empty:
-        raise HTTPException(status_code=404, detail=f"No data found for {symbol}")
+        return None
 
     close  = df["close"].values.astype(float)
     open_  = df["open"].values.astype(float)

@@ -1,4 +1,6 @@
 const TOKEN_KEY = 'auth_token';
+let memoryToken: string | null = null;
+let useMemoryToken = false;
 
 /** Dispatched on `window` when the API rejects our token. */
 export const UNAUTHORIZED_EVENT = 'auth:unauthorized';
@@ -9,25 +11,31 @@ export const UNAUTHORIZED_EVENT = 'auth:unauthorized';
  * the whole app down with it.
  */
 export function getToken(): string | null {
+  if (useMemoryToken) return memoryToken;
   try {
-    return localStorage.getItem(TOKEN_KEY);
+    memoryToken = localStorage.getItem(TOKEN_KEY);
+    return memoryToken;
   } catch {
-    return null;
+    return memoryToken;
   }
 }
 
 export function setToken(token: string): void {
+  memoryToken = token;
   try {
     localStorage.setItem(TOKEN_KEY, token);
+    useMemoryToken = false;
   } catch {
-    // Session lasts only as long as the tab. Better than refusing to log in.
+    useMemoryToken = true;
   }
 }
 
 export function clearToken(): void {
+  memoryToken = null;
   try {
     localStorage.removeItem(TOKEN_KEY);
+    useMemoryToken = false;
   } catch {
-    // Nothing to do; the token was never persisted.
+    useMemoryToken = true;
   }
 }

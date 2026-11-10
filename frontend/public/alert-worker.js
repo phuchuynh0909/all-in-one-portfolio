@@ -5,6 +5,7 @@
 
 let intervalId = null;
 let apiBaseUrl = '';
+let accessToken = null;
 
 // Worker message handler
 self.addEventListener('message', async (event) => {
@@ -32,8 +33,9 @@ self.addEventListener('message', async (event) => {
   }
 });
 
-function startPolling({ interval, apiUrl, params }) {
+function startPolling({ interval, apiUrl, params, token }) {
   apiBaseUrl = apiUrl;
+  if (token !== undefined) accessToken = token;
   
   // Clear existing interval if any
   stopPolling();
@@ -74,7 +76,13 @@ async function fetchAlerts(params) {
     
     console.log('Worker fetching from:', url);
     
-    const response = await fetch(url);
+    const response = await fetch(url, { headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {} });
+
+    if (response.status === 401) {
+      stopPolling();
+      self.postMessage({ type: 'UNAUTHORIZED' });
+      return;
+    }
     
     if (!response.ok) {
       throw new Error(`HTTP error! status: ${response.status}`);

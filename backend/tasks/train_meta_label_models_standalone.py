@@ -900,8 +900,8 @@ def _load_watchlist_symbols(watchlist_path: str | Path | None = None) -> list[st
     from sqlalchemy.engine import URL
 
     url = os.getenv("APP_DATABASE_URL") or os.getenv("DATABASE_URL") or URL.create(
-        "mysql+pymysql", username=os.getenv("MYSQL_USER", "root"),
-        password=os.getenv("MYSQL_PASSWORD", "kyostyle1"),
+        "mysql+pymysql", username=os.environ["MYSQL_USER"],
+        password=os.environ["MYSQL_PASSWORD"],
         host=os.getenv("MYSQL_HOST", "192.168.1.3"),
         port=int(os.getenv("MYSQL_PORT", "3306")),
         database=os.getenv("MYSQL_DB", "my_portfolio"),

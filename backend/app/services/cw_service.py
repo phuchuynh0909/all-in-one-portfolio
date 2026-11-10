@@ -393,7 +393,10 @@ async def get_covered_warrant(symbol: str) -> CoveredWarrantResponse:
     stock_price = _pick_positive(payload.get("baseStockPrice"))
     stock_price_source = "dnse"
     if stock_price is None and base_stock_code:
-        stock_price = await get_current_price(base_stock_code)
+        try:
+            stock_price = await get_current_price(base_stock_code)
+        except Exception as exc:
+            logger.warning("Could not get current price for {}: {}", base_stock_code, exc)
         stock_price_source = "clickhouse_latest_close" if stock_price is not None else "missing"
     if stock_price is None and base_stock_code:
         stock_price, stock_price_source = _latest_close_from_history(base_stock_code)

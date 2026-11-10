@@ -9,7 +9,8 @@ type Position = {
   ticker: string;
   quantity: number;
   purchase_price: number;
-  current_price: number;
+  current_price: number | null;
+  current_price_date?: string | null;
   purchase_date: string;
   notes?: string;
   created_at: string;
@@ -44,8 +45,8 @@ export default function PositionsTable({ positions, onPositionUpdate }: Position
 
   // Calculate P/L for display
   const positionsWithPL = positions.map((position) => {
-    const unrealizedPL = (position.current_price - position.purchase_price) * position.quantity;
-    const unrealizedPLPct = ((position.current_price / position.purchase_price) - 1) * 100;
+    const unrealizedPL = position.current_price == null ? null : (position.current_price - position.purchase_price) * position.quantity;
+    const unrealizedPLPct = position.current_price == null ? null : ((position.current_price / position.purchase_price) - 1) * 100;
     
     return {
       ...position,
@@ -74,19 +75,28 @@ export default function PositionsTable({ positions, onPositionUpdate }: Position
       flex: 1.2,
       minWidth: 120,
       valueFormatter: (params) => {
+        if (params.value == null) return '—';
         const value = Math.round((params.value || 0) * 100) / 100;
         return value
       },
     },
     {
       field: 'current_price',
-      headerName: 'Current Price',
+      headerName: 'Last Close',
       flex: 1.2,
       minWidth: 120,
       valueFormatter: (params) => {
+        if (params.value == null) return '—';
         const value = Math.round((params.value || 0) * 100) / 100;
         return value
       },
+    },
+    {
+      field: 'current_price_date',
+      headerName: 'Close Date',
+      flex: 1,
+      minWidth: 120,
+      valueFormatter: (params) => params.value ?? '—',
     },
     {
       field: 'unrealized_pl',
@@ -94,6 +104,7 @@ export default function PositionsTable({ positions, onPositionUpdate }: Position
       flex: 1.3,
       minWidth: 130,
       renderCell: (params) => {
+        if (params.value == null) return '—';
         const value = Math.round((params.value as number || 0) * 100) / 100;
         const pct = Math.round((params.row.unrealized_pl_pct as number || 0) * 100) / 100;
         const color = value >= 0 ? 'success' : 'error';

@@ -12,9 +12,10 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.settings import settings
 from app.db.base import Base
-from app.db.models.portfolio import Position, Transaction, InvestmentAmount  # noqa
-from app.db.models.market import Sector, StockSymbol  # noqa
-from app.db.models.financial import Company, Period, Statement, StatementItem, ItemValue  # noqa
+from app.db.models import (  # noqa: F401
+    portfolio, market, financial, corporate_action, user, tcbs, openscript,
+    chart_layout, watchlist, rag_submission,
+)
 
 
 config = context.config

@@ -36,7 +36,7 @@ def get_isp_service(
 
 
 @router.get("/alerts", response_model=ISPAlertsResponse)
-async def get_isp_alerts(
+def get_isp_alerts(
     offset: int = Query(0, ge=0, description="Offset for pagination"),
     limit: int = Query(100, ge=1, le=1000, description="Number of records to return"),
     symbol: Optional[str] = Query(None, description="Filter by symbol"),
@@ -75,7 +75,7 @@ async def get_isp_alerts(
 
 
 @router.get("/alerts/latest", response_model=List[ISPAlert])
-async def get_latest_alerts(
+def get_latest_alerts(
     limit: int = Query(50, ge=1, le=5000, description="Number of latest alerts"),
     since: Optional[int] = Query(None, description="Get alerts since this Unix timestamp in milliseconds"),
     service: ISPAlertsService = Depends(get_isp_service),
@@ -99,7 +99,7 @@ async def get_latest_alerts(
 
 
 @router.get("/alerts/symbols", response_model=List[str])
-async def get_active_symbols(
+def get_active_symbols(
     seconds: int = Query(300, ge=1, le=3600, description="Get symbols active in last N seconds"),
     service: ISPAlertsService = Depends(get_isp_service),
 ):
@@ -117,7 +117,7 @@ async def get_active_symbols(
 
 
 @router.get("/alerts/statistics", response_model=dict)
-async def get_alert_statistics(
+def get_alert_statistics(
     seconds: int = Query(300, ge=1, le=3600, description="Get statistics from last N seconds"),
     service: ISPAlertsService = Depends(get_isp_service),
 ):

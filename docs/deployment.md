@@ -10,7 +10,7 @@ Compose via the `Makefile`.
 | `backend` | `./backend` | `8000:8000` | `uvicorn app.main:app --reload`; mounts `./backend` and `./vendor` (for the TradingAgents shim). Joins `appnet` + external `shared_network`. |
 | `frontend` | `./frontend` | `5173:5173` | `npm run dev --host`; `VITE_API_BASE_URL=http://localhost:8000/api/v1`; depends on backend. |
 | `worker-tick-ingest` | `./worker` | — | `bytewax.run workers.tick_ingest:flow`. |
-| `worker-price-alerts` | `./worker` | — | `bytewax.run workers.price_alerts:flow`; mounts `backend/portfolio.db`. |
+| `worker-price-alerts` | `./worker` | — | `bytewax.run workers.price_alerts:flow`; reads alerts from MySQL. |
 | `worker-ohlc-5m` | `./worker` | — | `python -m workers.ohlc_5m --poll 60`; keeps `ohlc_5m` current for the Future page. State file under `state_dir`. |
 
 - **Networks:** `appnet` (internal bridge) + `shared_network` (external,
@@ -41,7 +41,7 @@ make clean         # remove containers + volumes
 ## Environments
 
 - **Dev:** `docker-compose.yml` + `.env`. `APP_ENVIRONMENT=development`,
-  SQLite app DB, ClickHouse/MinIO reached over `shared_network`.
+  MySQL app DB, ClickHouse/MinIO reached over `shared_network`.
 - **Prod:** `docker-compose.prod.yml` + `prod.env`, via `make prod-*`. See
   `PRODUCTION.md` and `DOMAIN_SETUP.md`. **Off-limits** unless explicitly
   requested — never run `make prod-up` / `make prod-down` or otherwise touch
@@ -69,6 +69,22 @@ When you finish, state the exact verify command you ran and its result.
 
 - **Config** is entirely env-driven (`core/settings.py`, env prefix `APP_`, plus
   `CLICKHOUSE_*`, `DNSE_*`, `MINIO_*`). Secrets stay in git-ignored env files.
+  Set `MYSQL_USER` and `MYSQL_PASSWORD` in the shell or `.env` for the backend
+  and alert worker. For production, the Makefile passes `--env-file prod.env`
+  to Compose; use the same option when invoking Compose directly. Shell values
+  take precedence over the file.
+  Use a database account with only the privileges each service needs. Rotate
+  any password that was previously committed.
+- **Transaction protection:** Apply the backend migration before running code
+  that reads transactions. It protects existing sell records because their
+  original position link is unknown; newly created manual transactions remain
+  editable, while position-close and dividend records are protected.
+- **Report RAG:** Apply the `rag_submissions` migration, register the Prefect
+  deployment and run its worker. The API persists submissions and retries
+  dispatch; see `backend/tasks/README_RAG.md` for setup.
+- **Wichart:** Set `WICHART_EMAIL` and `WICHART_PASSWORD` for crawlers and rotate
+  credentials previously committed to source. Never place them in tracked files.
+  Ruatichsan also requires `RUATICHSAN_EMAIL` and `RUATICHSAN_PASSWORD` when used.
 - **Caching:** backend uses an in-memory `fastapi-cache` (1h default TTL);
   restarting the backend clears it.
 - **Worker state** persists in the `worker_state` volume (and

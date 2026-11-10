@@ -847,6 +847,7 @@ def rag_pipeline_flow(
     recreate: bool = False,
     parser: Optional[str] = None,
     summarize: Optional[bool] = None,
+    submission_id: Optional[str] = None,
 ) -> dict:
     """Run the full RAG pipeline for one report, tracking status in MySQL.
 
@@ -866,6 +867,13 @@ def rag_pipeline_flow(
         if not meta or not meta.get("pdf_url"):
             rag.set_status(report_id, rag.FAILED, error="report or PDF url not found")
             return {"report_id": report_id, "status": rag.FAILED}
+
+        rag.save(report_id, **meta, status=rag.PARSING, error="")
+        if submission_id:
+            from app.db.base import SessionLocal
+            from app.services.rag_submissions import mark_running
+            with SessionLocal() as db:
+                mark_running(db, submission_id)
 
         logger.info(
             "report %s meta saved: symbol=%r title=%r pdf_url=%r",

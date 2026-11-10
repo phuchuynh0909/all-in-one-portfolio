@@ -22,13 +22,12 @@ def _db_with_existing_data():
 
 
 @pytest.mark.real_auth
-@pytest.mark.asyncio
-async def test_existing_symbol_is_skipped_without_refresh(monkeypatch):
+def test_existing_symbol_is_skipped_without_refresh(monkeypatch):
     db = _db_with_existing_data()
     crawl = Mock()
     monkeypatch.setattr(data_crawler, "crawl_and_import_data", crawl)
 
-    response = await data_crawler.crawl_symbol_data(
+    response = data_crawler.crawl_symbol_data(
         "hsg", BackgroundTasks(), quarter=1, refresh=False, db=db
     )
 
@@ -37,13 +36,12 @@ async def test_existing_symbol_is_skipped_without_refresh(monkeypatch):
 
 
 @pytest.mark.real_auth
-@pytest.mark.asyncio
-async def test_refresh_existing_symbol_fetches_and_saves(monkeypatch):
+def test_refresh_existing_symbol_fetches_and_saves(monkeypatch):
     db = _db_with_existing_data()
     crawl = Mock()
     monkeypatch.setattr(data_crawler, "crawl_and_import_data", crawl)
 
-    response = await data_crawler.crawl_symbol_data(
+    response = data_crawler.crawl_symbol_data(
         "hsg", BackgroundTasks(), quarter=1, refresh=True, db=db
     )
 

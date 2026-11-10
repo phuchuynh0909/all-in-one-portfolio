@@ -300,11 +300,13 @@ class PriceAlertConfig:
     @classmethod
     def from_env(cls) -> "PriceAlertConfig":
         """Load price alert configuration from environment variables."""
+        if not os.getenv("MYSQL_USER") or not os.getenv("MYSQL_PASSWORD"):
+            raise ValueError("MYSQL_USER and MYSQL_PASSWORD must be set")
         return cls(
             mysql_host=os.getenv("MYSQL_HOST", "192.168.1.3"),
             mysql_port=int(os.getenv("MYSQL_PORT", "3306")),
-            mysql_user=os.getenv("MYSQL_USER", "root"),
-            mysql_password=os.getenv("MYSQL_PASSWORD", "kyostyle1"),
+            mysql_user=os.environ["MYSQL_USER"],
+            mysql_password=os.environ["MYSQL_PASSWORD"],
             mysql_db=os.getenv("MYSQL_DB", "my_portfolio"),
             check_interval_seconds=float(
                 os.getenv("PRICE_ALERT_CHECK_INTERVAL", "1.0")

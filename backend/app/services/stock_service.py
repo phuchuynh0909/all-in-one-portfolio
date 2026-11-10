@@ -13,6 +13,7 @@ from fastapi_cache.decorator import cache
 from loguru import logger
 from sqlalchemy.orm import Session
 
+from app.core.cache import market_data_key_builder
 from app.core.settings import settings
 from app.schemas.sector import (
     SectorConstituentRow,
@@ -191,15 +192,16 @@ def _load_feature_store(
     pdf = table.to_pandas()
     return pdf
 
+# The cache decorator keeps callers awaitable and runs this blocking query in its thread pool.
 @cache(expire=300)  # Cache for 5 minutes
-async def get_current_price(ticker: str) -> Optional[float]:
+def get_current_price(ticker: str, include_date: bool = False) -> Optional[float] | dict:
     """Latest EOD close for ``ticker`` from ClickHouse ``ohlc_eod`` (or ``CLICKHOUSE_OHLC_EOD_TABLE``)."""
     if not ticker or not str(ticker).strip():
         return None
     sym = str(ticker).strip().replace("'", "''")
     table_name = os.getenv("CLICKHOUSE_OHLC_EOD_TABLE", "ohlc_eod")
     sql = (
-        f"SELECT close FROM {settings.clickhouse_db}.{table_name} FINAL "
+        f"SELECT close, date FROM {settings.clickhouse_db}.{table_name} FINAL "
         f"WHERE symbol = '{sym}' ORDER BY date DESC LIMIT 1"
     )
     try:
@@ -211,14 +213,18 @@ async def get_current_price(ticker: str) -> Optional[float]:
             val = result.result_rows[0][0]
             if val is None:
                 return None
+            if include_date:
+                return {"price": float(val), "date": str(result.result_rows[0][1])}
             return float(val)
         finally:
             client.close()
     except Exception as e:
         logger.warning("Error getting current price for {} from ClickHouse: {}", ticker, e)
-        return None
+        raise
 
-async def get_stock_timeseries(
+# Cache below the HTTP handler so read-only POST requests are cached too.
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_stock_timeseries(
     symbol: str,
     interval: str = "1d",
     indicators: List[IndicatorParams] = [],
@@ -276,7 +282,8 @@ def _empty_timeseries() -> dict:
     return {"open": [], "high": [], "low": [], "close": [], "volume": []}
 
 
-async def get_stock_bars(
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_stock_bars(
     symbol: str,
     interval: str = "1d",
     indicators: Optional[List[IndicatorParams]] = None,
@@ -366,7 +373,8 @@ async def get_stock_bars(
         raise
 
 
-async def get_stock_indicators(
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_stock_indicators(
     symbol: str,
     indicators: List[IndicatorParams],
     start_date: Optional[str] = None,
@@ -525,7 +533,8 @@ def _build_sector_timeseries(closes: pd.DataFrame, sector_level: str) -> SectorT
     )
 
 
-async def get_sector_timeseries(
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_sector_timeseries(
     sector_level: str,
     db: Session = None
 ) -> SectorTimeseries:
@@ -535,7 +544,7 @@ async def get_sector_timeseries(
         return _build_sector_timeseries(_load_sector_closes(level, db), sector_level)
     except Exception as e:
         logger.error("Error getting sector timeseries for level {}: {}", sector_level, e)
-        return _create_empty_sector_timeseries(sector_level)
+        raise
 
 
 SECTOR_RS_BENCHMARK = "VNINDEX"
@@ -663,7 +672,8 @@ def _empty_sector_relative_strength(
     )
 
 
-async def get_sector_relative_strength(
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_sector_relative_strength(
     sector_level: str,
     lookback: int = DEFAULT_SECTOR_RS_LOOKBACK,
     window: int = None,
@@ -731,7 +741,7 @@ async def get_sector_relative_strength(
         )
     except Exception as e:
         logger.error("Error computing sector relative strength for level {}: {}", sector_level, e)
-        return _empty_sector_relative_strength(sector_level, window, metric, timeframe)
+        raise
 
 
 
@@ -743,14 +753,15 @@ def classify_rsi_values(values: pd.Series) -> pd.DataFrame:
     return pd.DataFrame(
         {
             "rsi_below_30": (values < 30.0).astype("int8"),
-            "rsi_between_30_70": ((values >= 30.0) & (values <= 60.0)).astype("int8"),
+            "rsi_between_30_70": ((values >= 30.0) & (values <= 70.0)).astype("int8"),
             "rsi_above_70": (values > 70.0).astype("int8"),
         },
         index=values.index,
     )
 
 
-async def get_market_indicators(
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_market_indicators(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
     rsi_period: int = DEFAULT_MARKET_RSI_PERIOD,
@@ -852,13 +863,13 @@ async def get_market_indicators(
         "ad_line": convert_nans(daily_breadth["ad_line"].values),
         "mcclellan_oscillator": convert_nans(daily_breadth["mcclellan_oscillator"].values),
         "mcclellan_summation": convert_nans(daily_breadth["mcclellan_summation"].values),
-        "advances": daily_breadth["advancing"].values,
-        "declines": daily_breadth["declining"].values,
-        "unchanged": daily_breadth["unchanged"].values,
+        "advances": daily_breadth["advancing"].tolist(),
+        "declines": daily_breadth["declining"].tolist(),
+        "unchanged": daily_breadth["unchanged"].tolist(),
         "rsi_period": rsi_period,
-        "rsi_below_30": daily_breadth["rsi_below_30"].values,
-        "rsi_between_30_70": daily_breadth["rsi_between_30_70"].values,
-        "rsi_above_70": daily_breadth["rsi_above_70"].values,
+        "rsi_below_30": daily_breadth["rsi_below_30"].tolist(),
+        "rsi_between_30_70": daily_breadth["rsi_between_30_70"].tolist(),
+        "rsi_above_70": daily_breadth["rsi_above_70"].tolist(),
     }
 
 
@@ -970,7 +981,8 @@ def _latest_constituent_rs(
     return rs.ffill(limit=3).iloc[-1]
 
 
-async def get_sector_dominance(
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_sector_dominance(
     sector_level: str,
     lookback: int = DEFAULT_SECTOR_RS_LOOKBACK,
     window: int = None,
@@ -1142,10 +1154,11 @@ async def get_sector_dominance(
         )
     except Exception as e:
         logger.error("Error computing sector dominance for level {}: {}", sector_level, e)
-        return empty
+        raise
 
 
-async def get_sector_rotation(
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_sector_rotation(
     sector_level: str,
     tail: int = DEFAULT_SECTOR_ROTATION_TAIL,
     window: int = None,
@@ -1258,7 +1271,7 @@ async def get_sector_rotation(
         )
     except Exception as e:
         logger.error("Error computing sector rotation for level {}: {}", sector_level, e)
-        return empty
+        raise
 
 
 # ── Level 5 sector indices ────────────────────────────────────────────────────
@@ -1348,7 +1361,8 @@ def build_level5_sector_index(start: str = "2020-01-01") -> pd.DataFrame:
     return out
 
 
-async def get_sector_constituents(
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_sector_constituents(
     sector_level: str,
     sector_id: int,
     window: int = None,
@@ -1453,4 +1467,4 @@ async def get_sector_constituents(
         logger.error(
             "Error computing constituents for level {} sector {}: {}", sector_level, sector_id, e
         )
-        return empty
+        raise

@@ -39,7 +39,7 @@ def get_trade_flow_service(
     response_model=PriceDepthResponse,
     tags=["Trade Flow"],
 )
-async def get_trade_flow_depth(
+def get_trade_flow_depth(
     symbol: str = Query(..., description="Symbol, e.g. HPG"),
     days: int = Query(1, description="Trading sessions to accumulate: 1, 5, or 10"),
     service: TradeFlowService = Depends(get_trade_flow_service),
@@ -56,12 +56,12 @@ async def get_trade_flow_depth(
     response_model=TradeFlowResponse,
     tags=["Trade Flow"],
 )
-async def get_trade_flow_anomalies(
+def get_trade_flow_anomalies(
     symbol: str = Query(..., description="Symbol, e.g. HPG"),
-    from_date: Optional[str] = Query(
+    from_date: Optional[date] = Query(
         None, description="Start date YYYY-MM-DD (default: 7 days ago)"
     ),
-    to_date: Optional[str] = Query(
+    to_date: Optional[date] = Query(
         None, description="End date YYYY-MM-DD (default: today)"
     ),
     limit: int = Query(500, ge=1, le=5000, description="Max windows returned"),
@@ -88,10 +88,8 @@ async def get_trade_flow_anomalies(
 
     Needs the feature view: `python workers/block_episode_ingest.py --setup`.
     """
-    to_day = date.fromisoformat(to_date) if to_date else date.today()
-    from_day = (
-        date.fromisoformat(from_date) if from_date else to_day - timedelta(days=7)
-    )
+    to_day = to_date or date.today()
+    from_day = from_date or to_day - timedelta(days=7)
     return service.get_anomalies(
         symbol=symbol.strip().upper(),
         from_day=from_day,

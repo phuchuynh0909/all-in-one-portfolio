@@ -23,8 +23,6 @@ from app.utils.wichart import decrypt
 import asyncio
 from playwright.async_api import async_playwright
 
-WICHART_EMAIL = os.getenv("WICHART_EMAIL", "kyostyle1@gmail.com")
-WICHART_PASSWORD = os.getenv("WICHART_PASSWORD", "kyostyle1")
 STORAGE_PATH = os.path.join(CURRENT_DIR, "wichart_storage.json")
 RAW_WICHART_REPORT_DELTA_PATH = "s3://delta-table-storage/raw_wichart_report"
 # Rows per INSERT when upserting the feed into MySQL.

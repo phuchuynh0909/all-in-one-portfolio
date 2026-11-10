@@ -45,12 +45,17 @@ class TooManyRuns(RuntimeError):
     """Admission refused: the concurrency cap is full."""
 
 
+class ConflictingRun(RuntimeError):
+    """An analysis for this symbol and date uses different settings."""
+
+
 @dataclass
 class Job:
     """One background analysis and everything it has emitted so far."""
 
     symbol: str
     trade_date: str
+    options: tuple = ()
     events: list[Event] = field(default_factory=list)
     done: bool = False
     #: Cooperative shutdown. The worker checks it between events; nothing else
@@ -81,7 +86,7 @@ _lock = threading.Lock()
 
 
 def start(
-    symbol: str, trade_date: str, make_events: Callable[[], EventStream]
+    symbol: str, trade_date: str, make_events: Callable[[], EventStream], *, options: tuple = ()
 ) -> Job:
     """Begin a background run, or return the one already going for this key.
 
@@ -92,6 +97,8 @@ def start(
     with _lock:
         existing = _running.get(key)
         if existing is not None:
+            if existing.options != options:
+                raise ConflictingRun("An analysis for this symbol and date is already running with different settings")
             logger.info("Attaching to the analysis of %s already in flight", symbol)
             return existing
         if len(_running) >= MAX_CONCURRENT_RUNS:
@@ -99,7 +106,7 @@ def start(
                 f"{len(_running)} analyses already running "
                 f"(limit {MAX_CONCURRENT_RUNS}); try again when one finishes."
             )
-        job = Job(symbol=symbol, trade_date=trade_date)
+        job = Job(symbol=symbol, trade_date=trade_date, options=options)
         _running[key] = job
         job.thread = threading.Thread(
             target=_run,

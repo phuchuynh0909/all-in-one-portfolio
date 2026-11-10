@@ -21,7 +21,7 @@ def test_market_breadth_rsi_period_defaults_to_21() -> None:
     assert MarketBreadthRequest().rsi_period == 21
 
 
-def test_market_breadth_includes_historical_rsi_distribution(monkeypatch) -> None:
+def test_market_breadth_includes_historical_rsi_distribution(monkeypatch, memory_cache) -> None:
     dates = pd.date_range("2026-08-17", periods=20, freq="B")
     rows = [
         *[
