@@ -16,6 +16,7 @@
  * `activeChart().createStudy(name)` — see {@link STUDY_CATALOGUE}.
  */
 import { tvStore, indexAtTimeMs } from './store';
+import { buildQuantRegimeStudy, REGIME_NAME, REGIME_PARAMS } from './quantRegime';
 import type {
   CustomIndicator,
   IContext,
@@ -351,6 +352,11 @@ function buildRvolStudy(pine: PineJS): CustomIndicator {
 
 
 export const COMPUTED_STUDY_SPECS: ComputedStudySpec[] = [
+  {
+    id: 'quant_regime', name: REGIME_NAME,
+    inputsFrom: (params) => ({ ...REGIME_PARAMS, ...params }),
+    build: buildQuantRegimeStudy,
+  },
   {
     id: 'rsi',
     name: RSI_NAME,

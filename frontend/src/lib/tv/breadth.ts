@@ -1,5 +1,6 @@
 import { formatChartTime, type MarketBreadthResponse, type TimeseriesResponse } from '../services/timeseries';
 import { studyPalette } from './theme';
+import { buildBreadthToolkit } from './breadthToolkit';
 import type {
   Bar,
   CustomIndicator,
@@ -17,7 +18,6 @@ import type {
   ResolutionString,
   ResolveCallback,
   SearchSymbolsCallback,
-  StudyInputValue,
   SubscribeBarsCallback,
 } from './charting_library';
 
@@ -36,7 +36,8 @@ export const BREADTH_STUDIES = {
   adLine: 'Advance/Decline Line',
   summation: 'McClellan Summation Index',
   advancesDeclines: 'Advances / Declines',
-  rsiDistribution: 'RSI Distribution',
+  aboveMovingAverages: '% Stocks Above 20/50/200-day MA',
+  netNewHighs: 'Net New Highs (252 sessions)',
 } as const;
 
 function calcSma(values: (number | null)[], period: number): (number | null)[] {
@@ -68,8 +69,6 @@ export class MarketBreadthStore {
   readonly bars: Bar[];
   readonly adSma20: (number | null)[];
   readonly summationSma20: (number | null)[];
-  readonly rsiBelowShare: number[];
-  readonly rsiMiddleCumulativeShare: number[];
   private readonly timesMs: number[];
   private readonly indexByTimeMs: Map<number, number>;
 
@@ -80,21 +79,6 @@ export class MarketBreadthStore {
     this.indexByTimeMs = new Map(this.timesMs.map((time, index) => [time, index]));
     this.adSma20 = calcSma(breadth.ad_line, 20);
     this.summationSma20 = calcSma(breadth.mcclellan_summation, 20);
-
-    this.rsiBelowShare = breadth.timestamps.map((_, index) => {
-      const total = breadth.rsi_below_30[index]
-        + breadth.rsi_between_30_70[index]
-        + breadth.rsi_above_70[index];
-      return total ? (breadth.rsi_below_30[index] / total) * 100 : 0;
-    });
-    this.rsiMiddleCumulativeShare = breadth.timestamps.map((_, index) => {
-      const total = breadth.rsi_below_30[index]
-        + breadth.rsi_between_30_70[index]
-        + breadth.rsi_above_70[index];
-      return total
-        ? ((breadth.rsi_below_30[index] + breadth.rsi_between_30_70[index]) / total) * 100
-        : 0;
-    });
 
     const { open, high, low, close, volume } = vnindex.timeseries;
     this.bars = vnindex.timestamps.flatMap((timestamp, index) => {
@@ -223,22 +207,6 @@ type PaletteDefinition = {
   index: ValueGetter;
 };
 
-type FillDefinition = {
-  from: string;
-  to: string;
-  title: string;
-  color: string;
-  transparency?: number;
-};
-type NumericInputDefinition = {
-  id: string;
-  name: string;
-  defaultValue: number;
-  min: number;
-  max: number;
-};
-
-
 type StudyDefinition = {
   id: string;
   name: string;
@@ -246,8 +214,6 @@ type StudyDefinition = {
   plots: PlotDefinition[];
   palettes?: PaletteDefinition[];
   bands?: { value: number; color: string }[];
-  fills?: FillDefinition[];
-  inputs?: NumericInputDefinition[];
 };
 
 function finite(value: number | null | undefined): number {
@@ -303,19 +269,6 @@ function buildStudy(
     value: band.value,
     visible: true,
   }));
-  const filledAreas = (definition.fills ?? []).map((fill, index) => ({
-    id: `fill${index}`,
-    objAId: fill.from,
-    objBId: fill.to,
-    title: fill.title,
-    type: 'plot_plot',
-  }));
-  const filledAreasStyle = Object.fromEntries((definition.fills ?? []).map((fill, index) => [
-    `fill${index}`,
-    { color: fill.color, transparency: fill.transparency ?? 18, visible: true },
-  ]));
-  const numericInputs = definition.inputs ?? [];
-
   const metainfo = {
     _metainfoVersion: 53,
     id: `${definition.id}@aiop-breadth-1`,
@@ -326,25 +279,16 @@ function buildStudy(
     is_price_study: false,
     format: { type: 'price', precision: definition.precision },
     plots,
-    inputs: numericInputs.map((input) => ({
-      id: input.id,
-      name: input.name,
-      type: 'integer',
-      defval: input.defaultValue,
-      min: input.min,
-      max: input.max,
-    })),
+    inputs: [],
     styles,
     bands: bands.length ? bands : undefined,
     palettes: Object.keys(palettesMeta).length ? palettesMeta : undefined,
-    filledAreas: filledAreas.length ? filledAreas : undefined,
     defaults: {
       styles: styleDefaults,
       bands: bandDefaults.length ? bandDefaults : undefined,
       palettes: Object.keys(palettesDefaults).length ? palettesDefaults : undefined,
-      filledAreasStyle: Object.keys(filledAreasStyle).length ? filledAreasStyle : undefined,
       precision: definition.precision,
-      inputs: Object.fromEntries(numericInputs.map((input) => [input.id, input.defaultValue])),
+      inputs: {},
     },
   };
 
@@ -354,9 +298,7 @@ function buildStudy(
     constructor: function (this: LibraryPineStudy<IPineStudyResult>) {
       this.main = function (
         context: IContext,
-        inputCallback: <T extends StudyInputValue>(index: number) => T,
       ) {
-        numericInputs.forEach((_, index) => inputCallback(index));
         const index = store.indexAt(pine.Std.time(context));
         const values = definition.plots.map((plot) => index < 0 ? NaN : finite(plot.get(store, index)));
         const colors = (definition.palettes ?? []).map((palette) => index < 0 ? NaN : finite(palette.index(store, index)));
@@ -367,8 +309,22 @@ function buildStudy(
   } as unknown as CustomIndicator;
 }
 
-function definitions(rsiPeriod: number): StudyDefinition[] {
+function definitions(): StudyDefinition[] {
   return [
+    {
+      id: 'market-breadth-net-new-highs',
+      name: BREADTH_STUDIES.netNewHighs,
+      precision: 0,
+      plots: [{
+        id: 'net', title: 'New highs − new lows', color: studyPalette.greenBar,
+        histogram: true, get: (store, index) => store.breadth.net_new_highs[index],
+      }],
+      palettes: [{
+        target: 'net', colors: [studyPalette.greenBar, studyPalette.redBar],
+        index: (store, index) => (store.breadth.net_new_highs[index] ?? 0) >= 0 ? 0 : 1,
+      }],
+      bands: [{ value: 0, color: studyPalette.zeroLine }],
+    },
     {
       id: 'market-breadth-oscillator',
       name: BREADTH_STUDIES.oscillator,
@@ -417,38 +373,22 @@ function definitions(rsiPeriod: number): StudyDefinition[] {
       bands: [{ value: 0, color: studyPalette.zeroLine }],
     },
     {
-      id: 'market-breadth-rsi-distribution',
-      name: BREADTH_STUDIES.rsiDistribution,
-      precision: 0,
+      id: 'market-breadth-above-moving-averages',
+      name: BREADTH_STUDIES.aboveMovingAverages,
+      precision: 1,
       plots: [
-        { id: 'zero', title: 'Zero', color: studyPalette.transparent, transparency: 100, hidden: true, get: () => 0 },
-        { id: 'total', title: `RSI(${rsiPeriod}) > 70`, color: studyPalette.green, width: 2, get: () => 100 },
-        { id: 'middle', title: 'RSI 30–70', color: studyPalette.blue, width: 2, get: (store, index) => store.rsiMiddleCumulativeShare[index] },
-        { id: 'below', title: `RSI(${rsiPeriod}) < 30`, color: studyPalette.red, width: 2, get: (store, index) => store.rsiBelowShare[index] },
+        { id: 'ma20', title: '% Above SMA 20', color: studyPalette.green, width: 2, get: (store, index) => store.breadth.pct_above_ma_20[index] },
+        { id: 'ma50', title: '% Above SMA 50', color: studyPalette.blue, width: 2, get: (store, index) => store.breadth.pct_above_ma_50[index] },
+        { id: 'ma200', title: '% Above SMA 200', color: studyPalette.orange, width: 2, get: (store, index) => store.breadth.pct_above_ma_200[index] },
       ],
-      bands: [
-        { value: 0, color: studyPalette.zeroLine },
-        { value: 100, color: studyPalette.zeroLine },
-      ],
-      inputs: [{
-        id: 'period',
-        name: 'RSI period',
-        defaultValue: rsiPeriod,
-        min: 2,
-        max: 100,
-      }],
-      fills: [
-        { from: 'middle', to: 'total', title: 'RSI > 70', color: studyPalette.green, transparency: 8 },
-        { from: 'below', to: 'middle', title: 'RSI 30–70', color: studyPalette.blue, transparency: 8 },
-        { from: 'zero', to: 'below', title: `RSI(${rsiPeriod}) < 30`, color: studyPalette.red, transparency: 8 },
-      ],
+      bands: [0, 50, 100].map((value) => ({ value, color: studyPalette.zeroLine })),
     },
   ];
 }
 
 export function marketBreadthIndicatorsGetter(store: MarketBreadthStore) {
   return (pine: PineJS): Promise<CustomIndicator[]> => Promise.resolve(
-    definitions(store.breadth.rsi_period).map((definition) => buildStudy(pine, store, definition)),
+    [...definitions().map((definition) => buildStudy(pine, store, definition)), buildBreadthToolkit(pine, store)],
   );
 }
 

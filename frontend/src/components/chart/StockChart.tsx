@@ -39,6 +39,7 @@ import {
 } from '../../lib/services/portfolio';
 
 import { readCustomLayouts, type ChartLayout } from '../../lib/tv/chartLayouts';
+import { REGIME_PARAMS, REGIME_NAME, syncRegimeMetricVisibility, addRegimeLegend } from '../../lib/tv/quantRegime';
 export type { ChartLayout } from '../../lib/tv/chartLayouts';
 
 import IndicatorManager from './IndicatorManager';
@@ -132,6 +133,16 @@ export interface IndicatorConfig {
 }
 
 const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
+  {
+    id: 'quant_regime', name: 'quant_regime', label: REGIME_NAME, computed: true,
+    params: REGIME_PARAMS, visible: false,
+    paramDefs: [
+      { key: 'chop_window', label: 'CHOP window', min: 2, max: 100, step: 1 },
+      { key: 'trend_window', label: 'Trend / Hurst window', min: 100, max: 500, step: 1 },
+      { key: 'vr_window', label: 'VR window', min: 12, max: 1000, step: 1 },
+      { key: 'vr_lag', label: 'VR lag (< window - 1)', min: 2, max: 100, step: 1 },
+    ],
+  },
   {
     // Computed in-browser by PineJS (see COMPUTED_STUDY_SPECS) — the params below
     // become study inputs instead of a backend indicator request.
@@ -296,14 +307,14 @@ const DEFAULT_INDICATOR_CONFIGS: IndicatorConfig[] = [
 const LAYOUT_2_IDS = ['rsi', 'bvc', 'kalman_zscore', 'yz_volatility'];
 
 /** Indicators for the backtest_012 strategy, breakout volume, and IAKF. */
-const LAYOUT_3_IDS = ['gaussian_frama', 'hull_butterfly', 'rvol', 'iakf_oscillator'];
+const LAYOUT_3_IDS = ['gaussian_frama', 'hull_butterfly', 'rvol', 'iakf_oscillator', 'quant_regime'];
 
 
 /**
  * Selectable indicator layouts. Layout 1 excludes LR Prediction Channel and
  * every indicator reserved for another layout. Layout 2 holds BVC + RSI +
  * Kalman Z-Score + YZ Volatility; Layout 3 holds Gaussian FRAMA + Hull
- * Butterfly Oscillator + RVOL + IAKF.
+ * Butterfly Oscillator + RVOL + IAKF + Quantitative Regime.
  */
 const CHART_LAYOUTS: ChartLayout[] = [
   {
@@ -361,6 +372,7 @@ export default function StockChart({
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<IChartingLibraryWidget | null>(null);
   const studyEntitiesRef = useRef<Map<string, EntityId>>(new Map());
+  const regimeLegendRef = useRef<EntityId | null>(null);
   const executionShapesRef = useRef<IExecutionLineAdapter[]>([]);
   const [ready, setReady] = useState(false);
   const readyRef = useRef(ready);
@@ -435,6 +447,16 @@ export default function StockChart({
           ...preset, params: defaults,
           scripts: preset.id === CHART_LAYOUTS[0].id ? scripts.filter((script) => script.visible).map((script) => script.id) : [],
         })), CHART_LAYOUTS[0].id);
+      }
+      if (cancelled) return;
+      const layout3 = library.layouts.find((item) => item.id === 'layout3');
+      if (layout3 && !layout3.params?.quant_regime) {
+        const upgraded = await saveChartLayout({
+          ...layout3,
+          indicators: [...new Set([...layout3.indicators, 'quant_regime'])],
+          params: { ...layout3.params, quant_regime: REGIME_PARAMS },
+        });
+        library = { ...library, layouts: library.layouts.map((item) => item.id === upgraded.id ? upgraded : item) };
       }
       if (cancelled) return;
       const layout = library.layouts.find((item) => item.id === library.activeLayoutId) ?? library.layouts[0];
@@ -828,6 +850,13 @@ export default function StockChart({
         }
         entities.delete(spec.id);
       }
+      const entity = entities.get(spec.id);
+      if (spec.id === 'quant_regime' && entity) {
+        syncRegimeMetricVisibility(chart.getStudyById(entity));
+        if (!chart.getAllShapes().some((shape) => shape.id === regimeLegendRef.current)) {
+          regimeLegendRef.current = addRegimeLegend(chart, entity);
+        }
+      }
     }
     setMainPaneHeight();
   };
@@ -994,7 +1023,13 @@ export default function StockChart({
           .catch(() => { if (!disposed) setScriptError('Could not save indicator visibility on the server.'); });
       });
       widget.subscribe('onAutoSaveNeeded', () => { if (!disposed) scheduleLayoutSaveRef.current(); });
-      widget.subscribe('study_properties_changed', () => { if (!disposed) scheduleLayoutSaveRef.current(); });
+      widget.subscribe('study_properties_changed', (id) => {
+        if (disposed) return;
+        if (studyEntitiesRef.current.get('quant_regime') === id) {
+          syncRegimeMetricVisibility(widget.activeChart().getStudyById(id));
+        }
+        scheduleLayoutSaveRef.current();
+      });
       void resolveWatchListApi(widget).then((resolved) => {
         if (disposed) return;
         onWatchListResolvedRef.current?.(resolved);
@@ -1069,6 +1104,7 @@ export default function StockChart({
       if (layoutSaveTimerRef.current) clearTimeout(layoutSaveTimerRef.current);
       setReady(false);
       studyEntitiesRef.current.clear();
+      regimeLegendRef.current = null;
       pendingStudiesRef.current.clear();
       scriptEntitiesRef.current.clear();
       pendingScriptsRef.current.clear();
@@ -1126,6 +1162,7 @@ export default function StockChart({
     } catch { /* chart not ready yet */ }
     widget.setSymbol(symbol, DAILY, () => {
       void drawPositions();
+      void applyStudies();
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [symbol]);

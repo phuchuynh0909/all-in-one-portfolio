@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.schemas.timeseries import (
     TimeseriesResponse,
@@ -21,6 +21,7 @@ from app.schemas.sector import (
     SectorRotationRequest,
     SectorTimeseries,
 )
+from app.schemas.symbol_strength import SymbolStrength, SymbolStrengthRequest
 from app.services.stock_service import (
     get_stock_timeseries,
     get_stock_bars,
@@ -31,10 +32,32 @@ from app.services.stock_service import (
     get_sector_rotation,
     get_stock_indicators,
     get_market_indicators,
+    get_symbol_strength,
 )
 from app.db.base import get_db
+from app.services.health_strength import get_health_strength
+from app.schemas.health_strength import HealthStrength
 
 router = APIRouter(prefix="/timeseries", tags=["timeseries"])
+
+
+@router.post("/sector/{level}/{sector_id}/health-strength", response_model=HealthStrength)
+def sector_health_strength(level: int, sector_id: int, db: Session = Depends(get_db)):
+    if level not in (1, 2, 3, 4, 5):
+        raise HTTPException(status_code=422, detail="Sector level must be 1–5")
+    try:
+        return get_health_strength(level, sector_id, db)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@router.post("/symbols/relative-strength", response_model=SymbolStrength)
+async def symbol_relative_strength(request: SymbolStrengthRequest) -> SymbolStrength:
+    """Batch relative strength and rotation tails, aligned to the benchmark calendar."""
+    try:
+        return await get_symbol_strength(**request.model_dump())
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
 
 @router.post("/{symbol}", response_model=TimeseriesResponse)
 async def get_symbol_timeseries(

@@ -1,5 +1,6 @@
 import os
 import time as time_module
+from math import isfinite
 from datetime import datetime, timedelta
 from typing import List, Optional
 
@@ -34,6 +35,7 @@ from app.schemas.timeseries import (
     IndicatorsOnlyResponse,
     TimeseriesResponse,
 )
+from app.schemas.symbol_strength import SymbolStrength, SymbolStrengthRow
 
 from .sector_lists import SECTOR_LEVEL_5, level5_constituents
 from .timeseries_indicators import compute_stock_indicators
@@ -760,7 +762,7 @@ def classify_rsi_values(values: pd.Series) -> pd.DataFrame:
     )
 
 
-@cache(expire=300, key_builder=market_data_key_builder)
+@cache(expire=300, namespace="breadth-toolkit-v1", key_builder=market_data_key_builder)
 def get_market_indicators(
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
@@ -772,11 +774,13 @@ def get_market_indicators(
     - McClellan Oscillator: 19-day EMA - 39-day EMA of daily advance-decline values
     - McClellan Summation Index: Cumulative sum of McClellan Oscillator
     - Daily symbol counts for RSI below 30, from 30 through 70, and above 70
+    - Net new highs: 252-session highs minus lows, including equal-price touches
+    - Percentage of eligible stocks closing strictly above SMA 20, 50, and 200
     """
     requested_start = datetime.strptime(start_date, "%Y-%m-%d") if start_date else None
     requested_end = datetime.strptime(end_date, "%Y-%m-%d") if end_date else None
     load_start = (
-        requested_start - timedelta(days=max(60, rsi_period * 3))
+        requested_start - timedelta(days=max(550, rsi_period * 3))
         if requested_start
         else None
     )
@@ -785,7 +789,7 @@ def get_market_indicators(
         symbols=None,
         start=load_start,
         end=requested_end,
-        columns=["date", "close", "symbol"]
+        columns=["date", "high", "low", "close", "volume", "symbol"]
     )
 
     empty_result = {
@@ -796,10 +800,16 @@ def get_market_indicators(
         "advances": [],
         "declines": [],
         "unchanged": [],
+        "advancing_volume": [],
+        "declining_volume": [],
         "rsi_period": rsi_period,
         "rsi_below_30": [],
         "rsi_between_30_70": [],
         "rsi_above_70": [],
+        "new_highs": [],
+        "new_lows": [],
+        "net_new_highs": [],
+        **{f"pct_above_ma_{period}": [] for period in (20, 50, 200)},
     }
     if df.empty:
         return empty_result
@@ -817,7 +827,26 @@ def get_market_indicators(
     df["advancing"] = (df["change"] > 0).astype(int)
     df["declining"] = (df["change"] < 0).astype(int)
     df["unchanged"] = (df["change"] == 0).astype(int)
+    active = (df["advancing"] == 1) | (df["declining"] == 1)
+    df["breadth_volume_missing"] = active & (df["volume"].isna() | (df["volume"] < 0))
+    df["advancing_volume"] = df["volume"].where(df["advancing"] == 1, 0)
+    df["declining_volume"] = df["volume"].where(df["declining"] == 1, 0)
     df = pd.concat([df, classify_rsi_values(df["rsi"])], axis=1)
+    highs = df.groupby("symbol", sort=False)["high"].transform(
+        lambda values: values.rolling(252, min_periods=252).max()
+    )
+    lows = df.groupby("symbol", sort=False)["low"].transform(
+        lambda values: values.rolling(252, min_periods=252).min()
+    )
+    df["high_low_eligible"] = highs.notna() & lows.notna()
+    df["new_highs"] = ((df["high"] >= highs) & df["high_low_eligible"]).astype(int)
+    df["new_lows"] = ((df["low"] <= lows) & df["high_low_eligible"]).astype(int)
+    for period in (20, 50, 200):
+        average = df.groupby("symbol", sort=False)["close"].transform(
+            lambda values: values.where(values > 0).rolling(period, min_periods=period).mean()
+        )
+        eligible = average.notna() & (df["close"] > 0)
+        df[f"pct_above_ma_{period}"] = (df["close"] > average).where(eligible).astype(float) * 100
 
     daily_breadth = (
         df.groupby("date")
@@ -826,9 +855,16 @@ def get_market_indicators(
                 "advancing": "sum",
                 "declining": "sum",
                 "unchanged": "sum",
+                "advancing_volume": "sum",
+                "declining_volume": "sum",
+                "breadth_volume_missing": "sum",
                 "rsi_below_30": "sum",
                 "rsi_between_30_70": "sum",
                 "rsi_above_70": "sum",
+                "high_low_eligible": "sum",
+                "new_highs": "sum",
+                "new_lows": "sum",
+                **{f"pct_above_ma_{period}": "mean" for period in (20, 50, 200)},
             }
         )
         .reset_index()
@@ -857,6 +893,7 @@ def get_market_indicators(
     ema_39 = daily_breadth["ad_ratio"].ewm(span=39, adjust=False).mean()
     daily_breadth["mcclellan_oscillator"] = ema_19 - ema_39
     daily_breadth["mcclellan_summation"] = daily_breadth["mcclellan_oscillator"].cumsum()
+    daily_breadth["net_new_highs"] = daily_breadth["new_highs"] - daily_breadth["new_lows"]
 
     return {
         "timestamps": daily_breadth["date"].dt.strftime("%Y-%m-%d").tolist(),
@@ -866,10 +903,24 @@ def get_market_indicators(
         "advances": daily_breadth["advancing"].tolist(),
         "declines": daily_breadth["declining"].tolist(),
         "unchanged": daily_breadth["unchanged"].tolist(),
+        **{
+            key: convert_nans(daily_breadth[key].where(daily_breadth["breadth_volume_missing"] == 0).values)
+            for key in ("advancing_volume", "declining_volume")
+        },
         "rsi_period": rsi_period,
         "rsi_below_30": daily_breadth["rsi_below_30"].tolist(),
         "rsi_between_30_70": daily_breadth["rsi_between_30_70"].tolist(),
         "rsi_above_70": daily_breadth["rsi_above_70"].tolist(),
+        **{
+            f"pct_above_ma_{period}": convert_nans(daily_breadth[f"pct_above_ma_{period}"].values)
+            for period in (20, 50, 200)
+        },
+        **{
+            key: [int(value) if eligible else None for value, eligible in zip(
+                daily_breadth[key], daily_breadth["high_low_eligible"]
+            )]
+            for key in ("new_highs", "new_lows", "net_new_highs")
+        },
     }
 
 
@@ -1157,6 +1208,62 @@ def get_sector_dominance(
         raise
 
 
+def _rotation_series(closes, benchmark, window, momentum_window, timeframe):
+    rs = _relative_strength(closes, benchmark, window, "mansfield", timeframe)
+    ratio = rs + 100
+    flat = pd.Series(1.0, index=ratio.index)
+    momentum = _relative_strength(ratio, flat, momentum_window, "mansfield", "daily") + 100
+    return rs, ratio, momentum
+
+
+@cache(expire=300, key_builder=market_data_key_builder)
+def get_symbol_strength(
+    symbols: list[str],
+    benchmark: str = SECTOR_RS_BENCHMARK,
+    window: int = None,
+    momentum_window: int = None,
+    tail: int = DEFAULT_SECTOR_ROTATION_TAIL,
+    timeframe: str = "daily",
+) -> SymbolStrength:
+    """One batched stock read; all output series share the benchmark calendar."""
+    window = window or (DEFAULT_SECTOR_RS_WINDOW_WEEKLY if timeframe == "weekly" else DEFAULT_SECTOR_RS_WINDOW)
+    momentum_window = momentum_window or (DEFAULT_SECTOR_MOMENTUM_WINDOW_WEEKLY if timeframe == "weekly" else DEFAULT_SECTOR_MOMENTUM_WINDOW)
+    market = _load_benchmark_closes(benchmark)
+    if market.empty:
+        raise ValueError(f"No price history for benchmark {benchmark}")
+    stocks = _load_constituent_ohlcv(sorted(set(symbols)), window + momentum_window, tail, timeframe)
+    market = market.where(market > 0)
+    if stocks.empty:
+        calendar_bars = (window + momentum_window + tail) * (7 if timeframe == "weekly" else 1)
+        wide = pd.DataFrame(index=market.index[-calendar_bars:], columns=symbols, dtype=float)
+    else:
+        stocks = stocks.copy()
+        stocks["date"] = pd.to_datetime(stocks["date"]).dt.normalize()
+        wide = stocks.pivot_table(index="date", columns="symbol", values="close")
+        # Keep the benchmark calendar, including sessions where every stock is absent.
+        start = wide.index.min() if not wide.empty else market.index[0]
+        wide = wide.reindex(index=market.index[market.index >= start], columns=symbols)
+    wide = wide.where(wide > 0)
+    rs, ratio, momentum = _rotation_series(wide, market, window, momentum_window, timeframe)
+    dates = ratio.index[-tail:]
+
+    def values(frame, symbol):
+        return [round(float(value), 4) if pd.notna(value) and isfinite(value) else None for value in frame[symbol].reindex(dates)]
+
+    rows = []
+    for symbol in symbols:
+        r, m = values(ratio, symbol), values(momentum, symbol)
+        recent = any(x is not None and y is not None for x, y in zip(r[-4:], m[-4:]))
+        rows.append(SymbolStrengthRow(
+            symbol=symbol, rs=values(rs, symbol), ratio=r, momentum=m,
+            unavailable=None if recent else "No recent price history or insufficient warmup for these windows",
+        ))
+    return SymbolStrength(
+        benchmark=benchmark, window=window, momentum_window=momentum_window,
+        timeframe=timeframe, dates=pd.DatetimeIndex(dates).strftime("%Y-%m-%d").tolist(), rows=rows,
+    )
+
+
 @cache(expire=300, key_builder=market_data_key_builder)
 def get_sector_rotation(
     sector_level: str,
@@ -1216,16 +1323,9 @@ def get_sector_rotation(
         wide = closes.pivot_table(index="date", columns="sector_id", values="close")
         names = closes.drop_duplicates("sector_id").set_index("sector_id")["sector_name"]
 
-        ratio = _relative_strength(wide, benchmark, window, "mansfield", timeframe) + 100
+        _, ratio, momentum = _rotation_series(wide, benchmark, window, momentum_window, timeframe)
         if ratio.empty:
             return empty
-
-        # Momentum of the ratio: same Mansfield shape, one level up. A flat
-        # benchmark series keeps the helper's alignment logic happy.
-        flat = pd.Series(1.0, index=ratio.index)
-        momentum = (
-            _relative_strength(ratio, flat, momentum_window, "mansfield", "daily") + 100
-        )
 
         window_dates = ratio.index[-tail:]
         ratio = ratio.reindex(window_dates)
