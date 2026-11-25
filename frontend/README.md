@@ -10,6 +10,30 @@ The authenticated `/api/v1/watchlists` API stores the account's complete watchli
 
 ## Custom chart indicators
 
+Layout 3 includes **Quantitative Regime**, computed locally from the chart's bars.
+The colored series uses `-1` for downtrend (red), `0` for mixed (gray), `1` for
+uptrend (green), and `2` for range / mean reversion (amber). Only the regime
+metric displays by default. In the study's **Settings → Inputs**, toggle CHOP,
+Mann–Kendall (tau and p-value together), Hurst, or variance ratio (VR, z and
+p-values together). These controls show or hide each group's plots, legend
+values and data-window metrics; they do not change the regime calculation.
+
+Defaults are CHOP(14), Mann–Kendall / Hurst(126), and variance ratio(252, lag 10).
+The summary needs all four methods (252 bars by default). Three trend votes
+(CHOP < 38.2, significant Mann–Kendall, H > 0.5, significant VR > 1), including
+a significant Mann–Kendall direction, produce an up/down trend. Otherwise two
+range votes (CHOP > 61.8, H < 0.5, significant VR < 1) produce range / reversion;
+other combinations are mixed. Significance uses p < 0.05. Undefined inputs or
+flat prices leave the summary unavailable. VR lag must be less than window - 1.
+
+Hurst follows [hurst's simplified price R/S estimator](https://github.com/Mottl/hurst/blob/master/hurst/__init__.py).
+Mann–Kendall includes tie correction. VR uses a bounded rolling window rather
+than all loaded history, so older values do not change when history is expanded.
+This is a deterministic regime summary; it does not call Laya or issue trade
+recommendations. Existing Layout 3 setups gain the indicator once; subsequent
+visibility changes save normally. Run `npm run test:regime` for numerical and
+study lifecycle checks.
+
 Use the chart header's layout picker → **Create new layout…** to name a custom indicator layout. Start from the current selection or choose **Start without indicators**. Layouts, the selected layout, indicator membership/parameters, OpenScript membership, native indicator settings/styles, drawings and pane state are saved in the existing MySQL database under your account. The three initial layouts remain available and also save their changes. Setups load across browsers when you sign into the same account.
 
 Changes save automatically after a short delay. **Save layout** below the chart saves immediately; the adjacent status confirms the server save or reports an error. Switching layouts first saves the current setup and then restores the selected server version. **Import browser layouts** migrates old browser presets without overwriting existing server edits. Browser data is read only for migration, never used for new layout saves.
@@ -95,3 +119,29 @@ export default tseslint.config([
   },
 ])
 ```
+
+## Market Breadth Toolkit
+
+The dashboard adds a Market Breadth Toolkit pane, defaulting to Zweig Breadth
+Thrust. In the pane's **Settings → Inputs**, choose Deemer 10/20, Zweig Breadth
+Thrust, Zweig Market Thrust, Whaley Advance/Decline Thrust, or Whaley Up/Down
+Volume Thrust. Data uses the same local stock universe as the other breadth
+panes; it does not fetch NYSE or NASDAQ series. Advancing/declining volume is the
+sum of volume on stocks whose close rose/fell versus their previous close.
+Unchanged stocks and stocks with no previous close contribute to neither side.
+Incomplete directional volume leaves the volume-based methods unavailable.
+
+The method sets its default upper/lower thresholds. **Use fixed levels** enables
+the two custom threshold inputs; line appearance and fill colors are editable
+in **Style**. Thrust labels follow the supplied formulas. Divergences compare
+breadth pivots with VNINDEX closes and appear after the configured number of
+confirmation bars (10 by default); the line connects historical pivot dates,
+not the date when it first became knowable. Disable **Show confirmed divergences**
+to remove the lines. The latest 500 divergence lines are drawn.
+
+Adapted from **Market Breadth Toolkit © LuxAlgo**, supplied by the user, under
+[CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/). The adaptation
+uses TypeScript, local-market data, and solid fills instead of Pine gradients;
+missing samples leave gaps, with SMA windows requiring consecutive valid data.
+The original attribution and license are retained in `src/lib/tv/breadthToolkit.ts`.
+Run `npm run test:breadth` for formula, threshold, marker, and divergence checks.

@@ -188,10 +188,18 @@ class MarketBreadthResponse(BaseModel):
     advances: List[int] = Field(description="Daily advancing stocks count")
     declines: List[int] = Field(description="Daily declining stocks count")
     unchanged: List[int] = Field(description="Daily unchanged stocks count")
+    advancing_volume: List[Optional[float]] = Field(description="Volume of advancing stocks; null when directional volume is incomplete")
+    declining_volume: List[Optional[float]] = Field(description="Volume of declining stocks; null when directional volume is incomplete")
     rsi_period: int = Field(description="RSI lookback period used for the distribution")
     rsi_below_30: List[int] = Field(description="Daily count of stocks with RSI below 30")
     rsi_between_30_70: List[int] = Field(description="Daily count of stocks with RSI from 30 through 70")
     rsi_above_70: List[int] = Field(description="Daily count of stocks with RSI above 70")
+    new_highs: List[Optional[int]] = Field(description="Stocks touching 252-session highs; null without eligible history")
+    new_lows: List[Optional[int]] = Field(description="Stocks touching 252-session lows; null without eligible history")
+    net_new_highs: List[Optional[int]] = Field(description="New highs minus new lows (252-session lookback)")
+    pct_above_ma_20: List[Optional[float]] = Field(description="Percent of eligible stocks closing above SMA 20")
+    pct_above_ma_50: List[Optional[float]] = Field(description="Percent of eligible stocks closing above SMA 50")
+    pct_above_ma_200: List[Optional[float]] = Field(description="Percent of eligible stocks closing above SMA 200")
 
 
 class MarketBreadthRequest(BaseModel):

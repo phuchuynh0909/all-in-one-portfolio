@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Box, Typography, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import { Box, IconButton, Tooltip, Typography, ToggleButton, ToggleButtonGroup } from '@mui/material';
+import HelpOutlineIcon from '@mui/icons-material/HelpOutline';
 import { createTvWidget, LIBRARY_PATH } from '../../lib/tv';
 import type { EntityId, IChartingLibraryWidget, LanguageCode, ResolutionString } from '../../lib/tv';
+import { TOOLKIT_NAME, TOOLKIT_DEFAULTS, drawToolkitDivergences, toolkitSettings, toolkitInterpretation } from '../../lib/tv/breadthToolkit';
 import {
   BREADTH_STUDIES,
   MarketBreadthStore,
@@ -16,10 +18,7 @@ import { tvOverrides } from '../../lib/tv/theme';
 import { useColorMode } from '../../theme';
 import { Numeric, LoadingState, ErrorState } from '../ui';
 
-const CHART_HEIGHT = 800;
-const DEFAULT_RSI_PERIOD = 14;
-const MIN_RSI_PERIOD = 2;
-const MAX_RSI_PERIOD = 100;
+const CHART_HEIGHT = 950;
 const DAILY = '1D' as ResolutionString;
 
 export default function MarketBreadthChart() {
@@ -28,7 +27,7 @@ export default function MarketBreadthChart() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [view, setView] = useState<BreadthView>('mcclellan');
-  const [rsiPeriod, setRsiPeriod] = useState(DEFAULT_RSI_PERIOD);
+  const [toolkitConfig, setToolkitConfig] = useState(TOOLKIT_DEFAULTS);
   const { mode } = useColorMode();
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<IChartingLibraryWidget | null>(null);
@@ -42,7 +41,7 @@ export default function MarketBreadthChart() {
         setError(null);
         const dateRange = getDateRange(365 * 10);
         const [breadthResult, vnindexResult] = await Promise.all([
-          fetchMarketBreadth({ ...dateRange, rsi_period: rsiPeriod }),
+          fetchMarketBreadth(dateRange),
           fetchTimeseries('VNINDEX', {
             interval: '1d',
             ...dateRange,
@@ -63,7 +62,7 @@ export default function MarketBreadthChart() {
     return () => {
       cancelled = true;
     };
-  }, [rsiPeriod]);
+  }, []);
 
   const store = useMemo(
     () => data && vnindexData ? new MarketBreadthStore(data, vnindexData) : null,
@@ -73,27 +72,19 @@ export default function MarketBreadthChart() {
   useEffect(() => {
     if (!chartContainerRef.current || !store || loading) return;
     let disposed = false;
-    let rsiStudyId: EntityId | null = null;
-    const handleRsiConfigChange = (entityId: EntityId) => {
-      if (!rsiStudyId || entityId !== rsiStudyId) return;
+    let toolkitId: EntityId | null = null;
+    let divergenceIds: EntityId[] = [];
+    const updateDivergences = (id: EntityId) => {
+      if (disposed || id !== toolkitId || !widgetRef.current) return;
       try {
-        const input = widgetRef.current
-          ?.activeChart()
-          .getStudyById(entityId)
-          .getInputValues()
-          .find(({ id }) => String(id) === 'period');
-        const requestedPeriod = Number(input?.value);
-        if (!Number.isFinite(requestedPeriod)) return;
-        const nextPeriod = Math.min(
-          MAX_RSI_PERIOD,
-          Math.max(MIN_RSI_PERIOD, Math.round(requestedPeriod)),
-        );
-        if (nextPeriod !== rsiPeriod) setRsiPeriod(nextPeriod);
-      } catch {
-        // The study can disappear while a configuration event is in flight.
+        const chart = widgetRef.current.activeChart();
+        const study = chart.getStudyById(id);
+        setToolkitConfig(toolkitSettings(Object.fromEntries(study.getInputValues().map(({ id, value }) => [id, value]))));
+        divergenceIds = drawToolkitDivergences(chart, study, id, store, divergenceIds);
+      } catch (cause) {
+        console.warn('Could not draw breadth divergences:', cause);
       }
     };
-
     createTvWidget({
       container: chartContainerRef.current,
       datafeed: createMarketBreadthDatafeed(store),
@@ -117,22 +108,20 @@ export default function MarketBreadthChart() {
         return;
       }
       widgetRef.current = widget;
-      widget.subscribe('study_properties_changed', handleRsiConfigChange);
+      widget.subscribe('study_properties_changed', updateDivergences);
       widget.onChartReady(() => {
         if (disposed) return;
         const chart = widget.activeChart();
         void Promise.all([
           chart.createStudy(BREADTH_STUDIES.oscillator, false, true),
           chart.createStudy(studyForView(view), false, true),
-          chart.createStudy(
-            BREADTH_STUDIES.rsiDistribution,
-            false,
-            false,
-            { period: rsiPeriod },
-          ),
-        ]).then(([, , rsiEntityId]) => {
-          rsiStudyId = rsiEntityId;
+          chart.createStudy(BREADTH_STUDIES.netNewHighs, false, true),
+          chart.createStudy(BREADTH_STUDIES.aboveMovingAverages, false, true),
+          chart.createStudy(TOOLKIT_NAME, false, false),
+        ]).then(([, , , , id]) => {
           if (disposed) return;
+          toolkitId = id;
+          if (id) updateDivergences(id);
           const currentHeights = chart.getAllPanesHeight();
           if (currentHeights.length < 2) return;
           const totalHeight = currentHeights.reduce((sum, height) => sum + height, 0);
@@ -153,7 +142,7 @@ export default function MarketBreadthChart() {
     return () => {
       disposed = true;
       if (widgetRef.current) {
-        widgetRef.current.unsubscribe('study_properties_changed', handleRsiConfigChange);
+        widgetRef.current.unsubscribe('study_properties_changed', updateDivergences);
         try {
           widgetRef.current.remove();
         } catch {
@@ -162,7 +151,7 @@ export default function MarketBreadthChart() {
         widgetRef.current = null;
       }
     };
-  }, [loading, mode, rsiPeriod, store, view]);
+  }, [loading, mode, store, view]);
 
   const handleViewChange = (_: React.MouseEvent<HTMLElement>, newView: BreadthView | null) => {
     if (newView) setView(newView);
@@ -197,6 +186,7 @@ export default function MarketBreadthChart() {
   const readings = [
     { label: 'Advances', value: latestAdvances, decimals: 0, signed: false, color: 'market.long' },
     { label: 'Declines', value: latestDeclines, decimals: 0, signed: false, color: 'market.short' },
+    { label: 'Net New Highs', value: data?.net_new_highs[latestIdx], decimals: 0, signed: true, color: undefined },
     { label: 'McClellan Osc', value: latestOscillator, decimals: 1, signed: true, color: undefined },
     { label: 'Summation', value: latestSummation, decimals: 0, signed: true, color: undefined },
   ];
@@ -262,6 +252,32 @@ export default function MarketBreadthChart() {
       </Box>
 
       {/* Unified Chart with Panes */}
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+        Net New Highs = stocks at 252-session highs − stocks at 252-session lows.
+        Positive: more new highs; negative: more new lows. Stocks need 252 bars of history.
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+        Stocks Above MA: share closing above the 20 / 50 / 200-day simple moving average.
+        Each line includes only stocks with enough price history.
+      </Typography>
+      <Typography variant="caption" color="text.secondary" sx={{ display: 'block', mb: 1 }}>
+        Breadth Toolkit: choose among six methods in its Settings → Inputs. Uses the local stock universe;
+        divergence lines appear only after the pivot is confirmed.
+      </Typography>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, mb: 1 }}>
+        <Typography variant="caption" color="text.secondary">Toolkit: {toolkitConfig.method}</Typography>
+        <Tooltip
+          describeChild
+          title={<Typography variant="body2" sx={{ whiteSpace: 'pre-line' }}>{toolkitInterpretation(toolkitConfig)}</Typography>}
+          componentsProps={{ tooltip: { sx: { maxWidth: 420 } } }}
+          enterTouchDelay={0}
+          leaveTouchDelay={8000}
+        >
+          <IconButton size="small" aria-label={`Interpret ${toolkitConfig.method}`}>
+            <HelpOutlineIcon fontSize="small" />
+          </IconButton>
+        </Tooltip>
+      </Box>
       <Box
         ref={chartContainerRef}
         sx={{

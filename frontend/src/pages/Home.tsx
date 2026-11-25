@@ -139,12 +139,12 @@ export default function Home() {
         </StatRow>
       </Box>
 
-      {/* --- Breadth + holdings ------------------------------------------- */}
+      {/* --- Full-width breadth, followed by holdings ---------------------- */}
       <Box
         sx={{
           display: 'grid',
           gap: 2,
-          gridTemplateColumns: { xs: '1fr', lg: 'minmax(0, 2fr) minmax(0, 1fr)' },
+          gridTemplateColumns: 'minmax(0, 1fr)',
           mb: 2.5,
         }}
       >

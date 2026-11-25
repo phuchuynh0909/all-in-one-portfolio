@@ -400,6 +400,7 @@ export interface SectorRotation {
   timeframe: SectorRsTimeframe;
   dates: string[];
   rows: SectorRotationRow[];
+  unavailable?: { symbol: string; reason: string }[];
 }
 
 export interface SectorRotationRequest {
@@ -477,10 +478,18 @@ export interface MarketBreadthResponse {
   advances: number[];
   declines: number[];
   unchanged: number[];
+  advancing_volume: (number | null)[];
+  declining_volume: (number | null)[];
   rsi_period: number;
   rsi_below_30: number[];
   rsi_between_30_70: number[];
   rsi_above_70: number[];
+  new_highs: (number | null)[];
+  new_lows: (number | null)[];
+  net_new_highs: (number | null)[];
+  pct_above_ma_20: (number | null)[];
+  pct_above_ma_50: (number | null)[];
+  pct_above_ma_200: (number | null)[];
 }
 
 export interface MarketBreadthRequest {

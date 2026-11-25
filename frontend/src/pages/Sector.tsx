@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Box, FormControl, InputLabel, MenuItem, Select } from '@mui/material';
 
 import StockList from '../components/sector/StockList';
+import HealthStrengthChart from '../components/sector/HealthStrengthChart';
 import SectorRelativeStrengthHeatmap from '../components/sector/SectorRelativeStrengthHeatmap';
 import SectorDominanceTable from '../components/sector/SectorDominanceTable';
 import SectorRotationGraph from '../components/sector/SectorRotationGraph';
@@ -67,7 +68,7 @@ export default function Sector() {
         >
           <Panel
             title="Dominance"
-            subtitle="Sort any column · click a sector to list its constituents"
+            subtitle="Sort any column · click a sector to explore its symbols and strength"
           >
             <SectorDominanceTable
               level={sectorLevel}
@@ -91,6 +92,18 @@ export default function Sector() {
             )}
           </Panel>
         </Box>
+
+        {selected && (
+          <Panel title={`Health & price strength · ${selected.name}`} subtitle="Financial-quality peer score vs weighted price-strength rank">
+            <HealthStrengthChart key={`${sectorLevel}:${selected.id}`} level={sectorLevel} sectorId={selected.id} />
+          </Panel>
+        )}
+
+        {selected && (
+          <Panel title={`Symbol rotation · ${selected.name}`} subtitle="RS-ratio vs RS-momentum · 100 is VNINDEX · tails show direction">
+            <SectorRotationGraph key={`${sectorLevel}:${selected.id}`} level={sectorLevel} sectorId={selected.id} />
+          </Panel>
+        )}
 
         <Panel
           title="Rotation"

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Box, FormControl, InputLabel, MenuItem, Select, Stack, Typography } from '@mui/material';
+import { Alert, Box, FormControl, InputLabel, MenuItem, Select, Stack, Typography } from '@mui/material';
 import { alpha } from '@mui/material/styles';
 
 import {
@@ -10,6 +10,7 @@ import {
 } from '../../lib/services/timeseries';
 import { fontFamily, useChartTheme } from '../../theme';
 import { QueryState } from '../ui';
+import { fetchSectorSymbolStrength } from '../../lib/services/sectorStrength';
 
 /** Bars of tail per sector — how far back the trail runs. */
 const TAIL_OPTIONS = [4, 8, 13, 26];
@@ -72,9 +73,11 @@ const headOf = (row: SectorRotationRow): Point | null => {
  */
 export default function SectorRotationGraph({
   level,
+  sectorId,
   timeframe = 'daily',
 }: {
   level: number;
+  sectorId?: number;
   timeframe?: SectorRsTimeframe;
 }) {
   const ct = useChartTheme();
@@ -83,7 +86,8 @@ export default function SectorRotationGraph({
   const [error, setError] = useState<unknown>(null);
   const [reloadKey, setReloadKey] = useState(0);
   const [tail, setTail] = useState<number>(DEFAULT_TAIL);
-  const [plotCount, setPlotCount] = useState<number>(DEFAULT_PLOT);
+  const [plotCount, setPlotCount] = useState<number>(sectorId == null ? DEFAULT_PLOT : 0);
+  const [window, setWindow] = useState(timeframe === 'weekly' ? 10 : 50);
   const [hovered, setHovered] = useState<number | null>(null);
 
   useEffect(() => {
@@ -93,8 +97,10 @@ export default function SectorRotationGraph({
       try {
         setLoading(true);
         setError(null);
-        const result = await fetchSectorRotation(level, { tail, timeframe });
-        if (!cancelled) setData(result);
+        const result = sectorId == null
+          ? await fetchSectorRotation(level, { tail, timeframe })
+          : await fetchSectorSymbolStrength(level, sectorId, { tail, timeframe, window });
+        if (!cancelled) { setData(result); setHovered(null); }
       } catch (e) {
         if (!cancelled) setError(e);
       } finally {
@@ -106,7 +112,7 @@ export default function SectorRotationGraph({
     return () => {
       cancelled = true;
     };
-  }, [level, tail, timeframe, reloadKey]);
+  }, [level, sectorId, tail, timeframe, window, reloadKey]);
 
   /**
    * The server orders leading → improving → weakening → lagging, then boldest
@@ -175,7 +181,7 @@ export default function SectorRotationGraph({
         );
       }
     }
-    const shown = plotCount > 0 ? `top ${plotted.length}` : `${plotted.length} sectors`;
+    const shown = plotCount > 0 ? `top ${plotted.length}` : `${plotted.length} ${sectorId == null ? 'sectors' : 'symbols'}`;
     return `${shown} of ${data.rows.length}  ·  ${data.dates.length}-bar tail to ${data.dates[data.dates.length - 1]}  ·  vs ${data.benchmark} (ratio ${data.window}, momentum ${data.momentum_window})`;
   })();
 
@@ -183,8 +189,8 @@ export default function SectorRotationGraph({
     <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1.5 }}>
       <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
         <FormControl size="small" sx={{ minWidth: 120 }}>
-          <InputLabel>Sectors</InputLabel>
-          <Select value={plotCount} label="Sectors" onChange={(e) => setPlotCount(Number(e.target.value))}>
+          <InputLabel>{sectorId == null ? 'Sectors' : 'Symbols'}</InputLabel>
+          <Select value={plotCount} label={sectorId == null ? 'Sectors' : 'Symbols'} onChange={(e) => setPlotCount(Number(e.target.value))}>
             {PLOT_OPTIONS.map((n) => (
               <MenuItem key={n} value={n}>
                 {n === 0 ? 'All' : `Top ${n}`}
@@ -212,6 +218,23 @@ export default function SectorRotationGraph({
         </FormControl>
       </Stack>
 
+      {sectorId != null && (
+        <FormControl size="small" sx={{ width: 160 }}>
+          <InputLabel>RS window</InputLabel>
+          <Select value={window} label="RS window" onChange={(e) => setWindow(Number(e.target.value))}>
+            {(timeframe === 'weekly' ? [4, 10, 20, 40] : [20, 50, 100, 200]).map((value) => <MenuItem key={value} value={value}>{value} bars</MenuItem>)}
+          </Select>
+        </FormControl>
+      )}
+
+      {!loading && !error && !!data?.unavailable?.length && (
+        <Alert severity="warning">
+          <details><summary>{data.unavailable.length} symbols unavailable</summary>
+            {data.unavailable.map((row) => <div key={row.symbol}>{row.symbol}: {row.reason}</div>)}
+          </details>
+        </Alert>
+      )}
+
       <QueryState
         isLoading={loading}
         error={error}
@@ -219,7 +242,7 @@ export default function SectorRotationGraph({
         onRetry={() => setReloadKey((k) => k + 1)}
         loadingLabel="Computing rotation"
         emptyTitle="No rotation data"
-        emptyDescription={`No sector series at level ${level} to plot.`}
+        emptyDescription={sectorId == null ? `No sector series at level ${level} to plot.` : 'No symbols have recent prices and enough history for these windows.'}
       >
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }}>
           <Typography
@@ -244,6 +267,7 @@ export default function SectorRotationGraph({
           <Box
             component="svg"
             viewBox={`0 0 ${W} ${H}`}
+            aria-label={sectorId == null ? 'Sector relative rotation graph' : 'Symbol relative rotation graph'}
             // A rotation graph has to stay roughly square — both axes are
             // "distance from 100", so a stretched aspect misreads the angle of
             // travel. It takes the width it needs and the legend uses the rest.
@@ -301,6 +325,10 @@ export default function SectorRotationGraph({
                   key={row.id}
                   opacity={dim ? 0.22 : 1}
                   onMouseEnter={() => setHovered(row.id)}
+                  onFocus={() => setHovered(row.id)}
+                  onBlur={() => setHovered(null)}
+                  tabIndex={0}
+                  aria-label={`${row.name}: RS-ratio ${head.x.toFixed(2)}, RS-momentum ${head.y.toFixed(2)}`}
                   style={{ cursor: 'crosshair' }}
                 >
                   <polyline
