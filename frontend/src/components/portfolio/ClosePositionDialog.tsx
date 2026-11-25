@@ -18,6 +18,7 @@ import {
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
+import { formatLocalDate } from '../../lib/format';
 import { closePosition } from '../../lib/services/portfolio';
 import type { ClosePositionRequest, ClosePositionResponse } from '../../lib/services/portfolio';
 type Position = {
@@ -25,7 +26,8 @@ type Position = {
   ticker: string;
   quantity: number;
   purchase_price: number;
-  current_price: number;
+  current_price: number | null;
+  current_price_date?: string | null;
   purchase_date: string;
   notes?: string;
   created_at: string;
@@ -49,7 +51,6 @@ export default function ClosePositionDialog({
   const [closingDate, setClosingDate] = useState<Date>(new Date());
   const [fees, setFees] = useState<number>(0);
   const [notes, setNotes] = useState<string>('');
-  const [overridePrice, setOverridePrice] = useState<boolean>(false);
   const [confirmed, setConfirmed] = useState<boolean>(false);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string>('');
@@ -58,11 +59,10 @@ export default function ClosePositionDialog({
   useEffect(() => {
     if (position && open) {
       setQuantityToClose(position.quantity);
-      setClosingPrice(position.current_price);
+      setClosingPrice(0);
       setClosingDate(new Date());
       setFees(0);
       setNotes('');
-      setOverridePrice(false);
       setConfirmed(false);
       setError('');
     }
@@ -110,7 +110,7 @@ export default function ClosePositionDialog({
         position_id: position.id,
         quantity_to_close: quantityToClose,
         closing_price: closingPrice,
-        closing_date: closingDate.toISOString().split('T')[0], // YYYY-MM-DD format
+        closing_date: formatLocalDate(closingDate),
         fees: fees || 0,
         notes: notes || undefined,
       };
@@ -175,7 +175,7 @@ export default function ClosePositionDialog({
                 </Grid>
                 <Grid item xs={6}>
                   <Typography variant="body2">
-                    <strong>Current Price:</strong> {formatCurrency(position.current_price)}
+                    <strong>Last Close:</strong> {position.current_price == null ? 'Unavailable' : `${formatCurrency(position.current_price)} (${position.current_price_date ?? 'date unavailable'})`}
                   </Typography>
                 </Grid>
               </Grid>
@@ -214,25 +214,9 @@ export default function ClosePositionDialog({
               </Grid>
 
               <Grid item xs={12}>
-                <Box sx={{ mb: 2 }}>
-                  <Typography variant="body2" gutterBottom>
-                    Current Closing Price: {formatCurrency(position.current_price)}
-                  </Typography>
-                  <FormControlLabel
-                    control={
-                      <Checkbox
-                        checked={overridePrice}
-                        onChange={(e) => setOverridePrice(e.target.checked)}
-                      />
-                    }
-                    label="Override Closing Price"
-                  />
-                </Box>
-                
-                {overridePrice && (
                   <TextField
                     fullWidth
-                    label="Manual Closing Price"
+                    label="Actual Sale Price"
                     type="number"
                     value={Math.round(closingPrice * 100) / 100}
                     onChange={(e) => setClosingPrice(Math.round(Number(e.target.value) * 100) / 100)}
@@ -240,9 +224,8 @@ export default function ClosePositionDialog({
                       min: 0.01,
                       step: 0.01,
                     }}
-                    helperText="Enter a manual closing price to override the current price"
+                    helperText="Enter the actual price from your sale."
                   />
-                )}
               </Grid>
 
               <Grid item xs={12} sm={6}>
@@ -351,7 +334,7 @@ export default function ClosePositionDialog({
           <Button
             onClick={handleSubmit}
             variant="contained"
-            disabled={loading || !confirmed}
+            disabled={loading || !confirmed || closingPrice <= 0}
             color={pl >= 0 ? 'success' : 'error'}
           >
             {loading ? 'Closing...' : 'Close Position'}

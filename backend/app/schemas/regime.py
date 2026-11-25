@@ -1,3 +1,4 @@
+from datetime import date
 from typing import List, Optional
 from pydantic import BaseModel
 
@@ -38,5 +39,5 @@ class RegimeResponse(BaseModel):
 
 
 class RegimeRequest(BaseModel):
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
+    start_date: Optional[date] = None
+    end_date: Optional[date] = None

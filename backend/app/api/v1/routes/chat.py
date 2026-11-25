@@ -259,7 +259,7 @@ def save_chat_note(request: SaveChatNoteRequest) -> dict:
         return {"status": "ok"}
     except Exception as exc:
         logger.exception("Failed to save chat note")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Failed to save chat note") from exc
     finally:
         client.close()
 
@@ -291,7 +291,7 @@ def list_chat_notes(symbol: str = Query(..., min_length=1, max_length=32), limit
         return ChatNotesResponse(notes=notes)
     except Exception as exc:
         logger.exception("Failed to list chat notes")
-        raise HTTPException(status_code=500, detail=str(exc))
+        raise HTTPException(status_code=500, detail="Failed to list chat notes") from exc
     finally:
         client.close()
 

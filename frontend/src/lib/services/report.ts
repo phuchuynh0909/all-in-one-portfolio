@@ -153,6 +153,17 @@ export interface RagStatus {
 }
 
 export type PdfParser = 'marker' | 'llamaparse' | 'docling' | 'pymupdf4llm';
+export const RAG_IN_PROGRESS = ['PENDING', 'PARSING', 'PARSED', 'SUMMARIZING', 'EMBEDDING'];
+
+const pendingSubmissionKeys = new Map<string, string>();
+
+function newSubmissionKey(): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(16));
+  bytes[6] = (bytes[6] & 0x0f) | 0x40;
+  bytes[8] = (bytes[8] & 0x3f) | 0x80;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
 
 /** Trigger the RAG pipeline for a report (runs as a background job). */
 export const triggerReportRag = async (
@@ -162,14 +173,27 @@ export const triggerReportRag = async (
 ): Promise<RagStatus> => {
   const params = new URLSearchParams({ recreate: String(recreate) });
   if (parser) params.set('parser', parser);
+  const storageKey = `rag-submission:${reportId}:${recreate}:${parser ?? ''}`;
+  let key: string;
+  try {
+    key = sessionStorage.getItem(storageKey) || pendingSubmissionKeys.get(storageKey) || newSubmissionKey();
+    pendingSubmissionKeys.set(storageKey, key);
+    sessionStorage.setItem(storageKey, key);
+  } catch {
+    key = pendingSubmissionKeys.get(storageKey) || newSubmissionKey();
+    pendingSubmissionKeys.set(storageKey, key);
+  }
   const response = await fetch(
     `${API_BASE_URL}/report/${reportId}/rag?${params.toString()}`,
-    { method: 'POST' },
+    { method: 'POST', headers: { 'Idempotency-Key': key } },
   );
   if (!response.ok) {
     throw new Error('Failed to queue RAG pipeline');
   }
-  return response.json();
+  const result: RagStatus = await response.json();
+  pendingSubmissionKeys.delete(storageKey);
+  try { sessionStorage.removeItem(storageKey); } catch { /* Storage may be unavailable. */ }
+  return result;
 };
 
 /** Bulk RAG status for all tracked reports (keyed by report id). */

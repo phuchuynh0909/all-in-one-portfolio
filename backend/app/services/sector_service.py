@@ -5,7 +5,7 @@ from sqlalchemy import text
 
 from app.db.models.market import Sector, StockSymbol
 from app.services.sector_lists import SECTOR_LEVEL_5, level5_constituents
-from app.schemas.sector import StockSymbolCreate, SectorSummary
+from app.schemas.sector import SectorBase, StockSymbolCreate, SectorSummary
 
 
 def get_sectors(db: Session, level: int) -> List[Sector]:
@@ -135,13 +135,15 @@ def upsert_sector_from_file(db: Session, file_path: str, level: int) -> int:
         }
 
         upserted = 0
-        for entry in payload:
+        for index, entry in enumerate(payload, start=1):
             if not isinstance(entry, dict):
-                continue
+                raise ValueError(f"Sector entry {index} must be an object")
 
             sector_id = entry.get("id")
             metric_type = entry.get("type")
-            data_list = entry.get("data", []) or []
+            data_list = entry.get("data", [])
+            if not isinstance(data_list, list):
+                raise ValueError(f"Sector entry {index} data must be an array")
 
             flat = {
                 "id": sector_id,
@@ -150,25 +152,28 @@ def upsert_sector_from_file(db: Session, file_path: str, level: int) -> int:
             }
 
             for item in data_list:
-                try:
-                    k = item.get("key")
-                    v = item.get("value")
-                    if k in allowed_columns:
-                        flat[k] = v
-                    if k == "name":
-                        flat["name"] = v
-                except Exception:
-                    continue
+                if not isinstance(item, dict) or not isinstance(item.get("key"), str) or "value" not in item:
+                    raise ValueError(f"Sector entry {index} contains an invalid metric")
+                k = item["key"]
+                if k in allowed_columns and k not in {"id", "level"}:
+                    flat[k] = item["value"]
 
             filtered = {k: v for k, v in flat.items() if k in allowed_columns}
             if "id" not in filtered or filtered["id"] is None:
-                continue
+                raise ValueError(f"Sector entry {index} requires an id")
 
-            sector = SectorCreate(**filtered)
-            upsert_sector(db, sector)
+            values = SectorBase(**filtered).model_dump(exclude_unset=True)
+            sector = db.get(Sector, (values["id"], level))
+            if sector is None:
+                db.add(Sector(**values))
+            else:
+                for key, value in values.items():
+                    setattr(sector, key, value)
+            db.flush()
             upserted += 1
 
+        db.commit()
         return upserted
-    except Exception as err:
-        print(f"Error upserting sector: {err}")
-        return 0
+    except Exception:
+        db.rollback()
+        raise

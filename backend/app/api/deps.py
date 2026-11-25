@@ -12,6 +12,7 @@ from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.core.security import TokenError, decode_access_token
+from app.core.settings import settings
 from app.db.base import get_db
 from app.db.models.user import User
 
@@ -20,13 +21,13 @@ from app.db.models.user import User
 # app-level dependencies never touch.
 EXEMPT_PATHS = frozenset(
     {
-        "/api/v1/health",
-        "/api/v1/auth/login",
+        "/health",
+        "/auth/login",
         # TCBS redirects the browser here after its own login and iOTP prompt,
         # with no Authorization header to carry. The route is safe to leave open
         # because it completes nothing without the unguessable ``state`` the
         # authorize call minted and kept server-side.
-        "/api/v1/trading-agents/tcbs/callback",
+        "/trading-agents/tcbs/callback",
     }
 )
 
@@ -50,7 +51,7 @@ def require_user(
     db: Session = Depends(get_db),
 ) -> User | None:
     """Resolve the caller, or raise 401. Returns ``None`` on exempt paths."""
-    if request.url.path.rstrip("/") in EXEMPT_PATHS:
+    if request.url.path.rstrip("/") in {f"{settings.api_v1_prefix.rstrip('/')}{path}" for path in EXEMPT_PATHS}:
         return None
 
     if credentials is None or not credentials.credentials:

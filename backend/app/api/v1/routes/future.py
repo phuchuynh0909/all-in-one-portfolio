@@ -76,7 +76,7 @@ _VALID_TIMEFRAMES: dict[str, str | None] = {
 
 
 @router.get("/ohlc-5m/{symbol}")
-async def get_ohlc_5m(
+def get_ohlc_5m(
     symbol: str,
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
@@ -103,13 +103,11 @@ async def get_ohlc_5m(
 
     start_clause = ""
     end_clause = ""
-    if start_date:
-        start_clause = f"AND ts >= toDateTime('{start_date}', 'Asia/Ho_Chi_Minh')"
-    else:
-        default_start = (datetime.now() - timedelta(days=360)).strftime("%Y-%m-%d")
-        start_clause = f"AND ts >= toDateTime('{default_start}', 'Asia/Ho_Chi_Minh')"
+    params = {"symbol": symbol, "start": start_date or (datetime.now() - timedelta(days=360)).strftime("%Y-%m-%d")}
+    start_clause = "AND ts >= toDateTime({start:String}, 'Asia/Ho_Chi_Minh')"
     if end_date:
-        end_clause = f"AND ts <= toDateTime('{end_date}', 'Asia/Ho_Chi_Minh')"
+        end_clause = "AND ts <= toDateTime({end:String}, 'Asia/Ho_Chi_Minh')"
+        params["end"] = end_date
 
     interval = _VALID_TIMEFRAMES[timeframe]
 
@@ -119,7 +117,7 @@ async def get_ohlc_5m(
                 formatDateTime(ts, '%Y-%m-%dT%H:%i:%S', 'Asia/Ho_Chi_Minh') AS timestamp,
                 open, high, low, close, volume, buy_volume, sell_volume
             FROM default.ohlc_5m_live
-            WHERE symbol = '{symbol}'
+            WHERE symbol = {{symbol:String}}
               {start_clause}
               {end_clause}
             ORDER BY ts ASC
@@ -139,14 +137,14 @@ async def get_ohlc_5m(
                 sum(buy_volume)   AS buy_volume,
                 sum(sell_volume)  AS sell_volume
             FROM default.ohlc_5m_live
-            WHERE symbol = '{symbol}'
+            WHERE symbol = {{symbol:String}}
               {start_clause}
               {end_clause}
             GROUP BY toStartOfInterval(ts, INTERVAL {interval}, 'Asia/Ho_Chi_Minh')
             ORDER BY timestamp ASC
         """
 
-    result = ch.query(query)
+    result = ch.query(query, parameters=params)
     rows = result.result_rows
 
     if not rows:
@@ -487,7 +485,7 @@ def _run_rl_inference(
 
 
 @router.get("/rl-exits/{symbol}")
-async def get_rl_exits(
+def get_rl_exits(
     symbol: str,
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
@@ -507,25 +505,23 @@ async def get_rl_exits(
 
     start_clause = ""
     end_clause   = ""
-    if start_date:
-        start_clause = f"AND ts >= toDateTime('{start_date}', 'Asia/Ho_Chi_Minh')"
-    else:
-        default_start = (datetime.now() - timedelta(days=360)).strftime("%Y-%m-%d")
-        start_clause  = f"AND ts >= toDateTime('{default_start}', 'Asia/Ho_Chi_Minh')"
+    params = {"symbol": symbol, "start": start_date or (datetime.now() - timedelta(days=360)).strftime("%Y-%m-%d")}
+    start_clause = "AND ts >= toDateTime({start:String}, 'Asia/Ho_Chi_Minh')"
     if end_date:
-        end_clause = f"AND ts <= toDateTime('{end_date}', 'Asia/Ho_Chi_Minh')"
+        end_clause = "AND ts <= toDateTime({end:String}, 'Asia/Ho_Chi_Minh')"
+        params["end"] = end_date
 
     query = f"""
         SELECT
             formatDateTime(ts, '%Y-%m-%dT%H:%i:%S', 'Asia/Ho_Chi_Minh') AS timestamp,
             open, high, low, close, volume, buy_volume, sell_volume
         FROM default.ohlc_5m_live
-        WHERE symbol = '{symbol}'
+        WHERE symbol = {{symbol:String}}
           {start_clause}
           {end_clause}
         ORDER BY ts ASC
     """
-    rows = ch.query(query).result_rows
+    rows = ch.query(query, parameters=params).result_rows
     if not rows:
         return {"symbol": symbol, "trades": []}
 

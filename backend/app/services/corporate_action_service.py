@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, List, Optional
+from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
@@ -110,9 +111,11 @@ def sync_symbol(db: Session, symbol: str, *, session: Optional[Any] = None) -> d
 
 
 def sync_all(db: Session, *, session: Optional[Any] = None) -> dict:
-    """Sync every held symbol, summing the per-symbol counts."""
+    """Sync open and previously sold symbols, summing the per-symbol counts."""
     totals = {"inserted": 0, "skipped": 0, "unparsed": 0, "ignored": 0}
-    for symbol in held_symbols(db):
+    sold = db.execute(select(func.distinct(Transaction.ticker)).where(Transaction.transaction_type == "sell")).scalars()
+    symbols = set(held_symbols(db)) | {ticker.strip().upper() for ticker in sold if ticker and ticker.strip()}
+    for symbol in sorted(symbols):
         for key, value in sync_symbol(db, symbol, session=session).items():
             totals[key] += value
     return totals
@@ -205,7 +208,19 @@ def _load(db: Session, corporate_action_id: int) -> CorporateAction:
     return action
 
 
-def _ex_date_group(db: Session, action: CorporateAction) -> List[CorporateAction]:
+def _lock_symbol_actions(db: Session, corporate_action_id: int) -> tuple[CorporateAction, List[CorporateAction]]:
+    action = _load(db, corporate_action_id)
+    rows = list(db.execute(
+        select(CorporateAction)
+        .where(CorporateAction.symbol == action.symbol)
+        .order_by(CorporateAction.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    ).scalars().all())
+    return next(row for row in rows if row.id == corporate_action_id), rows
+
+
+def _ex_date_group(actions: List[CorporateAction], action: CorporateAction) -> List[CorporateAction]:
     """Every pending action sharing this one's symbol and ex-date.
 
     The group, not the single event, is the unit of application: rule 2 requires
@@ -215,18 +230,10 @@ def _ex_date_group(db: Session, action: CorporateAction) -> List[CorporateAction
     ``unparsed`` siblings are left out — they carry no amount to settle — and
     stay pending for manual entry rather than failing the whole group.
     """
-    return list(db.execute(
-        select(CorporateAction)
-        .where(
-            CorporateAction.symbol == action.symbol,
-            CorporateAction.ex_date == action.ex_date,
-            CorporateAction.status == "pending",
-        )
-        .order_by(CorporateAction.id)
-    ).scalars().all())
+    return [row for row in actions if row.ex_date == action.ex_date and row.status == "pending"]
 
 
-def _assert_ex_date_order(db: Session, action: CorporateAction) -> None:
+def _assert_ex_date_order(actions: List[CorporateAction], action: CorporateAction) -> None:
     """Refuse to apply an event out of ex-date order (spec rule 5).
 
     ``apply_action`` hands the engine a single ex-date group, so the engine's
@@ -244,15 +251,7 @@ def _assert_ex_date_order(db: Session, action: CorporateAction) -> None:
     Neither message may contain "not found": the HTTP layer maps that substring
     to 404, and an ordering violation must surface as 409.
     """
-    earlier_pending = db.execute(
-        select(CorporateAction)
-        .where(
-            CorporateAction.symbol == action.symbol,
-            CorporateAction.status == "pending",
-            CorporateAction.ex_date < action.ex_date,
-        )
-        .order_by(CorporateAction.ex_date, CorporateAction.id)
-    ).scalars().first()
+    earlier_pending = next((row for row in actions if row.status == "pending" and row.ex_date is not None and row.ex_date < action.ex_date), None)
     if earlier_pending is not None:
         raise ValueError(
             f"Corporate action {action.id} ({action.symbol}, ex-date "
@@ -262,15 +261,7 @@ def _assert_ex_date_order(db: Session, action: CorporateAction) -> None:
             "strictly ascending by ex-date."
         )
 
-    later_applied = db.execute(
-        select(CorporateAction)
-        .where(
-            CorporateAction.symbol == action.symbol,
-            CorporateAction.status == "applied",
-            CorporateAction.ex_date >= action.ex_date,
-        )
-        .order_by(CorporateAction.ex_date.desc(), CorporateAction.id.desc())
-    ).scalars().first()
+    later_applied = next((row for row in actions if row.status == "applied" and row.ex_date is not None and row.ex_date >= action.ex_date), None)
     if later_applied is not None:
         raise ValueError(
             f"Corporate action {action.id} ({action.symbol}, ex-date "
@@ -302,7 +293,7 @@ def apply_action(db: Session, corporate_action_id: int) -> ApplyResult:
     An event with no eligible lot is still marked applied. It genuinely has
     nothing to do, and leaving it pending would mean reviewing it forever.
     """
-    action = _load(db, corporate_action_id)
+    action, symbol_actions = _lock_symbol_actions(db, corporate_action_id)
     if action.status == "applied":
         raise ValueError(f"Corporate action {corporate_action_id} is already applied")
     if action.status == "unparsed":
@@ -312,10 +303,12 @@ def apply_action(db: Session, corporate_action_id: int) -> ApplyResult:
         )
     if action.status == "ignored":
         raise ValueError(f"Corporate action {corporate_action_id} is ignored")
-    _assert_ex_date_order(db, action)
+    if action.ex_date > datetime.now(ZoneInfo("Asia/Ho_Chi_Minh")).date():
+        raise ValueError("Corporate action cannot be applied before its ex-date")
+    _assert_ex_date_order(symbol_actions, action)
 
     try:
-        group = _ex_date_group(db, action)
+        group = _ex_date_group(symbol_actions, action)
         events = [_as_event(a) for a in group]
         by_id = {a.id: a for a in group}
 
@@ -325,6 +318,15 @@ def apply_action(db: Session, corporate_action_id: int) -> ApplyResult:
             .with_for_update()
             .all()
         )
+
+        # shortcut: sales lack lot identifiers, reject ambiguous history until lot-level history is recorded.
+        later_sale = db.query(Transaction.id).filter(
+            func.upper(Transaction.ticker) == action.symbol.upper(),
+            Transaction.transaction_type == "sell",
+            Transaction.transaction_date >= action.ex_date,
+        ).with_for_update().first()
+        if later_sale:
+            raise ValueError("Cannot apply this action: a sale on or after its ex-date makes the historical holding uncertain")
 
         applied: List[AppliedLot] = []
         for position in lots:
@@ -427,15 +429,21 @@ def unapply_action(db: Session, corporate_action_id: int) -> ApplyResult:
     than recomputing an inverse — dividing by ``1+ratio`` would not land back on
     the original after truncation.
     """
-    action = _load(db, corporate_action_id)
+    action, symbol_actions = _lock_symbol_actions(db, corporate_action_id)
     if action.status != "applied":
         raise ValueError(f"Corporate action {corporate_action_id} is not applied")
 
     try:
+        group = [action]
+        if action.action_type == "stock":
+            later = next((row for row in symbol_actions if row.status == "applied" and row.ex_date is not None and row.ex_date > action.ex_date), None)
+            if later is not None:
+                raise ValueError(f"Reverse later applied event {later.id} before reversing event {action.id}")
+            group = [row for row in symbol_actions if row.ex_date == action.ex_date and row.action_type == "stock" and row.status == "applied"]
         records = list(db.execute(
             select(CorporateActionApplication).where(
-                CorporateActionApplication.corporate_action_id == action.id
-            )
+                CorporateActionApplication.corporate_action_id.in_([member.id for member in group])
+            ).with_for_update().execution_options(populate_existing=True)
         ).scalars().all())
 
         # ``close_position`` reduces ``positions.quantity`` without touching this
@@ -449,29 +457,33 @@ def unapply_action(db: Session, corporate_action_id: int) -> ApplyResult:
         # those can invent shares. A cash record writes nothing to the position,
         # and its lot legitimately differs from ``qty_after`` whenever a
         # same-ex-date bonus is still applied (PAN: 79,488 vs 66,240).
-        for record in records:
+        positions = {}
+        for record in sorted(records, key=lambda row: row.position_id or 0):
             if record.position_id is None or not _moved_the_lot(record):
                 continue
-            position = db.get(Position, record.position_id)
-            if position is not None and position.quantity != record.qty_after:
+            position = (
+                db.query(Position)
+                .filter(Position.id == record.position_id)
+                .populate_existing()
+                .with_for_update()
+                .first()
+            )
+            positions[record.position_id] = position
+            if position is None:
+                raise ValueError(f"Lot {record.position_id} no longer exists; reverse its closure before reversing event {action.id}")
+            if position.quantity != record.qty_after or position.purchase_price != record.price_after:
                 raise ValueError(
                     f"Corporate action {corporate_action_id} cannot be unapplied: "
-                    f"lot {record.position_id} now holds {position.quantity} "
-                    f"shares but the action left it at {record.qty_after}. The "
-                    "lot changed after the action was applied (a sale, or a "
-                    "later event), so restoring its earlier quantity would "
-                    "invent shares. Reverse the later change first."
+                    f"lot {record.position_id} now holds {position.quantity} shares "
+                    f"at {position.purchase_price}, but the action left it at "
+                    f"{record.qty_after} shares at {record.price_after}. Reverse the later change first."
                 )
 
         reverted: List[AppliedLot] = []
+        restored_positions = set()
         for record in records:
             if _moved_the_lot(record) and record.position_id is not None:
-                position = (
-                    db.query(Position)
-                    .filter(Position.id == record.position_id)
-                    .with_for_update()
-                    .first()
-                )
+                position = positions[record.position_id]
                 if position is not None:
                     position.quantity = record.qty_before
                     position.purchase_price = record.price_before
@@ -481,18 +493,23 @@ def unapply_action(db: Session, corporate_action_id: int) -> ApplyResult:
                 if transaction is not None:
                     db.delete(transaction)
 
+            delta = Decimal(0)
+            if record.position_id is not None and record.position_id not in restored_positions:
+                delta = record.qty_before - record.qty_after
+                restored_positions.add(record.position_id)
             reverted.append(AppliedLot(
                 position_id=record.position_id,
                 qty_before=record.qty_after, qty_after=record.qty_before,
                 price_before=record.price_after, price_after=record.price_before,
-                shares_added=record.qty_before - record.qty_after,
+                shares_added=delta,
                 cash_amount=record.cash_amount,
                 transaction_id=record.transaction_id,
             ))
             db.delete(record)
 
-        action.status = "pending"
-        action.applied_at = None
+        for member in group:
+            member.status = "pending"
+            member.applied_at = None
         db.commit()
     except Exception:
         db.rollback()
@@ -500,16 +517,17 @@ def unapply_action(db: Session, corporate_action_id: int) -> ApplyResult:
 
     return ApplyResult(
         corporate_action_id=action.id,
+        unapplied_action_ids=[member.id for member in group],
         status="pending",
         lots=reverted,
-        total_shares_added=Decimal(0),
+        total_shares_added=sum((lot.shares_added for lot in reverted), Decimal(0)),
         total_cash_gross=Decimal(0),
     )
 
 
 def ignore_action(db: Session, corporate_action_id: int) -> CorporateAction:
     """Mark an event as deliberately not applicable. Touches no lot."""
-    action = _load(db, corporate_action_id)
+    action, _ = _lock_symbol_actions(db, corporate_action_id)
     if action.status == "applied":
         raise ValueError(
             f"Corporate action {corporate_action_id} is applied; unapply it first"

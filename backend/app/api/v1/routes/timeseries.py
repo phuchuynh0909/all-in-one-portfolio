@@ -1,5 +1,4 @@
 from fastapi import APIRouter, Depends
-from fastapi_cache.decorator import cache
 from sqlalchemy.orm import Session
 from app.schemas.timeseries import (
     TimeseriesResponse,
@@ -38,7 +37,6 @@ from app.db.base import get_db
 router = APIRouter(prefix="/timeseries", tags=["timeseries"])
 
 @router.post("/{symbol}", response_model=TimeseriesResponse)
-@cache(expire=300)  # Cache for 5 minutes
 async def get_symbol_timeseries(
     symbol: str,
     request: TimeseriesRequest
@@ -56,7 +54,6 @@ async def get_symbol_timeseries(
 
 
 @router.post("/{symbol}/bars", response_model=BarsResponse)
-@cache(expire=300)  # Cache for 5 minutes
 async def get_symbol_bars(
     symbol: str,
     request: BarsRequest
@@ -79,7 +76,6 @@ async def get_symbol_bars(
 
 
 @router.post("/{symbol}/indicators", response_model=IndicatorsOnlyResponse)
-@cache(expire=300)  # Cache for 5 minutes
 async def get_symbol_indicators(
     symbol: str,
     request: IndicatorsRequest
@@ -109,8 +105,6 @@ async def sector_timeseries(
     )
 
 
-# Not @cache'd: fastapi-cache keys on the arguments, and the `db` session's repr
-# carries an object id, so every request would miss and grow the cache instead.
 @router.post("/sector/{sector_level}/relative-strength", response_model=SectorRelativeStrength)
 async def sector_relative_strength(
     sector_level: str,
@@ -203,7 +197,6 @@ async def sector_constituents(
 
 
 @router.post("/market/breadth", response_model=MarketBreadthResponse)
-@cache(expire=300)  # Cache for 5 minutes
 async def market_breadth(
     request: MarketBreadthRequest
 ) -> MarketBreadthResponse:

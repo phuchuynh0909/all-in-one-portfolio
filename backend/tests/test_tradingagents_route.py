@@ -57,6 +57,16 @@ def test_over_the_cap_is_a_429(client, monkeypatch):
     assert "already running" in response.json()["detail"]
 
 
+def test_conflicting_analysis_is_a_409(client, monkeypatch):
+    def refuse(*args, **kwargs):
+        raise jobs.ConflictingRun("different settings")
+
+    monkeypatch.setattr(jobs, "start", refuse)
+    response = client.post(URL, json=BODY)
+    assert response.status_code == 409
+    assert "different settings" in response.json()["detail"]
+
+
 def test_the_stream_carries_the_job_events(client, monkeypatch):
     job = jobs.Job(symbol="VCG", trade_date="2026-08-27")
     monkeypatch.setattr(jobs, "start", lambda *a, **k: job)

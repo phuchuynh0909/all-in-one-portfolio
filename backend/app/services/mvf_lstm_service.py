@@ -28,6 +28,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import fcntl
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Generator, Iterator
@@ -303,18 +306,25 @@ def _train_cached(sym: str, feat: np.ndarray, tgt: np.ndarray, req: MvfRequest,
     """
     stamp = cutoff.strftime("%Y%m%d")
     path = _CACHE_DIR / f"mvf_{sym}_{stamp}_{_fingerprint(sym, feat, tgt, req, cutoff)}.pt"
-    if not req.force_retrain and path.exists():
-        model = PriceLSTM(**ARCH).to(DEVICE)
-        model.load_state_dict(torch.load(path, map_location=DEVICE))
-        model.eval()
-        return model, "cached"
-
-    # Reseed per call so each asset's fit is reproducible regardless of cache hits.
-    torch.manual_seed(SEED)
-    model = _train(feat, tgt, req)
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), path)
-    return model, "trained"
+    with path.with_suffix('.lock').open('a') as lock:
+        fcntl.flock(lock.fileno(), fcntl.LOCK_EX)
+        if not req.force_retrain and path.exists():
+            model = PriceLSTM(**ARCH).to(DEVICE)
+            model.load_state_dict(torch.load(path, map_location=DEVICE))
+            model.eval()
+            return model, "cached"
+
+        torch.manual_seed(SEED)
+        model = _train(feat, tgt, req)
+        with tempfile.NamedTemporaryFile(dir=_CACHE_DIR, prefix='.mvf-', suffix='.pt', delete=False) as file:
+            temporary = Path(file.name)
+        try:
+            torch.save(model.state_dict(), temporary)
+            os.replace(temporary, path)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return model, "trained"
 
 
 # ── forecasting ──────────────────────────────────────────────────────────────

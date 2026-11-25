@@ -1,5 +1,8 @@
 from typing import List
+from tempfile import NamedTemporaryFile
+from starlette.concurrency import run_in_threadpool
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from loguru import logger
 from sqlalchemy.orm import Session
 
 from app.db.base import get_db
@@ -70,15 +73,14 @@ async def import_sector_json(
     try:
         # Save uploaded file temporarily
         content = await file.read()
-        temp_path = f"/tmp/sector_level_{level}.json"
-        with open(temp_path, "wb") as f:
+        with NamedTemporaryFile(suffix=".json") as f:
             f.write(content)
-
-        # Process the file
-        count = sector_service.upsert_sector_from_file(db, temp_path, level)
+            f.flush()
+            count = await run_in_threadpool(sector_service.upsert_sector_from_file, db, f.name, level)
         return {"status": "success", "sectors_imported": count}
     except Exception as e:
+        logger.exception("Error importing sector data")
         raise HTTPException(
             status_code=400,
-            detail=f"Error importing sector data: {str(e)}",
-        )
+            detail="Error importing sector data",
+        ) from e

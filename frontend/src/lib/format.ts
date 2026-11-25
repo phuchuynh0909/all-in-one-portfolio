@@ -12,6 +12,12 @@ export const APP_CURRENCY = 'VND';
 /** VND has no minor unit — never show decimals on a currency amount. */
 export const CURRENCY_DECIMALS = 0;
 
+export function formatLocalDate(date: Date): string {
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
 export function formatCurrency(
   value: number,
   { compact = false, decimals = CURRENCY_DECIMALS }: { compact?: boolean; decimals?: number } = {},

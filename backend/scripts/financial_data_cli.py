@@ -312,8 +312,7 @@ def clear_cache():
     """Clear the statement cache"""
     
     try:
-        FinancialDataImporter.clear_statement_cache()
-        click.echo("🗑️  Statement cache cleared successfully!")
+        click.echo("Statement caches are local to each import and cleared automatically.")
         
     except Exception as e:
         click.echo(f"❌ Failed to clear cache: {e}", err=True)

@@ -204,7 +204,7 @@ def predict_features_meta(feature_df: pd.DataFrame) -> pd.DataFrame:
 
     return out
 
-async def run_backtest(strategy_name: str, start_date: str, symbols: List[str] | None = None, apply_ml: bool = True) -> Dict:
+def run_backtest(strategy_name: str, start_date: str, symbols: List[str] | None = None, apply_ml: bool = True) -> Dict:
     """Run backtest for given strategy and parameters."""
     total_start_time = time.time()
     

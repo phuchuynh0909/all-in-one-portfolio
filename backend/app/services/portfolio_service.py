@@ -21,10 +21,13 @@ from decimal import Decimal
 from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, select
+from starlette.concurrency import run_in_threadpool
 
 from app.db.models.portfolio import Position, Transaction, InvestmentAmount
+from app.db.models.corporate_action import CorporateAction, CorporateActionApplication
 from app.schemas.portfolio import (
     PositionCreate,
+    PositionUpdate,
     TransactionCreate,
     InvestmentAmountCreate,
     PortfolioSummary,
@@ -38,7 +41,17 @@ import numpy as np
 ZERO = Decimal(0)
 
 
+def _lock_applied_actions(db: Session, tickers: set[str]) -> list[CorporateAction]:
+    actions = db.query(CorporateAction).filter(
+        func.upper(CorporateAction.symbol).in_({ticker.strip().upper() for ticker in tickers}),
+    ).order_by(CorporateAction.id).populate_existing().with_for_update().all()
+    return [action for action in actions if action.status == "applied"]
+
+
 def create_position(db: Session, position: PositionCreate) -> Position:
+    actions = _lock_applied_actions(db, {position.ticker})
+    if any(action.ex_date >= position.purchase_date for action in actions):
+        raise ValueError("Reverse applied corporate actions before adding this historical position")
     db_position = Position(**position.model_dump())
     db.add(db_position)
     db.commit()
@@ -47,7 +60,7 @@ def create_position(db: Session, position: PositionCreate) -> Position:
 
 
 async def get_positions(db: Session) -> List[Position]:
-    positions = db.query(Position).order_by(Position.ticker).all()
+    positions = await run_in_threadpool(lambda: db.query(Position).order_by(Position.ticker).all())
     if not positions:
         return positions
 
@@ -56,7 +69,7 @@ async def get_positions(db: Session) -> List[Position]:
     # holding the same ticker twice paid for it twice.
     tickers = list({p.ticker for p in positions})
     prices = await asyncio.gather(
-        *(get_current_price(t) for t in tickers),
+        *(get_current_price(t, include_date=True) for t in tickers),
         return_exceptions=True,
     )
     by_ticker = {
@@ -66,9 +79,9 @@ async def get_positions(db: Session) -> List[Position]:
     }
 
     for position in positions:
-        # ``current_price`` is a computed field, not a column — fall back to the
-        # purchase price so an unreachable quote never nulls out the response.
-        position.current_price = by_ticker.get(position.ticker, position.purchase_price)
+        quote = by_ticker.get(position.ticker)
+        position.current_price = quote["price"] if quote else None
+        position.current_price_date = quote["date"] if quote else None
 
     return positions
 
@@ -78,13 +91,31 @@ def get_position(db: Session, position_id: int) -> Optional[Position]:
 
 
 def update_position(
-    db: Session, position_id: int, position: PositionCreate
+    db: Session, position_id: int, position: PositionUpdate
 ) -> Optional[Position]:
-    db_position = get_position(db, position_id)
+    current = get_position(db, position_id)
+    if current is None:
+        return None
+    original_ticker = current.ticker
+    actions = _lock_applied_actions(db, {original_ticker, position.ticker})
+    db_position = db.query(Position).filter(Position.id == position_id).populate_existing().with_for_update().first()
     if not db_position:
         return None
 
-    for key, value in position.model_dump().items():
+    if db_position.ticker != original_ticker or any(getattr(db_position, key) != value for key, value in position.original.model_dump().items()):
+        raise ValueError("Position has changed; refresh the page before saving")
+
+    fields = ("ticker", "quantity", "purchase_price", "purchase_date")
+    changed = any(getattr(db_position, key) != getattr(position, key) for key in fields)
+    if changed and actions:
+        linked = db.query(CorporateActionApplication.id).filter(
+            CorporateActionApplication.position_id == position_id,
+            CorporateActionApplication.corporate_action_id.in_([action.id for action in actions]),
+        ).first()
+        if linked or any(action.ex_date >= min(db_position.purchase_date, position.purchase_date) for action in actions):
+            raise ValueError("Reverse applied corporate actions before changing this position")
+
+    for key, value in position.model_dump(exclude={"original"}).items():
         setattr(db_position, key, value)
 
     db.commit()
@@ -122,14 +153,28 @@ def close_position(db: Session, request: ClosePositionRequest) -> ClosePositionR
     """
     # Lock the row for the duration of the transaction so two concurrent closes
     # cannot both read the same quantity and each pass the check below.
+    current = get_position(db, request.position_id)
+    if current is None:
+        raise ValueError(f"Position with ID {request.position_id} not found")
+    original_ticker = current.ticker
+    actions = _lock_applied_actions(db, {original_ticker})
     db_position = (
         db.query(Position)
         .filter(Position.id == request.position_id)
+        .populate_existing()
         .with_for_update()
         .first()
     )
     if not db_position:
         raise ValueError(f"Position with ID {request.position_id} not found")
+
+    if db_position.ticker != original_ticker:
+        raise ValueError("Position has changed; refresh the page before closing")
+
+    if request.closing_date < db_position.purchase_date:
+        raise ValueError("Closing date cannot be before the purchase date")
+    if any(action.ex_date >= request.closing_date for action in actions):
+        raise ValueError("Reverse applied corporate actions before recording this sale")
 
     # Validate quantity
     if request.quantity_to_close > db_position.quantity:
@@ -156,6 +201,7 @@ def close_position(db: Session, request: ClosePositionRequest) -> ClosePositionR
         db_transaction = Transaction(
             ticker=ticker,
             transaction_type="sell",
+            is_position_close=True,
             quantity=request.quantity_to_close,
             price=purchase_price,
             close_price=request.closing_price,
@@ -199,6 +245,8 @@ def close_position(db: Session, request: ClosePositionRequest) -> ClosePositionR
 
 
 def create_transaction(db: Session, transaction: TransactionCreate) -> Transaction:
+    if transaction.transaction_type in ("dividend_cash", "dividend_stock"):
+        raise ValueError("Dividends must be recorded through corporate actions")
     db_transaction = Transaction(**transaction.model_dump())
     db.add(db_transaction)
     db.commit()
@@ -218,8 +266,28 @@ def get_transaction(db: Session, transaction_id: int) -> Optional[Transaction]:
     return db.query(Transaction).filter(Transaction.id == transaction_id).first()
 
 
+def _editable_transaction(db: Session, transaction_id: int) -> Optional[Transaction]:
+    db_transaction = db.query(Transaction).filter(Transaction.id == transaction_id).with_for_update().first()
+    if db_transaction and (db_transaction.is_position_close or db_transaction.transaction_type in ("dividend_cash", "dividend_stock")):
+        raise ValueError("This transaction is linked to a position close or corporate action and cannot be edited or deleted independently")
+    return db_transaction
+
+
+def update_transaction(db: Session, transaction_id: int, transaction: TransactionCreate) -> Optional[Transaction]:
+    db_transaction = _editable_transaction(db, transaction_id)
+    if db_transaction is None:
+        return None
+    if transaction.transaction_type in ("dividend_cash", "dividend_stock"):
+        raise ValueError("Dividend transactions cannot be created through an edit")
+    for key, value in transaction.model_dump().items():
+        setattr(db_transaction, key, value)
+    db.commit()
+    db.refresh(db_transaction)
+    return db_transaction
+
+
 def delete_transaction(db: Session, transaction_id: int) -> bool:
-    db_transaction = get_transaction(db, transaction_id)
+    db_transaction = _editable_transaction(db, transaction_id)
     if not db_transaction:
         return False
 
@@ -263,27 +331,30 @@ async def get_portfolio_summary(db: Session) -> PortfolioSummary:
 
     total_value = ZERO
     total_invested = ZERO
+    missing_prices = False
 
     for pos in positions:
-        pos_value = Decimal(str(pos.current_price)) * pos.quantity
         invested = pos.purchase_price * pos.quantity
-
-        total_value += pos_value
         total_invested += invested
+        if pos.current_price is None:
+            missing_prices = True
+        else:
+            total_value += Decimal(str(pos.current_price)) * pos.quantity
 
-    total_profit_loss = total_value - total_invested
+    total_profit_loss = None if missing_prices else total_value - total_invested
     total_profit_loss_pct = (
-        ((total_value / total_invested) - 1) * 100
+        None if missing_prices else ((total_value / total_invested) - 1) * 100
         if total_invested > 0
         else ZERO
     )
 
     # Realized P/L = trading gains on sells + net dividend income
-    trading_pl = _calculate_realized_pl(db)
-    dividend_gross, dividend_net = _calculate_dividend_income(db)
+    trading_pl, (dividend_gross, dividend_net) = await run_in_threadpool(
+        lambda: (_calculate_realized_pl(db), _calculate_dividend_income(db))
+    )
 
     return PortfolioSummary(
-        total_value=total_value,
+        total_value=None if missing_prices else total_value,
         total_invested=total_invested,
         total_profit_loss=total_profit_loss,
         total_profit_loss_pct=total_profit_loss_pct,

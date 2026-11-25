@@ -22,6 +22,7 @@ from app.schemas.scanner import (
     ScannerRequest,
     ScannerResponse,
     ScannerResultItem,
+    SCANNER_COLUMNS,
 )
 from app.services.indicators import gaussian_frama, hull_butterfly, linreg_channel_2d, student_t_crit, trailing_sl
 from app.services.stock_service import _load_delta_stocks
@@ -45,12 +46,6 @@ _RECLAIM_LOOKBACK = 7
 # rolling indicators (EMA-200, 50-bar regression, ...) are warmed up.
 _WARMUP_DAYS = 400
 
-SCANNER_COLUMNS: List[str] = [
-    "date", "symbol", "open", "high", "low", "close", "volume",
-    "rsi_5", "rsi_14", "ema_10", "ema_20", "ema_50", "ema_200", "atr_10", "atr_14", "obv",
-    "reg", "pi_upper", "pi_lower", "ci_upper", "ci_lower", "slope_pct", "reclaim_entry",
-    "frama", "long_v", "short_v", "qb", "hso", "os", "trail",
-]
 
 _COMPARISON_OPS = (
     ConditionOperator.eq,
@@ -151,8 +146,7 @@ def _apply_conditions(df: pd.DataFrame, req: ScannerRequest) -> pd.DataFrame:
     for cond in req.conditions:
         col = cond.column
         if col not in filtered.columns:
-            # skip unknown column
-            continue
+            raise ValueError(f"Scanner column {col!r} is unavailable")
         op = cond.operator
         val = cond.value
         # A string value matching another feature column name is treated as a

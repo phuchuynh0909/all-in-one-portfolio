@@ -22,6 +22,7 @@ import SearchIcon from '@mui/icons-material/Search';
 import EditIcon from '@mui/icons-material/Edit';
 import AutoAwesomeIcon from '@mui/icons-material/AutoAwesome';
 import type { Report, RagStatus } from '../../lib/services/report';
+import { RAG_IN_PROGRESS } from '../../lib/services/report';
 import { format } from 'date-fns';
 
 type ChipColor = 'default' | 'info' | 'success' | 'error' | 'warning';
@@ -35,8 +36,6 @@ const RAG_META: Record<string, { label: string; color: ChipColor; spinning?: boo
   EMBEDDED: { label: 'Embedded', color: 'success' },
   FAILED: { label: 'Failed', color: 'error' },
 };
-
-const IN_PROGRESS = ['PENDING', 'PARSING', 'SUMMARIZING', 'EMBEDDING'];
 
 interface ReportTableProps {
   reports: Report[];
@@ -130,7 +129,7 @@ export const ReportTable: React.FC<ReportTableProps> = ({
               {paginatedReports.map((report) => {
                 const st = ragStatuses[report.id];
                 const meta = st ? RAG_META[st.status] : undefined;
-                const inProgress = !!st && IN_PROGRESS.includes(st.status);
+                const inProgress = !!st && RAG_IN_PROGRESS.includes(st.status);
                 return (
                 <TableRow key={report.id} hover>
                   <TableCell>{report.id}</TableCell>

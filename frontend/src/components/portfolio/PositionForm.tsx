@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -9,6 +9,7 @@ import {
   Stack,
 } from '@mui/material';
 import { API_BASE_URL } from '../../lib/api';
+import { formatLocalDate } from '../../lib/format';
 import type { Position } from '../../lib/services/portfolio';
 
 type PositionFormProps = {
@@ -29,11 +30,21 @@ export default function PositionForm({
   const [ticker, setTicker] = useState(position?.ticker || '');
   const [quantity, setQuantity] = useState(position?.quantity?.toString() || '');
   const [price, setPrice] = useState(
-    position?.purchase_price ? Number(position.purchase_price).toFixed(2) : ''
+    position?.purchase_price != null ? String(position.purchase_price) : ''
   );
-  const [date, setDate] = useState(position?.purchase_date || new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState(position?.purchase_date || formatLocalDate(new Date()));
   const [notes, setNotes] = useState(position?.notes || '');
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setTicker(position?.ticker ?? '');
+    setQuantity(position?.quantity?.toString() ?? '');
+    setPrice(position?.purchase_price != null ? String(position.purchase_price) : '');
+    setDate(position?.purchase_date ?? formatLocalDate(new Date()));
+    setNotes(position?.notes ?? '');
+    setError(null);
+  }, [open, position]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -41,10 +52,17 @@ export default function PositionForm({
 
     const data = {
       ticker: ticker.toUpperCase(),
-      quantity: Math.floor(Number(quantity)), // Ensure integer
-      purchase_price: Number(Number(price).toFixed(2)), // Ensure 2 decimal places
+      quantity,
+      purchase_price: price,
       purchase_date: date,
       notes: notes || undefined,
+      ...(mode === 'edit' && position ? { original: {
+        ticker: position.ticker,
+        quantity: position.quantity,
+        purchase_price: position.purchase_price,
+        purchase_date: position.purchase_date,
+        notes: position.notes ?? null,
+      } } : {}),
     };
 
     try {
@@ -80,8 +98,7 @@ export default function PositionForm({
 
   const handlePriceChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const value = e.target.value;
-    // Allow decimal numbers with up to 2 decimal places
-    if (/^\d*\.?\d{0,2}$/.test(value)) {
+    if (/^\d*\.?\d{0,6}$/.test(value)) {
       setPrice(value);
     }
   };
@@ -115,7 +132,7 @@ export default function PositionForm({
               value={price}
               onChange={handlePriceChange}
               required
-              helperText="Enter a number with up to 2 decimal places"
+              helperText="Enter a number with up to 6 decimal places"
             />
             <TextField
               label="Purchase Date"

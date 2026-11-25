@@ -7,17 +7,6 @@ from app.core.settings import settings
 # SQLAlchemy models base class
 Base = declarative_base()
 
-# Import all models to ensure they're registered with SQLAlchemy
-from app.db.models.portfolio import Position, Transaction, InvestmentAmount
-from app.db.models.market import Sector, StockSymbol
-from app.db.models.corporate_action import CorporateAction, CorporateActionApplication
-from app.db.models.user import User
-from app.db.models.tcbs import TcbsOAuthToken
-from app.db.models.openscript import OpenScript
-from app.db.models.chart_layout import ChartLayout, ChartPreference
-from app.db.models.watchlist import WatchlistLibrary, SharedWatchlistSymbol
-
-
 def _engine_kwargs(url: str) -> dict:
     """Pool/connect settings for the URL's dialect.
 
@@ -47,8 +36,6 @@ engine = create_engine(
     future=True,
     **_engine_kwargs(settings.database_url),
 )
-
-print(f"Database engine created with URL: {settings.database_url}")
 
 # Session factory
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

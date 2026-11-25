@@ -20,7 +20,6 @@ export interface PortfolioMetrics {
   totalUnrealizedPl: number;
   totalUnrealizedPlPct: number;
   realizedPl: number;
-  dividendIncome: number;
   positionCount: number;
   /** Positions with no live quote — the numbers above are partly estimates. */
   staleCount: number;
@@ -64,21 +63,15 @@ export function computePortfolioMetrics(
     p.weightPct = totalValue === 0 ? 0 : (p.marketValue / totalValue) * 100;
   }
 
-  const sorted = [...enriched].sort((a, b) => b.unrealizedPlPct - a.unrealizedPlPct);
+  const sorted = enriched.filter((p) => !p.isStale).sort((a, b) => b.unrealizedPlPct - a.unrealizedPlPct);
   const totalUnrealizedPl = totalValue - totalCost;
 
   // Sells realise P&L against the price recorded on the transaction.
   const realizedPl = transactions
     .filter((t) => t.transaction_type === 'sell')
     .reduce((sum, t) => {
-      const proceeds = t.quantity * t.price - (t.fees ?? 0);
-      const cost = t.close_price != null ? t.quantity * t.close_price : 0;
-      return sum + (proceeds - cost);
+      return sum + ((t.close_price ?? t.price) - t.price) * t.quantity - (t.fees ?? 0);
     }, 0);
-
-  const dividendIncome = transactions
-    .filter((t) => t.transaction_type === 'dividend_cash')
-    .reduce((sum, t) => sum + t.quantity * t.price, 0);
 
   return {
     positions: enriched,
@@ -87,11 +80,10 @@ export function computePortfolioMetrics(
     totalUnrealizedPl,
     totalUnrealizedPlPct: totalCost === 0 ? 0 : (totalUnrealizedPl / totalCost) * 100,
     realizedPl,
-    dividendIncome,
     positionCount: enriched.length,
     staleCount: enriched.filter((p) => p.isStale).length,
-    winners: enriched.filter((p) => p.unrealizedPl > 0).length,
-    losers: enriched.filter((p) => p.unrealizedPl < 0).length,
+    winners: sorted.filter((p) => p.unrealizedPl > 0).length,
+    losers: sorted.filter((p) => p.unrealizedPl < 0).length,
     best: sorted[0] ?? null,
     worst: sorted.length > 1 ? sorted[sorted.length - 1] : null,
   };

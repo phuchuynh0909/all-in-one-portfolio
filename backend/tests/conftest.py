@@ -42,6 +42,19 @@ requires_mysql = pytest.mark.skipif(
 
 
 @pytest.fixture
+def memory_cache(tmp_path):
+    from fastapi_cache import FastAPICache
+    from fastapi_cache.backends.inmemory import InMemoryBackend
+
+    FastAPICache.reset()
+    FastAPICache.init(InMemoryBackend(), prefix=str(tmp_path))
+    try:
+        yield FastAPICache.get_backend()
+    finally:
+        FastAPICache.reset()
+
+
+@pytest.fixture
 def db():
     """A session whose work is always rolled back.
 

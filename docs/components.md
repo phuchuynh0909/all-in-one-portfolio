@@ -25,10 +25,21 @@ One module per domain, each exposing a router mounted under `/api/v1`:
 | `financial_statements` | Fundamental financial data. |
 | `report` / `chat` | Research reports + RAG chat over them. |
 | `trading_agents` | Drive the vendored multi-agent framework. |
-| `isp_alerts` (`/isp`), `large_orders`, `price_alerts` | Streaming-derived signals surfaced from ClickHouse / SQLite. |
+| `isp_alerts` (`/isp`), `large_orders`, `price_alerts` | Streaming-derived signals and alerts from ClickHouse / MySQL. |
 | `cw`, `future`, `mvf` | Covered warrants, futures (VN30F), multi-variate LSTM forecasts. |
 | `data_crawler`, `workflows` | Trigger crawls / Prefect workflows. |
 | `auth` | Authentication. |
+
+Position updates (`PUT /portfolio/positions/{id}`) require an `original` object
+containing the ticker, quantity, purchase price, purchase date, and notes from
+the last read. A changed position returns 409; clients must reload before saving.
+Corporate actions are refused when a same-symbol sale on or after the ex-date
+makes the historical holding uncertain. Sales are not linked to individual lots,
+so this check can also reject an unrelated sale until lot-level history exists.
+Positions cannot be added, materially changed, or sold with an earlier date
+when doing so would invalidate an applied corporate action. Reverse and
+reconcile the affected actions first. Actions cannot be applied before their
+Vietnamese-market ex-date; synchronization includes tickers from recorded sales.
 
 ### `services/`
 
@@ -61,7 +72,7 @@ Business logic, grouped by concern:
 - `core/settings.py` — pydantic-settings config (env prefix `APP_`), plus
   ClickHouse, DNSE, MinIO/Delta, and ML model paths.
 - `db/` — SQLAlchemy 2.0 base + models (`market`, `financial`, `portfolio`) on
-  SQLite; `db/clickhouse.py` yields a `clickhouse_connect` client as a FastAPI
+  MySQL; `db/clickhouse.py` yields a `clickhouse_connect` client as a FastAPI
   dependency.
 - `schemas/` — Pydantic v2 request/response models per domain.
 - `stores/` — Delta Lake reader (`feature_store.py`) and the MySQL wichart
@@ -141,7 +152,7 @@ scripts/     Backfills and one-off runs (backfill_ticks, run_pipeline, run_audit
 | `large_order_ingest` | **Not a worker** — CLI that creates/backfills the `large_order_blocks` materialized view over `ticks`. Run manually. |
 | `block_episode_ingest` | **Not a worker** — CLI that maintains the `trade_flow_seconds` MV + `trade_flow_windows` feature view. Scoring lives in the backend. Run manually. |
 | `large_order_reconciler` | **Retired** — the materialized view is now the only large-order path. Kept as a frozen archive; not run. |
-| `price_alerts` | Evaluate user price alerts (reads `backend/portfolio.db`), notify. |
+| `price_alerts` | Evaluate user price alerts from MySQL and notify. |
 | `reconciler` | Audit/backfill consistency (Prefect-scheduled). |
 
 Config toggles a `MockClickHouseSource` / `MockClickHouse` for offline/dev runs

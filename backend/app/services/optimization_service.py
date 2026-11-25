@@ -202,7 +202,7 @@ class BayesianVAR:
         if len(data_scaled) < self.lags:
             raise ValueError(f"Need at least {self.lags} observations for prediction, got {len(data_scaled)}")
             
-        recent_data = data_scaled.tail(self.lags).values.flatten()
+        recent_data = data_scaled.tail(self.lags).iloc[::-1].values.flatten()
         recent_data = np.append(recent_data, 1.0)  # Add constant
         
         # Validate state vector shape
@@ -378,7 +378,10 @@ def optimize_portfolio(db: Session, req: OptimizationRequest) -> OptimizationRes
     # Pick date, close, symbol columns and transform to price matrix
     df = df[['date', 'close', 'symbol']]
     prices = df.pivot(index='date', columns='symbol', values='close')
-    prices = prices.bfill().ffill()  # Backfill missing values
+    missing = [ticker for ticker in req.tickers if ticker not in prices or prices[ticker].dropna().empty]
+    if missing:
+        raise ValueError(f"No price history for requested tickers: {', '.join(missing)}")
+    prices = prices.reindex(columns=req.tickers).bfill().ffill()
     
     # Calculate expected returns using the specified method
     if req.return_prediction_method == ReturnPredictionMethod.BVAR:
@@ -394,11 +397,11 @@ def optimize_portfolio(db: Session, req: OptimizationRequest) -> OptimizationRes
     if req.method == OptimizationMethod.HRP:
         weights, ret, vol, sharpe = _optimize_hrp(prices, req.risk_free_rate or 0.0)
     elif req.method == OptimizationMethod.CVAR:
-        weights, ret, vol, sharpe = _optimize_cvar(mu, prices)
+        weights, ret, vol, sharpe = _optimize_cvar(mu, prices, req.weight_bounds)
     elif req.method == OptimizationMethod.CLA:
-        weights, ret, vol, sharpe = _optimize_cla(mu, S, req.risk_free_rate or 0.0)
+        weights, ret, vol, sharpe = _optimize_cla(mu, S, req.risk_free_rate or 0.0, req.weight_bounds)
     elif req.method == OptimizationMethod.MIN_VOLATILITY:
-        weights, ret, vol, sharpe = _optimize_min_volatility(mu, S, req.risk_free_rate or 0.0)
+        weights, ret, vol, sharpe = _optimize_min_volatility(mu, S, req.risk_free_rate or 0.0, req.weight_bounds)
     elif req.method == OptimizationMethod.MAX_QUADRATIC_UTILITY:
         weights, ret, vol, sharpe = _optimize_max_quadratic_utility(mu, S, req)
     elif req.method == OptimizationMethod.EFFICIENT_RISK:
@@ -408,7 +411,7 @@ def optimize_portfolio(db: Session, req: OptimizationRequest) -> OptimizationRes
     elif req.method == OptimizationMethod.BLACK_LITTERMAN:
         weights, ret, vol, sharpe = _optimize_black_litterman(mu, S, req)
     else:  # Default to MAX_SHARPE/EFFICIENT_FRONTIER
-        weights, ret, vol, sharpe = _optimize_max_sharpe(mu, S, req.risk_free_rate or 0.0)
+        weights, ret, vol, sharpe = _optimize_max_sharpe(mu, S, req.risk_free_rate or 0.0, req.weight_bounds)
 
     return OptimizationResult(
         method=req.method,
@@ -429,10 +432,10 @@ def _optimize_hrp(prices: pd.DataFrame, risk_free_rate: float):
     return weights, ret, vol, sharpe
 
 
-def _optimize_cvar(mu: pd.Series, prices: pd.DataFrame):
+def _optimize_cvar(mu: pd.Series, prices: pd.DataFrame, weight_bounds=(0, 1)):
     """Conditional Value at Risk optimization."""
     returns = prices.pct_change().dropna()
-    e_cvar = EfficientCVaR(mu, returns=returns, beta=0.95, weight_bounds=(0, 1))
+    e_cvar = EfficientCVaR(mu, returns=returns, beta=0.95, weight_bounds=weight_bounds)
     e_cvar.add_objective(objective_functions.L2_reg, gamma=0.1)
     
     w_min_cvar = e_cvar.min_cvar()
@@ -442,17 +445,17 @@ def _optimize_cvar(mu: pd.Series, prices: pd.DataFrame):
     return weights, ret, vol, sharpe
 
 
-def _optimize_cla(mu: pd.Series, S: pd.DataFrame, risk_free_rate: float):
+def _optimize_cla(mu: pd.Series, S: pd.DataFrame, risk_free_rate: float, weight_bounds=(0, 1)):
     """Critical Line Algorithm optimization."""
-    cla = CLA(mu, S)
+    cla = CLA(mu, S, weight_bounds=weight_bounds)
     weights = cla.max_sharpe()
     ret, vol, sharpe = cla.portfolio_performance(risk_free_rate=risk_free_rate)
     return weights, ret, vol, sharpe
 
 
-def _optimize_min_volatility(mu: pd.Series, S: pd.DataFrame, risk_free_rate: float):
+def _optimize_min_volatility(mu: pd.Series, S: pd.DataFrame, risk_free_rate: float, weight_bounds=(0, 1)):
     """Minimum volatility optimization."""
-    ef = EfficientFrontier(mu, S)
+    ef = EfficientFrontier(mu, S, weight_bounds=weight_bounds)
     ef.min_volatility()
     weights = ef.clean_weights()
     ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=risk_free_rate)
@@ -464,7 +467,7 @@ def _optimize_max_quadratic_utility(mu: pd.Series, S: pd.DataFrame, req: Optimiz
     if req.risk_aversion is None:
         raise ValueError("risk_aversion parameter is required for max_quadratic_utility method")
     
-    ef = EfficientFrontier(mu, S)
+    ef = EfficientFrontier(mu, S, weight_bounds=req.weight_bounds)
     ef.max_quadratic_utility(risk_aversion=req.risk_aversion)
     weights = ef.clean_weights()
     ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
@@ -476,7 +479,7 @@ def _optimize_efficient_risk(mu: pd.Series, S: pd.DataFrame, req: OptimizationRe
     if req.target_risk is None:
         raise ValueError("target_risk parameter is required for efficient_risk method")
     
-    ef = EfficientFrontier(mu, S)
+    ef = EfficientFrontier(mu, S, weight_bounds=req.weight_bounds)
     ef.efficient_risk(target_volatility=req.target_risk)
     weights = ef.clean_weights()
     ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
@@ -488,7 +491,7 @@ def _optimize_efficient_return(mu: pd.Series, S: pd.DataFrame, req: Optimization
     if req.target_return is None:
         raise ValueError("target_return parameter is required for efficient_return method")
     
-    ef = EfficientFrontier(mu, S)
+    ef = EfficientFrontier(mu, S, weight_bounds=req.weight_bounds)
     ef.efficient_return(target_return=req.target_return)
     weights = ef.clean_weights()
     ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=req.risk_free_rate or 0.0)
@@ -530,36 +533,18 @@ def _optimize_black_litterman(mu: pd.Series, S: pd.DataFrame, req: OptimizationR
         market_cap_weights, req.risk_aversion, S
     )
     
-    # If views are provided, incorporate them
-    if req.views and req.view_confidences:
-        # Convert views to matrix format expected by Black-Litterman
-        P = np.zeros((len(req.views), len(req.tickers)))
-        Q = np.zeros(len(req.views))
-        omega_diag = []
-        
-        for i, (view_ticker, view_return) in enumerate(req.views.items()):
-            if view_ticker in req.tickers:
-                ticker_idx = req.tickers.index(view_ticker)
-                P[i, ticker_idx] = 1.0
-                Q[i] = view_return
-                # Use confidence if provided, otherwise default to 0.1
-                confidence = req.view_confidences.get(view_ticker, 0.1)
-                omega_diag.append(confidence)
-        
-        # Create omega matrix (uncertainty in views)
-        omega = np.diag(omega_diag)
-        
-        # Apply Black-Litterman with views
-        bl_returns, bl_cov = black_litterman.black_litterman(
-            implied_returns, S, P, Q, omega
+    if req.views:
+        # The API defines confidence as uncertainty (lower means more confident).
+        omega = np.diag([
+            (req.view_confidences or {}).get(ticker, 0.1) for ticker in req.views
+        ])
+        model = black_litterman.BlackLittermanModel(
+            S, pi=implied_returns.reindex(S.index), absolute_views=req.views, omega=omega
         )
-        
-        # Optimize with updated returns and covariance
-        ef = EfficientFrontier(bl_returns, bl_cov)
+        ef = EfficientFrontier(model.bl_returns(), model.bl_cov(), weight_bounds=req.weight_bounds)
     else:
-        # Use implied returns without views
-        ef = EfficientFrontier(implied_returns, S)
-    
+        ef = EfficientFrontier(implied_returns, S, weight_bounds=req.weight_bounds)
+
     # Optimize for maximum Sharpe ratio with Black-Litterman inputs
     # Posterior returns, not mu -- the views can move an asset either side of the rate.
     _require_an_asset_above_the_risk_free_rate(
@@ -594,10 +579,10 @@ def _require_an_asset_above_the_risk_free_rate(mu: pd.Series, risk_free_rate: fl
     )
 
 
-def _optimize_max_sharpe(mu: pd.Series, S: pd.DataFrame, risk_free_rate: float):
+def _optimize_max_sharpe(mu: pd.Series, S: pd.DataFrame, risk_free_rate: float, weight_bounds=(0, 1)):
     """Maximum Sharpe ratio optimization."""
     _require_an_asset_above_the_risk_free_rate(mu, risk_free_rate)
-    ef = EfficientFrontier(mu, S)
+    ef = EfficientFrontier(mu, S, weight_bounds=weight_bounds)
     ef.max_sharpe(risk_free_rate=risk_free_rate)
     weights = ef.clean_weights()
     ret, vol, sharpe = ef.portfolio_performance(risk_free_rate=risk_free_rate)

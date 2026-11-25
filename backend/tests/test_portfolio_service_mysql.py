@@ -202,14 +202,14 @@ def test_realized_pl_is_zero_when_there_are_no_sells(db):
 
 
 async def test_get_positions_fills_current_price_concurrently(db, monkeypatch):
-    """Prices are gathered per distinct ticker, and a failure falls back."""
+    """Prices are gathered per distinct ticker, and a failure remains unavailable."""
     calls: list[str] = []
 
-    async def fake_price(ticker: str):
+    async def fake_price(ticker: str, include_date=False):
         calls.append(ticker)
         if ticker == "BAD":
             raise RuntimeError("quote feed down")
-        return Decimal("99.5")
+        return {"price": Decimal("99.5"), "date": "2026-11-06"}
 
     monkeypatch.setattr(svc, "get_current_price", fake_price)
 
@@ -226,13 +226,13 @@ async def test_get_positions_fills_current_price_concurrently(db, monkeypatch):
     assert calls.count("AAA") == 1
     assert calls.count("BAD") == 1
     assert by_ticker["AAA"].current_price == Decimal("99.5")
-    # The failing quote falls back to that position's own purchase price.
-    assert by_ticker["BAD"].current_price == Decimal("7.250000")
+    assert by_ticker["AAA"].current_price_date == "2026-11-06"
+    assert by_ticker["BAD"].current_price is None
 
 
 async def test_portfolio_summary_totals(db, monkeypatch):
-    async def fake_price(ticker: str):
-        return Decimal("30")
+    async def fake_price(ticker: str, include_date=False):
+        return {"price": Decimal("30"), "date": "2026-11-06"}
 
     monkeypatch.setattr(svc, "get_current_price", fake_price)
     db.execute(text("DELETE FROM transactions"))
@@ -346,8 +346,8 @@ async def test_summary_adds_net_dividend_income_to_realized_pl(db, monkeypatch):
         CorporateAction, CorporateActionApplication,
     )
 
-    async def fake_price(ticker: str):
-        return Decimal("30")
+    async def fake_price(ticker: str, include_date=False):
+        return {"price": Decimal("30"), "date": "2026-11-06"}
 
     monkeypatch.setattr(svc, "get_current_price", fake_price)
     db.execute(text("DELETE FROM corporate_action_application"))

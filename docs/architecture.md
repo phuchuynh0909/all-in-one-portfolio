@@ -24,7 +24,7 @@ models, and a multi-agent trading-research framework behind a single web app.
                           ┌──────────────┼──────────────┬──────────┘
                           ▼              ▼              ▼
                     ┌──────────┐   ┌──────────┐   ┌───────────────────┐
-                    │ ClickHouse│   │  SQLite  │   │ Delta Lake (MinIO)│
+                    │ ClickHouse│   │  MySQL   │   │ Delta Lake (MinIO)│
                     │ ticks /   │   │ portfolio│   │ OHLCV / sector /  │
                     │ timeseries│   │ + app db │   │ research reports  │
                     └──────────┘   └──────────┘   └───────────────────┘
@@ -77,7 +77,7 @@ every request (the primary debug channel — `make backend-logs`).
 1. Browser calls `GET /api/v1/<domain>/...` via the frontend service layer
    (`frontend/src/lib/services/*.ts`, base URL `VITE_API_BASE_URL`).
 2. FastAPI route validates params, delegates to a `services/*` function.
-3. The service reads from a store (ClickHouse / SQLite / Delta) and/or calls an
+3. The service reads from a store (ClickHouse / MySQL / Delta) and/or calls an
    external provider client, computes indicators/strategy output, and returns
    Pydantic models.
 4. Response is cached in the in-memory FastAPI cache where decorated, and
@@ -94,7 +94,7 @@ DNSE WebSocket ─▶ worker: tick_ingest ─▶ ClickHouse (ticks)
                     ├─▶ worker: ohlc_5m         ─▶ ClickHouse (5m OHLC)
                     ├─▶ worker: ohlc_5m         ─▶ ohlc_5m bars (Future page)
                     ├─▶ worker: isp             ─▶ ISP alerts
-                    └─▶ worker: price_alerts    ─▶ reads portfolio.db, notifies
+                    └─▶ worker: price_alerts    ─▶ reads MySQL alerts, notifies
 ```
 
 Large-order blocks and trade-flow features are both aggregated inside ClickHouse
@@ -118,8 +118,8 @@ workers/schedules (Prefect) audit and backfill.
 - **Caching:** in-memory `fastapi-cache` backend, default 1h TTL, with a custom
   `cache_with_logging` wrapper that logs HIT/MISS.
 - **Logging:** loguru everywhere; structured request timing in middleware.
-- **Auth:** `auth` route + `chat`/agents; most market-data reads are open to the
-  configured CORS origins.
+- **Auth:** API routes require a bearer token except health, login, and the
+  TCBS OAuth callback. CORS controls browser origins, not authentication.
 
 ## Vendored TradingAgents
 

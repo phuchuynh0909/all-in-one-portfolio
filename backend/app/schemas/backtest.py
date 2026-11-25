@@ -24,7 +24,7 @@ class Trade(BaseModel):
 
 class BacktestRequest(BaseModel):
     strategy: str = Field(description="Strategy name to use for backtesting")
-    start_date: str = Field(description="Start date in YYYY-MM-DD format")
+    start_date: date = Field(description="Start date in YYYY-MM-DD format")
     symbols: Optional[List[str]] = None
     apply_ml: bool = Field(default=True, description="Whether to apply ML predictions to trades")
 

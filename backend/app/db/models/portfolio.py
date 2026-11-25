@@ -1,6 +1,6 @@
 from datetime import datetime
 from decimal import Decimal
-from sqlalchemy import Column, Integer, String, DECIMAL, Date, Text, TIMESTAMP, Enum, text
+from sqlalchemy import Boolean, Column, Integer, String, DECIMAL, Date, Text, TIMESTAMP, Enum, text
 from app.db.base import Base
 
 
@@ -29,6 +29,7 @@ class Transaction(Base):
     price = Column(DECIMAL(15, 6), nullable=False)
     close_price = Column(DECIMAL(15, 6))
     transaction_date = Column(Date, nullable=False)
+    is_position_close = Column(Boolean, nullable=False, server_default=text("0"))
     fees = Column(DECIMAL(10, 2), server_default=text("0"))
     notes = Column(Text)
     created_at = Column(TIMESTAMP, server_default=text("CURRENT_TIMESTAMP"))

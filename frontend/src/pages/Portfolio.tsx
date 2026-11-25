@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
-import { Box, Button, Tab, Tabs } from '@mui/material';
+import { Alert, Box, Button, Tab, Tabs } from '@mui/material';
 import RefreshIcon from '@mui/icons-material/Refresh';
 
 import PositionList from '../components/portfolio/PositionList';
@@ -17,9 +17,7 @@ import { computePortfolioMetrics } from '../lib/portfolio/metrics';
 import type { Position } from '../lib/services/portfolio';
 
 /**
- * A position with `current_price` resolved to a number. The backend may not have
- * priced a position yet; falling back to the purchase price keeps derived P&L at
- * 0 rather than letting NaN leak into the charts and table. `notes` is narrowed
+ * A position with an available current price. `notes` is narrowed
  * from `string | null` to `string | undefined` to match the child components.
  */
 type PricedPosition = Omit<Position, 'notes'> & { current_price: number; notes?: string };
@@ -43,9 +41,9 @@ export default function Portfolio() {
 
   const pricedPositions: PricedPosition[] = useMemo(
     () =>
-      positions.map((p) => ({
+      positions.filter((p) => p.current_price != null && p.current_price > 0).map((p) => ({
         ...p,
-        current_price: p.current_price ?? p.purchase_price,
+        current_price: p.current_price!,
         notes: p.notes ?? undefined,
       })),
     [positions],
@@ -57,11 +55,14 @@ export default function Portfolio() {
   };
 
   const summary = summaryQuery.data;
-  const totalValue = summary?.total_value ?? metrics.totalValue;
+  const totalValue = summary ? summary.total_value : metrics.staleCount ? null : metrics.totalValue;
   const totalCost = summary?.total_invested ?? metrics.totalCost;
-  const unrealizedPl = summary?.total_profit_loss ?? metrics.totalUnrealizedPl;
-  const unrealizedPlPct = summary?.total_profit_loss_pct ?? metrics.totalUnrealizedPlPct;
-  const realizedPl = summary?.total_realized_pl ?? metrics.realizedPl;
+  const unrealizedPl = summary ? summary.total_profit_loss : metrics.staleCount ? null : metrics.totalUnrealizedPl;
+  const unrealizedPlPct = summary ? summary.total_profit_loss_pct : metrics.staleCount ? null : metrics.totalUnrealizedPlPct;
+  const realizedPl = summary?.total_realized_pl ?? (
+    transactionsQuery.data && !transactionsQuery.data.some((t) => t.transaction_type === 'dividend_cash')
+      ? metrics.realizedPl : null
+  );
 
   const isLoading = positionsQuery.isLoading || summaryQuery.isLoading;
   const isFetching = positionsQuery.isFetching || summaryQuery.isFetching;
@@ -100,7 +101,7 @@ export default function Portfolio() {
             format="currency"
             loading={isLoading}
             accent="primary"
-            hint={`${metrics.positionCount} position${metrics.positionCount === 1 ? '' : 's'}`}
+            hint={metrics.staleCount ? `${metrics.staleCount} missing closing prices` : 'Last available closes; dates in Holdings'}
           />
           <StatTile
             label="Invested"
@@ -116,7 +117,7 @@ export default function Portfolio() {
             signed
             showSign
             loading={isLoading}
-            accent={unrealizedPl >= 0 ? 'long' : 'short'}
+            accent={unrealizedPl == null ? 'warning' : unrealizedPl >= 0 ? 'long' : 'short'}
             hint={
               <Numeric value={unrealizedPlPct} format="percent" signed showSign sx={{ fontSize: '0.6875rem' }} />
             }
@@ -132,7 +133,7 @@ export default function Portfolio() {
           />
           <StatTile
             label="Dividends"
-            value={metrics.dividendIncome}
+            value={summary?.total_dividend_income ?? null}
             format="currency"
             loading={isLoading}
             hint="Cash received"
@@ -162,6 +163,8 @@ export default function Portfolio() {
         </StatRow>
       </Box>
 
+      {metrics.staleCount > 0 && <Alert severity="warning" sx={{ mb: 2 }}>Some quotes are unavailable. Market value and unrealized P&amp;L are incomplete; charts exclude unpriced positions.</Alert>}
+
       {/* --- Overview ------------------------------------------------------ */}
       {tab === 0 && (
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -171,8 +174,8 @@ export default function Portfolio() {
               error={positionsQuery.error}
               isEmpty={pricedPositions.length === 0}
               onRetry={refreshAll}
-              emptyTitle="No open positions"
-              emptyDescription="Add a position from the Manage tab to see performance here."
+              emptyTitle="No priced positions"
+              emptyDescription="Add a position or wait for quotes to become available."
             >
               <Box sx={{ p: 2 }}>
                 <PerformanceCharts positions={pricedPositions} />
@@ -200,16 +203,16 @@ export default function Portfolio() {
 
       {/* --- Holdings ------------------------------------------------------ */}
       {tab === 1 && (
-        <Panel title="Holdings" subtitle={`${pricedPositions.length} open positions`} flush>
+        <Panel title="Holdings" subtitle={`${positions.length} open positions`} flush>
           <QueryState
             isLoading={isLoading}
             error={positionsQuery.error}
-            isEmpty={pricedPositions.length === 0}
+            isEmpty={positions.length === 0}
             onRetry={refreshAll}
             emptyTitle="No open positions"
             emptyDescription="Add a position from the Manage tab."
           >
-            <PositionsTable positions={pricedPositions} onPositionUpdate={refreshAll} />
+            <PositionsTable positions={positions.map((p) => ({ ...p, current_price: p.current_price ?? null, notes: p.notes ?? undefined }))} onPositionUpdate={refreshAll} />
           </QueryState>
         </Panel>
       )}
@@ -228,7 +231,7 @@ export default function Portfolio() {
           }
         >
           <Box sx={{ p: 2 }}>
-            {manageTab === 0 ? <PositionList onDataChanged={refreshAll} /> : <TransactionList />}
+            {manageTab === 0 ? <PositionList onDataChanged={refreshAll} /> : <TransactionList onDataChanged={refreshAll} />}
           </Box>
         </Panel>
       )}

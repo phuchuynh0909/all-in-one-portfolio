@@ -202,7 +202,7 @@ def _compute_mfe_mae_trades(stats, data: pd.DataFrame) -> "list[dict]":
     return points
 
 
-async def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) -> Dict:
+def run_backtest_plot(symbol: str, start_date: str, strategy_name: str) -> Dict:
     start_dt = datetime.strptime(start_date, "%Y-%m-%d")
     stock_df = _load_delta_stocks(
         symbols=[symbol],

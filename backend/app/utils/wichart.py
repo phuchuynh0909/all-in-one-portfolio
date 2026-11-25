@@ -54,10 +54,11 @@ def getSign(sign):
 def getToken():
     url = "https://wichart.vn/wichartapi/wichart/taikhoan/dangnhap"
     now = int(time.time() * 1000)
-    payload = {
-        "email": "phuc991994@gmail.com",
-        "password": "kyostyle1"
-    }
+    email = os.getenv("WICHART_EMAIL")
+    password = os.getenv("WICHART_PASSWORD")
+    if not email or not password:
+        raise RuntimeError("WICHART_EMAIL and WICHART_PASSWORD must be set")
+    payload = {"email": email, "password": password}
     nonce = getNonce()
     signData = {
         "email": payload['email'],

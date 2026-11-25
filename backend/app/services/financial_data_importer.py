@@ -18,13 +18,11 @@ logger = logging.getLogger(__name__)
 
 
 class FinancialDataImporter:
-    # Global cache for statement mappings (master data)
-    _statement_cache: Dict[str, int] = {}
-    _cache_initialized: bool = False
-    
     def __init__(self, db: Session):
         """Initialize with database session"""
         self.db = db
+        self._statement_cache: Dict[str, int] = {}
+        self._cache_initialized = False
 
     def _upsert_returning_id(
         self,
@@ -252,11 +250,10 @@ class FinancialDataImporter:
         return {stmt_type: self._statement_cache[stmt_type] 
                 for stmt_type in required_statements if stmt_type in self._statement_cache}
     
-    @classmethod
-    def clear_statement_cache(cls):
+    def clear_statement_cache(self):
         """Clear the statement cache (useful for testing or when statements change)"""
-        cls._statement_cache.clear()
-        cls._cache_initialized = False
+        self._statement_cache.clear()
+        self._cache_initialized = False
         logger.info("Statement cache cleared")
     
     def warm_statement_cache(self):
@@ -442,11 +439,13 @@ class FinancialDataImporter:
             
             # Commit transaction
             self.db.commit()
+            self.clear_statement_cache()
             logger.info(f"Financial data import completed successfully for {company_ticker}")
             
         except Exception as e:
             logger.error(f"Import failed for {company_ticker}: {e}")
             self.db.rollback()
+            self.clear_statement_cache()
             raise
 
 

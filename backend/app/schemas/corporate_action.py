@@ -34,9 +34,9 @@ class ManualDividendCreate(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=20)
     action_type: Literal["cash", "stock"]
     ex_date: date
-    amount_per_share: Optional[Decimal] = Field(default=None, gt=0)
-    ratio: Optional[Decimal] = Field(default=None, gt=0)
-    tax_withheld_pct: Optional[Decimal] = Field(default=None, ge=0, le=1)
+    amount_per_share: Optional[Decimal] = Field(default=None, gt=0, max_digits=15, decimal_places=6)
+    ratio: Optional[Decimal] = Field(default=None, gt=0, max_digits=15, decimal_places=8)
+    tax_withheld_pct: Optional[Decimal] = Field(default=None, ge=0, le=1, max_digits=5, decimal_places=4)
     notes: Optional[str] = None
 
 
@@ -63,6 +63,7 @@ class ApplyResult(BaseModel):
     # Every action settled in this call. Events sharing an ex-date must settle
     # together (see the engine), so one apply can cover several.
     applied_action_ids: List[int] = []
+    unapplied_action_ids: List[int] = []
     status: str
     lots: List[AppliedLot]
     total_shares_added: Decimal

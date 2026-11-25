@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Dialog,
   DialogTitle,
@@ -13,6 +13,7 @@ import {
   FormControl,
 } from '@mui/material';
 import { API_BASE_URL } from '../../lib/api';
+import { formatLocalDate } from '../../lib/format';
 import type { Transaction } from '../../lib/services/portfolio';
 
 type TransactionFormProps = {
@@ -44,13 +45,26 @@ export default function TransactionForm({
     transaction?.close_price ? Number(transaction.close_price) : ''
   );
   const [date, setDate] = useState(
-    transaction?.transaction_date || new Date().toISOString().split('T')[0]
+    transaction?.transaction_date || formatLocalDate(new Date())
   );
   const [fees, setFees] = useState(
     transaction?.fees ? Number(transaction.fees) : '0'
   );
   const [notes, setNotes] = useState(transaction?.notes || '');
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    setTicker(transaction?.ticker ?? '');
+    setType(transaction?.transaction_type ?? 'buy');
+    setQuantity(transaction?.quantity?.toString() ?? '');
+    setPrice(transaction?.price != null ? Number(transaction.price) : '');
+    setClosePrice(transaction?.close_price != null ? Number(transaction.close_price) : '');
+    setDate(transaction?.transaction_date ?? formatLocalDate(new Date()));
+    setFees(transaction?.fees != null ? Number(transaction.fees) : '0');
+    setNotes(transaction?.notes ?? '');
+    setError(null);
+  }, [open, transaction]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();

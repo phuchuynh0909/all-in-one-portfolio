@@ -4,6 +4,7 @@
 import { useEffect, useRef, useCallback, useState } from 'react';
 import type { ISPAlert } from '../lib/services/ispAlerts';
 import { API_BASE_URL } from '../lib/api';
+import { clearToken, getToken, UNAUTHORIZED_EVENT } from '../lib/auth/token';
 
 interface UseAlertWorkerOptions {
   enabled: boolean;
@@ -47,6 +48,11 @@ export function useAlertWorker({
           onError(payload.error);
           break;
 
+        case 'UNAUTHORIZED':
+          clearToken();
+          window.dispatchEvent(new Event(UNAUTHORIZED_EVENT));
+          break;
+
         case 'POLLING_STARTED':
           setIsPolling(true);
           break;
@@ -85,6 +91,7 @@ export function useAlertWorker({
         payload: {
           interval,
           apiUrl: apiBaseUrl,
+          token: getToken(),
           params: {
             limit: 1000,
           },

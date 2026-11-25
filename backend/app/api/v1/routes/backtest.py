@@ -18,6 +18,9 @@ import json
 import pandas as pd
 import numpy as np
 from pathlib import Path
+from threading import Lock
+from datetime import date
+from anyio import to_process
 
 router = APIRouter(prefix="/backtest", tags=["backtest"])
 
@@ -42,7 +45,7 @@ def backtest_key_builder(
         # Create a unique key from the request parameters
         key_data = {
             "strategy": backtest_request.strategy,
-            "start_date": backtest_request.start_date,
+            "start_date": backtest_request.start_date.isoformat(),
             "symbols": sorted(backtest_request.symbols) if backtest_request.symbols else None,
             "apply_ml": backtest_request.apply_ml,
         }
@@ -58,6 +61,7 @@ def backtest_key_builder(
 
 # Path to H5 backtest results file (backend is mounted at /app in Docker)
 H5_BACKTEST_FILE = Path("/app/assets/backtest_results.h5")
+_h5_lock = Lock()
 
 
 def _safe_value(val):
@@ -76,7 +80,7 @@ def _safe_value(val):
 
 
 @router.get("/watchlist", response_model=List[str])
-async def get_watchlist() -> List[str]:
+def get_watchlist() -> List[str]:
     """Get the shared stock universe."""
     from app.services.shared_watchlist import load_shared_watchlist
 
@@ -84,7 +88,7 @@ async def get_watchlist() -> List[str]:
 
 
 @router.get("/h5/results", response_model=H5BacktestResultsResponse)
-async def get_h5_backtest_results(
+def get_h5_backtest_results(
     symbol: str = Query("VNINDEX", description="Filter by symbol"),
 ) -> H5BacktestResultsResponse:
     """
@@ -96,9 +100,9 @@ async def get_h5_backtest_results(
     
     try:
         # Read trades
-        trades_df = pd.read_hdf(H5_BACKTEST_FILE, key='trades')
-        # Read stats
-        stats_df = pd.read_hdf(H5_BACKTEST_FILE, key='stats')
+        with _h5_lock:
+            trades_df = pd.read_hdf(H5_BACKTEST_FILE, key='trades')
+            stats_df = pd.read_hdf(H5_BACKTEST_FILE, key='stats')
         
         # Filter trades and stats DataFrames by symbol (from code block 994-999 / 1003-1008)
         trades_df = trades_df[trades_df['symbol'] == symbol]
@@ -174,9 +178,11 @@ async def get_h5_backtest_results(
             total_trades=len(trades),
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error reading H5 backtest results: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(status_code=500, detail="Failed to read backtest results") from e
 
 
 @router.post("", response_model=BacktestResponse)
@@ -195,11 +201,8 @@ async def backtest_strategy(request: BacktestRequest) -> BacktestResponse:
     """
     logger.debug(f"Received backtest request: strategy={request.strategy}, start_date={request.start_date}")
     
-    result = await run_backtest(
-        strategy_name=request.strategy,
-        start_date=request.start_date,
-        symbols=request.symbols,
-        apply_ml=request.apply_ml
+    result = await to_process.run_sync(
+        run_backtest, request.strategy, request.start_date.isoformat(), request.symbols, request.apply_ml
     )
     
     return BacktestResponse(**result)
@@ -214,14 +217,14 @@ async def get_backtest_plot_strategies() -> List[str]:
 @router.get("/plot", response_model=BacktestPlotResponse)
 async def get_backtest_plot(
     symbol: str = Query("VCG", description="Symbol to backtest"),
-    start_date: str = Query("2020-01-01", description="Start date (YYYY-MM-DD)"),
+    start_date: date = Query(date(2020, 1, 1), description="Start date (YYYY-MM-DD)"),
     strategy: str = Query("SMA Cross", description="Strategy name"),
 ) -> BacktestPlotResponse:
     try:
-        result = await run_backtest_plot(symbol=symbol, start_date=start_date, strategy_name=strategy)
+        result = await to_process.run_sync(run_backtest_plot, symbol, start_date.isoformat(), strategy)
         return BacktestPlotResponse(**result)
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except Exception as exc:
         logger.error(f"Error generating backtest plot: {exc}")
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        raise HTTPException(status_code=500, detail="Failed to generate backtest plot") from exc

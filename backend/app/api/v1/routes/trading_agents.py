@@ -244,7 +244,12 @@ def analyze_stream(request: AnalyzeRequest) -> StreamingResponse:
         )
 
     try:
-        job = jobs.start(symbol, trade_date, make_events)
+        job = jobs.start(
+            symbol, trade_date, make_events,
+            options=(analysts, request.deep_think_llm, request.quick_think_llm, tuple(sorted(analyst_models.items()))),
+        )
+    except jobs.ConflictingRun as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except jobs.TooManyRuns as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
 
@@ -358,7 +363,7 @@ def tcbs_authorize(request: Request, return_to: Optional[str] = None) -> dict:
         )
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user as a 502
         logger.warning("TCBS authorize failed: {}", exc)
-        raise HTTPException(status_code=502, detail=f"TCBS login unavailable: {exc}")
+        raise HTTPException(status_code=502, detail="TCBS login unavailable") from exc
 
     import secrets
     import time
@@ -496,7 +501,7 @@ def _complete_flow(flow: dict, code: str) -> None:
         tcbs_oauth.store_tokens(flow["client_id"], flow["client_secret"], payload)
     except Exception as exc:  # noqa: BLE001 -- surfaced to the user as a 502
         logger.warning("TCBS token exchange failed: {}", exc)
-        raise HTTPException(status_code=502, detail=f"TCBS token exchange failed: {exc}")
+        raise HTTPException(status_code=502, detail="TCBS token exchange failed") from exc
 
     # A new token means the client is holding a session authorized by the old
     # one; drop it so the next call reconnects with the new credentials.

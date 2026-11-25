@@ -1,6 +1,7 @@
 import { apiPost } from '../api';
 
 export interface TriggerResponse {
+  flow_run_id: string;
   started: boolean;
   detail: string;
 }
